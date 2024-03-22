@@ -1,0 +1,20 @@
+{
+"Version": 1.0,
+"number_of_snapshots": 100,
+"batch_size"         : 100,
+"keep_modes"         : 10,
+"write_modes"        : 10,
+"fields"             : [0,1,2],
+"IO":{
+	"mesh_data": {
+        	"dataPath"           : "./data/",
+		"casename"           : "field",
+		"first_index"        : 201
+	},
+	"field_data": {
+        	"dataPath"           : "./data/",
+		"casename"           : "field",
+		"first_index"        : 201
+	}
+}
+}
