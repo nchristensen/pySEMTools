@@ -2,6 +2,8 @@ import numpy as np
 from pymech.core import HexaData
 from pymech.neksuite.field import Header
 from pymech.core import HexaData
+from .field import field_c
+from ..ppymech.neksuite import pwritenek
 import sys
 NoneType = type(None)
 
@@ -89,3 +91,73 @@ def put_field_in_hexadata(data, field, prefix, qoi):
 
 
     return data
+
+def get_gradient(msh, coef, field_list = []):
+    
+    number_of_fields = len(field_list)
+
+    if msh.lz == 1:
+    
+        exit("Gradient calculation is not implemented for 2D meshes")
+    
+    else:
+    
+        grad = np.zeros((msh.nelv, msh.lz, msh.ly, msh.lx, number_of_fields, 3))
+
+        for field in range(0, number_of_fields):
+
+            grad[:,:,:,:,field,0] = coef.dudxyz(field_list[field], coef.drdx, coef.dsdx, coef.dtdx) #dfdx
+            grad[:,:,:,:,field,1] = coef.dudxyz(field_list[field], coef.drdy, coef.dsdy, coef.dtdy) #dfdy
+            grad[:,:,:,:,field,2] = coef.dudxyz(field_list[field], coef.drdz, coef.dsdz, coef.dtdz) #dfdz
+    
+    return grad
+
+def get_strain_tensor(grad_U, msh):
+    # Calculate the symetric part of the gradient
+    # This calculates 1/2(grad_U + grad_U^T), which is the stress tensor
+    # Another form of this is simply 1/2(du_i/dx_j + du_j/dx_i)
+
+    sij  = np.zeros((msh.nelv, msh.lz, msh.ly, msh.lx, 3, 3)) 
+    
+    for e in range(0, msh.nelv):
+        for k in range(0, msh.lz):
+            for j in range(0, msh.ly):
+                for i in range(0, msh.lx):
+                    sij[e, k, j, i, :, :] = (1/2)*(grad_U[e, k, j, i, :, :] + grad_U[e, k, j, i, :, :].T)
+
+    return sij
+
+def get_angular_rotation_tensor(grad_U, msh):
+    # Calculate the asymetric part of the gradient
+    # This calculates 1/2(grad_U - grad_U^T), which is the stress tensor
+    # Another form of this is simply 1/2(du_i/dx_j + du_j/dx_i)
+
+    aij  = np.zeros((msh.nelv, msh.lz, msh.ly, msh.lx, 3, 3)) 
+    
+    for e in range(0, msh.nelv):
+        for k in range(0, msh.lz):
+            for j in range(0, msh.ly):
+                for i in range(0, msh.lx):
+                    aij[e, k, j, i, :, :] = (1/2)*(grad_U[e, k, j, i, :, :] - grad_U[e, k, j, i, :, :].T)
+
+    return aij
+
+
+def write_fld_file_from_list(fname, comm, msh, field_list = []):
+    
+    number_of_fields = len(field_list)
+
+    ## Create an empty field and update its metadata
+    out_fld = field_c(comm)
+    for field in range(0, number_of_fields):
+        out_fld.fields["scal"].append(field_list[field])
+    out_fld.update_vars()
+
+    ## Create the hexadata to write out
+    out_data = create_hexadata_from_msh_fld(msh = msh, fld = out_fld)
+
+    ## Write out a file
+    if comm.Get_rank() == 0: print("Writing file: " + fname)
+    pwritenek(fname,out_data, comm)
+    
+    return 
