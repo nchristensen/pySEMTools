@@ -490,6 +490,13 @@ class interpolator_c():
 
         # Sort the points by rank to scatter them easily
         if rank == io_rank:
+
+            # Before the sorting, assign all the not found probes to rank zero.
+            # The points with error code 0 will be ignored in the interpolation routine
+            # Doing this will avoid an error when after interpolating we try to gather the points
+            self.rank_owner[np.where(err_code == 0)] = 0
+            rank_owner[np.where(err_code == 0)] = 0
+
             sort_by_rank = np.argsort(rank_owner)
 
             sorted_probes = probes[sort_by_rank]
