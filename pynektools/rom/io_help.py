@@ -13,7 +13,8 @@ class io_help_c():
                  number_of_fields = 1,
                  batch_size = 1,
                  field_size = 1,
-                 data_type = np.double
+                 data_type = np.double,
+                 module_name = "io_helper"
                  ):
 
         self.number_of_fields = number_of_fields
@@ -26,10 +27,13 @@ class io_help_c():
         self.buff = np.zeros((int(field_size*number_of_fields), self.batch_size), dtype = data_type)
     
         # Allocate the mass matrix
+        self.bm1 = np.zeros((int(field_size*number_of_fields), 1), dtype = data_type)
+        
+        # Allocate the square root of the mass matrix
         self.bm1sqrt = np.zeros((int(field_size*number_of_fields), 1), dtype = data_type)
         
         # Instance object
-        self.log  = logger_c(level = logging.DEBUG, comm = comm, module_name = "io_helper")
+        self.log  = logger_c(level = logging.DEBUG, comm = comm, module_name = module_name)
         self.math = math_ops_c()
 
         # Set the control indices
