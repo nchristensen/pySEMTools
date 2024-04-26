@@ -1,0 +1,17 @@
+{
+    "Version": 1.0,
+    "number_of_snapshots": 2,
+    "start_time": 70,
+    "IO":{
+        "mesh_data": {
+            "dataPath"           : "/scratch/adperez/extreme_neko/neko/examples/turb_channel/",
+            "casename"           : "mean_field",
+            "first_index"        : 0
+        },
+        "field_data": {
+            "dataPath"           : "/scratch/adperez/extreme_neko/neko/examples/turb_channel/",
+            "casename"           : "mean_field",
+            "first_index"        : 1
+        }
+    }
+    }
