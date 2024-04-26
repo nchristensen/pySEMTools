@@ -182,6 +182,32 @@ class element_interpolator_c():
 
         return field_at_rst
 
+    def interpolate_field_at_rst_vector(self, rj, sj, tj, field_e, apply_1d_ops = True):
+
+        r_j = np.ones((rj.size))
+        s_j = np.ones((sj.size))
+        t_j = np.ones((tj.size))
+
+        r_j[:] = rj[:]
+        s_j[:] = sj[:]
+        t_j[:] = tj[:]
+        
+        self.field_e[:,0] = field_e[:,:,:].reshape(-1,1)[:,0]
+
+        lk_r = lagInterp_matrix_at_xtest(self.x_gll,r_j)
+        lk_s = lagInterp_matrix_at_xtest(self.x_gll,s_j)
+        lk_t = lagInterp_matrix_at_xtest(self.x_gll,t_j)
+
+        if not apply_1d_ops:
+            lk_3d = np.kron(lk_t.T, np.kron(lk_s.T, lk_r.T))
+            field_at_rst = (lk_3d@self.field_e)
+        elif apply_1d_ops:
+            field_at_rst = apply_operators_3d(lk_r.T, lk_s.T, lk_t.T, self.field_e)
+
+        field_at_rst = field_at_rst.reshape((t_j.size, s_j.size, r_j.size))
+
+        return field_at_rst
+
 #===========================================================================
     
 
