@@ -13,13 +13,13 @@ debug = False
 tr = 7
 
 class interpolator_c():
-    def __init__(self, x, y, z, probes, comm, progress_bar = False):
+    def __init__(self, x, y, z, probes, comm, progress_bar = False, modal_search = True):
 
         self.x = x
         self.y = y
         self.z = z
         self.probes = probes
-        self.ei = element_interpolator_c(x.shape[1])
+        self.ei = element_interpolator_c(x.shape[1], modal_search = modal_search)
         self.progress_bar = progress_bar
         
         #Find the element offset of each rank so you can store the global element number
@@ -428,7 +428,7 @@ class interpolator_c():
         for pts in range(0, probes.shape[0]):
             if err_code[pts] != 1:
                 for e in element_candidates[pts]:
-                    self.ei.project_element_to_legendre(self.x[e,:,:,:], self.y[e,:,:,:], self.z[e,:,:,:])
+                    self.ei.project_element_into_basis(self.x[e,:,:,:], self.y[e,:,:,:], self.z[e,:,:,:])
                     r, s, t = self.ei.find_rst_from_xyz(probes[pts,0], probes[pts,1], probes[pts,2]) 
                     if self.ei.point_inside_element:
                         probes_rst[pts, 0] = r
@@ -582,7 +582,7 @@ class interpolator_c():
         if self.progress_bar: pbar= tqdm(total=my_probes.shape[0])
         for e in self.my_el_owner:
             if my_err_code[i] != 0 :
-                self.ei.project_element_to_legendre(x[e,:,:,:], y[e,:,:,:], z[e,:,:,:])
+                #self.ei.project_element_into_basis(x[e,:,:,:], y[e,:,:,:], z[e,:,:,:])
                 tmp = self.ei.interpolate_field_at_rst(my_probes_rst[i,0], my_probes_rst[i,1], my_probes_rst[i,2], sampled_field[e,:,:,:])
                 sampled_field_at_probe[i] = tmp
             else:

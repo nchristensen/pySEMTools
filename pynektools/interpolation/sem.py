@@ -4,7 +4,7 @@ from scipy.special import legendre
 
 
 class element_interpolator_c():
-    def __init__(self, n):
+    def __init__(self, n, modal_search = True):
     
         # Order of the element
         self.n = n
@@ -29,24 +29,32 @@ class element_interpolator_c():
         self.field_e = np.zeros_like(self.x_e)
         self.point_inside_element = False
         
+        self.modal_search = modal_search
+        
         return
 
-    def project_element_to_legendre(self, x_e, y_e, z_e, apply_1d_ops = True):
+    def project_element_into_basis(self, x_e, y_e, z_e, apply_1d_ops = True):
         
         # Assing the inputs to proper formats
         self.x_e[:,0] = x_e[:,:,:].reshape(-1,1)[:,0]
         self.y_e[:,0] = y_e[:,:,:].reshape(-1,1)[:,0]
         self.z_e[:,0] = z_e[:,:,:].reshape(-1,1)[:,0]
 
-        if not apply_1d_ops:
+        if self.modal_search:
             # Get the modal representation
-            self.x_e_hat = self.v_inv@self.x_e
-            self.y_e_hat = self.v_inv@self.y_e
-            self.z_e_hat = self.v_inv@self.z_e 
-        elif apply_1d_ops:
-            self.x_e_hat = apply_operators_3d(self.v1d_inv, self.v1d_inv, self.v1d_inv, self.x_e)
-            self.y_e_hat = apply_operators_3d(self.v1d_inv, self.v1d_inv, self.v1d_inv, self.y_e)
-            self.z_e_hat = apply_operators_3d(self.v1d_inv, self.v1d_inv, self.v1d_inv, self.z_e)
+            if not apply_1d_ops:    
+                self.x_e_hat = self.v_inv@self.x_e
+                self.y_e_hat = self.v_inv@self.y_e
+                self.z_e_hat = self.v_inv@self.z_e 
+            elif apply_1d_ops:
+                self.x_e_hat = apply_operators_3d(self.v1d_inv, self.v1d_inv, self.v1d_inv, self.x_e)
+                self.y_e_hat = apply_operators_3d(self.v1d_inv, self.v1d_inv, self.v1d_inv, self.y_e)
+                self.z_e_hat = apply_operators_3d(self.v1d_inv, self.v1d_inv, self.v1d_inv, self.z_e)
+        else:
+            # Use the nodal representation
+            self.x_e_hat = self.x_e
+            self.y_e_hat = self.y_e
+            self.z_e_hat = self.z_e
 
         return
     
@@ -106,55 +114,66 @@ class element_interpolator_c():
         self.tj[0] = tj
         
         # Find the basis for each coordinate separately
-        leg_rj = legendre_basis_at_xtest(n, self.rj)
-        leg_sj = legendre_basis_at_xtest(n, self.sj)
-        leg_tj = legendre_basis_at_xtest(n, self.tj)
+        if self.modal_search:
+            # If modal search, the basis is legendre
+            ortho_basis_rj = legendre_basis_at_xtest(n, self.rj)
+            ortho_basis_sj = legendre_basis_at_xtest(n, self.sj)
+            ortho_basis_tj = legendre_basis_at_xtest(n, self.tj)
 
-        leg_prm_rj = legendre_basis_derivative_at_xtest(leg_rj, self.rj)
-        leg_prm_sj = legendre_basis_derivative_at_xtest(leg_sj, self.sj)
-        leg_prm_tj = legendre_basis_derivative_at_xtest(leg_tj, self.tj)
-        
+            ortho_basis_prm_rj = legendre_basis_derivative_at_xtest(ortho_basis_rj, self.rj)
+            ortho_basis_prm_sj = legendre_basis_derivative_at_xtest(ortho_basis_sj, self.sj)
+            ortho_basis_prm_tj = legendre_basis_derivative_at_xtest(ortho_basis_tj, self.tj)
+        else:
+            # If nodal search, the basis is lagrange
+            ortho_basis_rj = lagInterp_matrix_at_xtest(self.x_gll,self.rj)
+            ortho_basis_sj = lagInterp_matrix_at_xtest(self.x_gll,self.sj)
+            ortho_basis_tj = lagInterp_matrix_at_xtest(self.x_gll,self.tj)
+            
+            ortho_basis_prm_rj = lagInterp_derivative_matrix_at_xtest(self.x_gll, ortho_basis_rj, self.rj)
+            ortho_basis_prm_sj = lagInterp_derivative_matrix_at_xtest(self.x_gll, ortho_basis_sj, self.sj)
+            ortho_basis_prm_tj = lagInterp_derivative_matrix_at_xtest(self.x_gll, ortho_basis_tj, self.tj)
+            
         if not apply_1d_ops:
             # Construct the 3d basis
-            leg_rstj = np.kron(leg_tj.T,np.kron(leg_sj.T,leg_rj.T))
+            ortho_basis_rstj = np.kron(ortho_basis_tj.T,np.kron(ortho_basis_sj.T,ortho_basis_rj.T))
         
-            leg_drj = np.kron(leg_tj.T, np.kron(leg_sj.T, leg_prm_rj.T))
-            leg_dsj = np.kron(leg_tj.T, np.kron(leg_prm_sj.T, leg_rj.T))
-            leg_dtj = np.kron(leg_prm_tj.T, np.kron(leg_sj.T, leg_rj.T))
+            ortho_basis_drj = np.kron(ortho_basis_tj.T, np.kron(ortho_basis_sj.T, ortho_basis_prm_rj.T))
+            ortho_basis_dsj = np.kron(ortho_basis_tj.T, np.kron(ortho_basis_prm_sj.T, ortho_basis_rj.T))
+            ortho_basis_dtj = np.kron(ortho_basis_prm_tj.T, np.kron(ortho_basis_sj.T, ortho_basis_rj.T))
         
-            x = (leg_rstj@self.x_e_hat)[0,0]
-            y = (leg_rstj@self.y_e_hat)[0,0]
-            z = (leg_rstj@self.z_e_hat)[0,0]
+            x = (ortho_basis_rstj@self.x_e_hat)[0,0]
+            y = (ortho_basis_rstj@self.y_e_hat)[0,0]
+            z = (ortho_basis_rstj@self.z_e_hat)[0,0]
     
-            self.jac[0,0] = (leg_drj@self.x_e_hat)[0,0]
-            self.jac[0,1] = (leg_dsj@self.x_e_hat)[0,0]
-            self.jac[0,2] = (leg_dtj@self.x_e_hat)[0,0]
+            self.jac[0,0] = (ortho_basis_drj@self.x_e_hat)[0,0]
+            self.jac[0,1] = (ortho_basis_dsj@self.x_e_hat)[0,0]
+            self.jac[0,2] = (ortho_basis_dtj@self.x_e_hat)[0,0]
 
-            self.jac[1,0] = (leg_drj@self.y_e_hat)[0,0]
-            self.jac[1,1] = (leg_dsj@self.y_e_hat)[0,0]
-            self.jac[1,2] = (leg_dtj@self.y_e_hat)[0,0]
+            self.jac[1,0] = (ortho_basis_drj@self.y_e_hat)[0,0]
+            self.jac[1,1] = (ortho_basis_dsj@self.y_e_hat)[0,0]
+            self.jac[1,2] = (ortho_basis_dtj@self.y_e_hat)[0,0]
 
-            self.jac[2,0] = (leg_drj@self.z_e_hat)[0,0]
-            self.jac[2,1] = (leg_dsj@self.z_e_hat)[0,0]
-            self.jac[2,2] = (leg_dtj@self.z_e_hat)[0,0]
+            self.jac[2,0] = (ortho_basis_drj@self.z_e_hat)[0,0]
+            self.jac[2,1] = (ortho_basis_dsj@self.z_e_hat)[0,0]
+            self.jac[2,2] = (ortho_basis_dtj@self.z_e_hat)[0,0]
 
         elif apply_1d_ops:
             # Apply the 1d operators to the 3d field
-            x = apply_operators_3d(leg_rj.T, leg_sj.T, leg_tj.T, self.x_e_hat)[0,0]
-            y = apply_operators_3d(leg_rj.T, leg_sj.T, leg_tj.T, self.y_e_hat)[0,0]
-            z = apply_operators_3d(leg_rj.T, leg_sj.T, leg_tj.T, self.z_e_hat)[0,0]
+            x = apply_operators_3d(ortho_basis_rj.T, ortho_basis_sj.T, ortho_basis_tj.T, self.x_e_hat)[0,0]
+            y = apply_operators_3d(ortho_basis_rj.T, ortho_basis_sj.T, ortho_basis_tj.T, self.y_e_hat)[0,0]
+            z = apply_operators_3d(ortho_basis_rj.T, ortho_basis_sj.T, ortho_basis_tj.T, self.z_e_hat)[0,0]
 
-            self.jac[0,0] = apply_operators_3d(leg_prm_rj.T, leg_sj.T, leg_tj.T, self.x_e_hat)[0,0]
-            self.jac[0,1] = apply_operators_3d(leg_rj.T, leg_prm_sj.T, leg_tj.T, self.x_e_hat)[0,0]
-            self.jac[0,2] = apply_operators_3d(leg_rj.T, leg_sj.T, leg_prm_tj.T, self.x_e_hat)[0,0]
+            self.jac[0,0] = apply_operators_3d(ortho_basis_prm_rj.T, ortho_basis_sj.T, ortho_basis_tj.T, self.x_e_hat)[0,0]
+            self.jac[0,1] = apply_operators_3d(ortho_basis_rj.T, ortho_basis_prm_sj.T, ortho_basis_tj.T, self.x_e_hat)[0,0]
+            self.jac[0,2] = apply_operators_3d(ortho_basis_rj.T, ortho_basis_sj.T, ortho_basis_prm_tj.T, self.x_e_hat)[0,0]
 
-            self.jac[1,0] = apply_operators_3d(leg_prm_rj.T, leg_sj.T, leg_tj.T, self.y_e_hat)[0,0]
-            self.jac[1,1] = apply_operators_3d(leg_rj.T, leg_prm_sj.T, leg_tj.T, self.y_e_hat)[0,0]
-            self.jac[1,2] = apply_operators_3d(leg_rj.T, leg_sj.T, leg_prm_tj.T, self.y_e_hat)[0,0]
+            self.jac[1,0] = apply_operators_3d(ortho_basis_prm_rj.T, ortho_basis_sj.T, ortho_basis_tj.T, self.y_e_hat)[0,0]
+            self.jac[1,1] = apply_operators_3d(ortho_basis_rj.T, ortho_basis_prm_sj.T, ortho_basis_tj.T, self.y_e_hat)[0,0]
+            self.jac[1,2] = apply_operators_3d(ortho_basis_rj.T, ortho_basis_sj.T, ortho_basis_prm_tj.T, self.y_e_hat)[0,0]
 
-            self.jac[2,0] = apply_operators_3d(leg_prm_rj.T, leg_sj.T, leg_tj.T, self.z_e_hat)[0,0]
-            self.jac[2,1] = apply_operators_3d(leg_rj.T, leg_prm_sj.T, leg_tj.T, self.z_e_hat)[0,0]
-            self.jac[2,2] = apply_operators_3d(leg_rj.T, leg_sj.T, leg_prm_tj.T, self.z_e_hat)[0,0]
+            self.jac[2,0] = apply_operators_3d(ortho_basis_prm_rj.T, ortho_basis_sj.T, ortho_basis_tj.T, self.z_e_hat)[0,0]
+            self.jac[2,1] = apply_operators_3d(ortho_basis_rj.T, ortho_basis_prm_sj.T, ortho_basis_tj.T, self.z_e_hat)[0,0]
+            self.jac[2,2] = apply_operators_3d(ortho_basis_rj.T, ortho_basis_sj.T, ortho_basis_prm_tj.T, self.z_e_hat)[0,0]
 
         return x, y, z
 
@@ -281,20 +300,26 @@ def apply_operators_3d(dr, ds, dt, x):
 
 def determine_initial_guess(self):
 
-    # Find the closest gll point to the point of interest
-    n = self.n
-    distances = np.sqrt((self.xj[0]-self.x_e.reshape((n,n,n), order = "F"))**2+(self.yj[0]-self.y_e.reshape((n,n,n), order = "F"))**2+(self.zj[0]-self.z_e.reshape((n,n,n), order = "F"))**2)
+    if self.modal_search:
+        # Find the closest gll point to the point of interest
+        n = self.n
+        distances = np.sqrt((self.xj[0]-self.x_e.reshape((n,n,n), order = "F"))**2+(self.yj[0]-self.y_e.reshape((n,n,n), order = "F"))**2+(self.zj[0]-self.z_e.reshape((n,n,n), order = "F"))**2)
 
-    min_index_x = np.argmin(distances[:,0,0])
-    min_index_y = np.argmin(distances[0,:,0])
-    min_index_z = np.argmin(distances[0,0,:])
+        min_index_x = np.argmin(distances[:,0,0])
+        min_index_y = np.argmin(distances[0,:,0])
+        min_index_z = np.argmin(distances[0,0,:])
 
-    # Knowing the indices, see what the rst values would be in a reference element
-    self.rj[0] = self.x_gll[min_index_x]
-    self.sj[0] = self.x_gll[min_index_y]
-    self.tj[0] = self.x_gll[min_index_z]
+        # Knowing the indices, see what the rst values would be in a reference element
+        self.rj[0] = self.x_gll[min_index_x]
+        self.sj[0] = self.x_gll[min_index_y]
+        self.tj[0] = self.x_gll[min_index_z]
 
-    #print(self.rj[0],self.sj[0],self.tj[0])
+        #print(self.rj[0],self.sj[0],self.tj[0])
+    else:
+        # If using lagrange basis, set initial guess to zero to avoid divide by zero
+        self.rj[0] = 0
+        self.sj[0] = 0
+        self.tj[0] = 0
 
     return
 
@@ -538,3 +563,30 @@ def lagInterp_matrix_at_xtest(x,xTest):
         
     return Lk
 
+#Standard Lagrange interpolation
+def lagInterp_derivative_matrix_at_xtest(x, Lk, xTest):
+    """
+    Lagrange interpolation in 1D space
+    """
+    n=len(x) 
+    k=np.arange(n) # k and n are the same range
+    m=len(xTest) 
+    #Lk=np.zeros((n,m))
+    #for k_ in k:
+    #    prod_=1.0
+    #    for j in range(n):
+    #        if j!=k_:
+    #            prod_*=(xTest-x[j])/(x[k_]-x[j])
+    #    Lk[k_,:]=prod_ 
+
+    Lk_sum=np.zeros((n,m))
+    for k_ in k:
+        suma = 0.0
+        for j in range(n):
+            if j!=k_:
+                suma += 1/(xTest-x[j])
+        Lk_sum[k_,:]=suma
+ 
+    Lk_prm = np.multiply(Lk_sum,Lk)
+
+    return Lk_prm

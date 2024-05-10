@@ -16,7 +16,7 @@ class probes_c():
             self.dataPath = params_file["dataPath"]
             self.index = params_file["first_index"]
         
-    def __init__(self, comm, filename = None, probes = None, msh = None, write_coords = True, progress_bar = False):
+    def __init__(self, comm, filename = None, probes = None, msh = None, write_coords = True, progress_bar = False, modal_search = True):
         
         rank = comm.Get_rank()
         size = comm.Get_size()
@@ -69,7 +69,7 @@ class probes_c():
 
 
         # Initialize the interpolator
-        self.itp = interpolator_c(self.x, self.y, self.z, self.probes, comm, progress_bar)
+        self.itp = interpolator_c(self.x, self.y, self.z, self.probes, comm, progress_bar, modal_search = modal_search)
 
         # Scatter the probes to all ranks
         self.itp.scatter_probes_from_io_rank(0, comm)
