@@ -1,6 +1,7 @@
 import csv
 import numpy as np
 
+__all__ = ['Probes']
 
 class Probes:
     """
