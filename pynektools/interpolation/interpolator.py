@@ -5,6 +5,7 @@ from tqdm import tqdm
 from .mpi_ops import *
 from .sem import element_interpolator_c
 from mpi4py import MPI # for the timer
+from itertools import combinations
 
 NoneType = type(None)
 
@@ -138,7 +139,6 @@ class interpolator_c():
         # First each rank finds their bounding box 
         self.my_bbox = get_bbox_from_coordinates(self.x, self.y, self.z)
 
-
         if use_kdtree: 
             # Get bbox centroids and max radius from center to corner
             self.my_bbox_centroids, self.my_bbox_maxdist = get_bbox_centroids_and_max_dist(self.my_bbox)
@@ -149,24 +149,73 @@ class interpolator_c():
         nelv = self.x.shape[0]
         self.ranks_ive_checked = []
 
-        # Now recursively make more ranks communicate to search for points that have not been found
-        # Start checking if I have the local ones
-        denom = 1
-        j = 0
-        while j < size and denom <= size + 1:
+        # Create a directory that contains which are the colours for each rank in each iteration
+        rank_dict, colour_dict = get_communication_pairs(comm)
 
-            # With this logic, first every rank checks by themselves and then 2 check together, then 4 ... up to when all of them check
-            col = int(np.floor(((rank/denom))))
+        # Get candidate ranks from a global kd tree
+        candidate_ranks =  get_candidate_ranks(self, comm)
+
+        ## Print for debugging
+        #if rank == 0 :
+        #    for rankk in rank_dict:
+        #        print("Rank: ", rankk)
+        #        print(rank_dict[rankk])
+        #    print("=======")
+        #    
+        #    for rankk in colour_dict:
+        #        print("Rank: ", rankk)
+        #        print(colour_dict[rankk])
+
+
+        # Iterate over the pairs. Currently it is assumed that the size is a power of two, therefore all ranks need the same iterations
+        number_of_its = len(colour_dict[rank])
+        j = 0
+        while j < number_of_its :
+
+            # Get the colour from the dictionary
+            col = colour_dict[rank][j]
+
             if debug:
                 print("rank: {}, finding points. start iteration: {}. Color: {}".format(rank, j, col))
             else:
                 if rank == 0: print("rank: {}, finding points. start iteration: {}. Color: {}".format(rank, j, col))
             start_time = MPI.Wtime()
-            denom = denom * 2
-
+            
+            # Split the communicator
             search_comm= comm.Split(color = col, key=rank)
             search_rank = search_comm.Get_rank()
             search_size = search_comm.Get_size()
+
+            # Get the send_recv ranks in this iteration
+            sr = [rank_dict[rank][j][0], rank_dict[rank][j][1]]
+
+            # See which one is the other rank in the communicator
+            if j == 0:
+                # In the first iteration, I should check my own rank, however
+                other_rank = [x for x in sr]
+            else:
+                other_rank = [x for x in sr if x!= rank]
+
+            # Check if this other rank is in my candidates
+            communicate_data = np.zeros((1), dtype = np.intc)
+            for r in other_rank:
+                if r in candidate_ranks:
+                    communicate_data[0] = 1
+
+            # Retrieve the information from the other rank in the pair
+            comm_communicate_data = np.zeros((search_size), dtype=np.intc)
+            search_comm.Allgather([communicate_data, MPI.INT], [comm_communicate_data, MPI.INT])
+
+            # Now, if one of the ranks is candidate for the other, then keep going with the iterations, otherwise do not
+            communicate = 0
+            comm_list = comm_communicate_data.tolist()
+            for c in comm_list:
+                if c == 1:
+                    communicate = 1
+
+            if communicate != 1:
+                j = j + 1
+                continue
 
             # Make each rank in the communicator broadcast their bounding boxes to the others to search
             for broadcaster in range(0, search_size):
@@ -651,3 +700,93 @@ def get_bbox_centroids_and_max_dist(bbox):
     bbox_centroid[:,2] =   bbox[:,4] + bbox_dist[:,2]/2 
 
     return bbox_centroid, bbox_max_dist
+
+
+def get_communication_pairs(comm):
+
+    size = comm.Get_size()
+
+    # Create a list with all the ranks
+    all_ranks = [ii for ii in range(0, size)]
+
+    # Create a dictionary to hold the pairs and colors for each rank
+    rank_dict = {i: [(i,i)] for i in range(size)}
+    colour_dict = {i: [i] for i in range(size)}
+
+    # Get all unique pairs and colours
+    all_pairs = list(combinations(all_ranks, 2))
+    all_colours = [xx for xx in range(0, len(all_pairs))]
+
+    # Iterate over all the unique pairs to see which ranks communicate each iteration
+    while len(all_pairs) > 0:
+        rank_send_recv = [] 
+        included_pairs = []
+        included_col_pairs = []
+        for ii in range (0, len(all_pairs)): 
+            rs = all_pairs[ii][0]
+            rr = all_pairs[ii][1]
+            if rs in rank_send_recv or rr in rank_send_recv:
+                a = 1
+            else: 
+                # Update the pair and colour for this rank
+                rank_dict[rs].append(all_pairs[ii])
+                rank_dict[rr].append(all_pairs[ii])
+                colour_dict[rs].append(all_colours[ii])
+                colour_dict[rr].append(all_colours[ii])
+
+                # Keep track of the ranks that have been included
+                included_pairs.append(all_pairs[ii])
+                included_col_pairs.append(all_colours[ii])
+                    
+                # Update the list of ranks recieved and sent this iteration
+                rank_send_recv.append(rs)
+                rank_send_recv.append(rr)
+            
+        # Now remove the pairs that have been included this iteration
+        for pair in included_pairs:
+            all_pairs.remove(pair) 
+        for pair in included_col_pairs:
+            all_colours.remove(pair)
+
+    return rank_dict, colour_dict
+        
+def get_candidate_ranks(self, comm):
+
+    rank = comm.Get_rank()
+    size = comm.Get_size()
+
+    # Find the bounding box of the rank to create a global but "sparse" kdtree       
+    rank_bbox = np.zeros((1, 6), dtype=np.double)
+    rank_bbox[0,0] = np.min(self.x)
+    rank_bbox[0,1] = np.max(self.x)
+    rank_bbox[0,2] = np.min(self.y)
+    rank_bbox[0,3] = np.max(self.y)
+    rank_bbox[0,4] = np.min(self.z)
+    rank_bbox[0,5] = np.max(self.z)
+        
+    rank_bbox_dist = np.zeros((1, 3), dtype=np.double)
+    rank_bbox_dist[0,0] =   (rank_bbox[0,1] - rank_bbox[0,0])
+    rank_bbox_dist[0,1] =   (rank_bbox[0,3] - rank_bbox[0,2])
+    rank_bbox_dist[0,2] =   (rank_bbox[0,5] - rank_bbox[0,4])
+    rank_bbox_max_dist = np.max(np.sqrt(rank_bbox_dist[:,0]**2 + rank_bbox_dist[:,1]**2 + rank_bbox_dist[:,2]**2)/2)
+
+    rank_bbox_centroid = np.zeros((1, 3))
+    rank_bbox_centroid[:,0] =   rank_bbox[:,0] + rank_bbox_dist[:,0]/2 
+    rank_bbox_centroid[:,1] =   rank_bbox[:,2] + rank_bbox_dist[:,1]/2 
+    rank_bbox_centroid[:,2] =   rank_bbox[:,4] + rank_bbox_dist[:,2]/2 
+ 
+    global_centroids = np.zeros((size*3), dtype=np.double)
+    global_max_dist = np.zeros((size), dtype=np.double)
+
+    # Gather in all ranks
+    comm.Allgather([rank_bbox_centroid.flatten(), MPI.DOUBLE], [global_centroids, MPI.DOUBLE])
+    comm.Allgather([rank_bbox_max_dist, MPI.DOUBLE], [global_max_dist, MPI.DOUBLE])
+    global_centroids = global_centroids.reshape((size, 3))
+    # Create a tree with the rank centroids
+    self.global_tree = KDTree(global_centroids) 
+    candidate_ranks_per_point = self.global_tree.query_ball_point(x=self.probe_partition, r=np.max(global_max_dist), p=2.0, eps=1e-8, workers=1, return_sorted=False, return_length=False)
+
+    flattened_list = [item for sublist in candidate_ranks_per_point for item in sublist]
+    candidate_ranks = list(set(flattened_list))
+
+    return candidate_ranks

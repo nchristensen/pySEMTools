@@ -106,7 +106,7 @@ class probes_c():
                     point_warning[i]["id"] = int(point)
                     point_warning[i]["xyz"] = [ float(self.itp.probes[point,0]), float(self.itp.probes[point,1]) , float(self.itp.probes[point,2]) ]
                     point_warning[i]["rst"] = [ float(self.itp.probes_rst[point,0]), float(self.itp.probes_rst[point,1]) , float(self.itp.probes_rst[point,2]) ]
-                    point_warning[i]["local_el_owner"] = int(self.itp.el_owner[point])
+                    #point_warning[i]["local_el_owner"] = int(self.itp.el_owner[point])
                     point_warning[i]["global_el_owner"] = int(self.itp.glb_el_owner[point])
                     point_warning[i]["error_code"] = int(self.itp.err_code[point])
                     point_warning[i]["test_pattern"] = float(self.itp.test_pattern[point])
