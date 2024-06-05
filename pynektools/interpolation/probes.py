@@ -16,7 +16,7 @@ class probes_c():
             self.dataPath = params_file["dataPath"]
             self.index = params_file["first_index"]
         
-    def __init__(self, comm, filename = None, probes = None, msh = None, write_coords = True, progress_bar = False, modal_search = True):
+    def __init__(self, comm, filename = None, probes = None, msh = None, write_coords = True, progress_bar = False, modal_search = True, communicate_candidate_pairs = True):
         
         rank = comm.Get_rank()
         size = comm.Get_size()
@@ -76,7 +76,7 @@ class probes_c():
 
         # Find where the point in each rank should be
         if comm.Get_rank() == 0 : print("finding points")
-        self.itp.find_points(comm)
+        self.itp.find_points(comm, communicate_candidate_pairs = communicate_candidate_pairs)
         
         # Gather probes to rank 0 again
         self.itp.gather_probes_to_io_rank(0, comm)

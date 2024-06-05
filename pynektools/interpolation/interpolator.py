@@ -130,7 +130,7 @@ class interpolator_c():
         return
 
 
-    def find_points(self, comm, use_kdtree = True, test_tol = 1e-4):
+    def find_points(self, comm, use_kdtree = True, test_tol = 1e-4, communicate_candidate_pairs = True):
         
         rank = comm.Get_rank()
         size = comm.Get_size()
@@ -149,23 +149,39 @@ class interpolator_c():
         nelv = self.x.shape[0]
         self.ranks_ive_checked = []
 
-        # Create a directory that contains which are the colours for each rank in each iteration
-        rank_dict, colour_dict = get_communication_pairs(comm)
-
         # Get candidate ranks from a global kd tree
         candidate_ranks =  get_candidate_ranks(self, comm)
 
-        ## Print for debugging
-        #if rank == 0 :
-        #    for rankk in rank_dict:
-        #        print("Rank: ", rankk)
-        #        print(rank_dict[rankk])
-        #    print("=======")
-        #    
-        #    for rankk in colour_dict:
-        #        print("Rank: ", rankk)
-        #        print(colour_dict[rankk])
+        if communicate_candidate_pairs == True:
+            # Get a global directory with the candidates in all other ranks to determine the best way to communicate
+            global_rank_candidate_dict = get_global_candidate_ranks(self, comm, candidate_ranks)
+        else:
+            global_rank_candidate_dict = None
 
+        # Create a directory that contains which are the colours for each rank in each iteration
+        rank_dict, colour_dict = get_communication_pairs(self, global_rank_candidate_dict, comm)
+
+        if debug: 
+            comm.Barrier()
+            if rank == 0: 
+                print(" ====== ") 
+                print("Global rank candidates")
+                for rr in range(size):
+                    print("rank {}:".format(rr))
+                    print(global_rank_candidate_dict[rr])
+            
+                print(" ====== ") 
+                print("Rank pair directory")
+                for rr in range(size):
+                    print("rank {}:".format(rr))
+                    print(rank_dict[rr])
+
+                print(" ====== ") 
+                print("Rank colours") 
+                for rr in range(size):
+                    print("rank {}:".format(rr))
+                    print(colour_dict[rr])
+            comm.Barrier()
 
         # Iterate over the pairs. Currently it is assumed that the size is a power of two, therefore all ranks need the same iterations
         number_of_its = len(colour_dict[rank])
@@ -176,7 +192,8 @@ class interpolator_c():
             col = colour_dict[rank][j]
 
             if debug:
-                print("rank: {}, finding points. start iteration: {}. Color: {}".format(rank, j, col))
+                """"""
+                #print("rank: {}, finding points. start iteration: {}. Color: {}".format(rank, j, col))
             else:
                 if rank == 0: print("rank: {}, finding points. start iteration: {}. Color: {}".format(rank, j, col))
             start_time = MPI.Wtime()
@@ -330,7 +347,8 @@ class interpolator_c():
                 
                 # For debugging
                 if broadcaster_global_rank == tr and rank == tr and debug == True: 
-                    print(probe_sendcount_broadcaster_is_candidate/3)
+                    """"""
+                    #print(probe_sendcount_broadcaster_is_candidate/3)
                     #print(probe_broadcaster_has)
                 
                 tmp, _ = gather_in_root(probe_rst_broadcaster_is_candidate.reshape((probe_rst_broadcaster_is_candidate.size)), root, np.double,  search_comm)
@@ -702,41 +720,52 @@ def get_bbox_centroids_and_max_dist(bbox):
     return bbox_centroid, bbox_max_dist
 
 
-def get_communication_pairs(comm):
+def get_communication_pairs(self, global_rank_candidate_dict, comm):
 
     size = comm.Get_size()
 
     # Create a list with all the ranks
-    all_ranks = [ii for ii in range(0, size)]
+    ranks = [ii for ii in range(0, size)]
 
     # Create a dictionary to hold the pairs and colors for each rank
     rank_dict = {i: [(i,i)] for i in range(size)}
-    colour_dict = {i: [i] for i in range(size)}
+    colour_dict = {i: [i + size] for i in range(size)}
 
     # Get all unique pairs and colours
-    all_pairs = list(combinations(all_ranks, 2))
-    all_colours = [xx for xx in range(0, len(all_pairs))]
+    if type(global_rank_candidate_dict) is NoneType:
+        pairs = list(combinations(ranks, 2))
+        colours = [xx + size for xx in range(0, len(pairs))]
+    else:
+        pairs_temp = [(i,j) for i in range(0, size) for j in global_rank_candidate_dict[i]]
+        pairs = []
+        for tt in range(0,len(pairs_temp)):
+            i = pairs_temp[tt][0]
+            j = pairs_temp[tt][1]
+            if (i,j) not in pairs and (j,i) not in pairs and i != j:
+                pairs.append((i,j))
+        colours = [xx + size for xx in range(0, len(pairs))]
 
     # Iterate over all the unique pairs to see which ranks communicate each iteration
-    while len(all_pairs) > 0:
+    iterations = 1
+    while len(pairs) > 0:
         rank_send_recv = [] 
         included_pairs = []
         included_col_pairs = []
-        for ii in range (0, len(all_pairs)): 
-            rs = all_pairs[ii][0]
-            rr = all_pairs[ii][1]
+        for ii in range (0, len(pairs)): 
+            rs = pairs[ii][0]
+            rr = pairs[ii][1]
             if rs in rank_send_recv or rr in rank_send_recv:
                 a = 1
             else: 
                 # Update the pair and colour for this rank
-                rank_dict[rs].append(all_pairs[ii])
-                rank_dict[rr].append(all_pairs[ii])
-                colour_dict[rs].append(all_colours[ii])
-                colour_dict[rr].append(all_colours[ii])
+                rank_dict[rs].append(pairs[ii])
+                rank_dict[rr].append(pairs[ii])
+                colour_dict[rs].append(colours[ii])
+                colour_dict[rr].append(colours[ii])
 
                 # Keep track of the ranks that have been included
-                included_pairs.append(all_pairs[ii])
-                included_col_pairs.append(all_colours[ii])
+                included_pairs.append(pairs[ii])
+                included_col_pairs.append(colours[ii])
                     
                 # Update the list of ranks recieved and sent this iteration
                 rank_send_recv.append(rs)
@@ -744,9 +773,19 @@ def get_communication_pairs(comm):
             
         # Now remove the pairs that have been included this iteration
         for pair in included_pairs:
-            all_pairs.remove(pair) 
+            pairs.remove(pair) 
         for pair in included_col_pairs:
-            all_colours.remove(pair)
+            colours.remove(pair)
+
+        iterations = iterations + 1
+        
+        # Check the list. If the iterations are not the same as they should be. Append same pair and rank
+        for ii in range(0, size):
+            testlen = len(rank_dict[ii])
+
+            if testlen != iterations:
+                rank_dict[ii].append((ii,ii))
+                colour_dict[ii].append(ii)
 
     return rank_dict, colour_dict
         
@@ -790,3 +829,33 @@ def get_candidate_ranks(self, comm):
     candidate_ranks = list(set(flattened_list))
 
     return candidate_ranks
+
+
+def get_global_candidate_ranks(self, comm, candidate_ranks):
+
+    size = comm.Get_size()
+
+    # Get arrays with number of candidates per rank
+    ## Tell how many there are per rank
+    n_candidate_ranks_per_rank = np.zeros((size), dtype=np.intc)
+    sendbuf = np.ones((1), dtype = np.intc)* len(candidate_ranks)
+    comm.Allgather([sendbuf, MPI.INT], [n_candidate_ranks_per_rank, MPI.INT])
+
+    ## Allocate an array in all ranks that tells which are the rank candidates in all other ranks
+    nc = np.max(n_candidate_ranks_per_rank)
+    rank_candidates_in_all_ranks = np.zeros((size, nc), dtype = np.intc)
+    rank_candidates_in_this_rank = np.ones((1, nc), dtype = np.intc) * -1 # Set default to -1 to filter out easily later
+    for i in range(0, len(candidate_ranks)):
+        rank_candidates_in_this_rank[0, i] = candidate_ranks[i]
+    comm.Allgather([rank_candidates_in_this_rank, MPI.INT], [rank_candidates_in_all_ranks, MPI.INT])
+
+    # Filter out the -1 entries for ranks that had less candidates than the maximun determined before
+    global_rank_candidate_dict = {i: [] for i in range(size)}
+    for i in range(0, size):
+        for j in range(0, nc):
+            if rank_candidates_in_all_ranks[i,j] != -1:
+                global_rank_candidate_dict[i].append(rank_candidates_in_all_ranks[i,j]) 
+    # Delete the big array
+    del rank_candidates_in_all_ranks
+
+    return global_rank_candidate_dict
