@@ -232,6 +232,7 @@ class interpolator_c():
 
             if communicate != 1:
                 j = j + 1
+                search_comm.Free()
                 continue
 
             # Make each rank in the communicator broadcast their bounding boxes to the others to search
@@ -435,7 +436,7 @@ class interpolator_c():
                 if rank == 0: print("rank: {}, finding points. finished iteration: {}. time(s): {}".format(rank, j, MPI.Wtime()-start_time))
 
             j = j + 1
-        
+            search_comm.Free()
 
         # Final check
         for j in range(0, len(self.test_pattern_partition)):
