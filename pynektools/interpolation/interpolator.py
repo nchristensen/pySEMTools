@@ -130,7 +130,264 @@ class interpolator_c():
         return
 
 
-    def find_points(self, comm, use_kdtree = True, test_tol = 1e-4, communicate_candidate_pairs = True):
+    def find_points(self, comm, use_kdtree = True, test_tol = 1e-4):
+        
+        rank = comm.Get_rank()
+        size = comm.Get_size()
+        self.rank = rank
+        
+        # First each rank finds their bounding box 
+        self.my_bbox = get_bbox_from_coordinates(self.x, self.y, self.z)
+
+
+        if use_kdtree: 
+            # Get bbox centroids and max radius from center to corner
+            self.my_bbox_centroids, self.my_bbox_maxdist = get_bbox_centroids_and_max_dist(self.my_bbox)
+
+            # Build a KDtree with my information
+            self.my_tree = KDTree(self.my_bbox_centroids)
+
+        nelv = self.x.shape[0]
+        self.ranks_ive_checked = []
+
+        # Now recursively make more ranks communicate to search for points that have not been found
+        # Start checking if I have the local ones
+        denom = 1
+        j = 0
+        while j < size and denom <= size + 1:
+
+            # With this logic, first every rank checks by themselves and then 2 check together, then 4 ... up to when all of them check
+            col = int(np.floor(((rank/denom))))
+            if debug:
+                print("rank: {}, finding points. start iteration: {}. Color: {}".format(rank, j, col))
+            else:
+                if rank == 0: print("rank: {}, finding points. start iteration: {}. Color: {}".format(rank, j, col))
+            start_time = MPI.Wtime()
+            denom = denom * 2
+
+            search_comm= comm.Split(color = col, key=rank)
+            search_rank = search_comm.Get_rank()
+            search_size = search_comm.Get_size()
+
+            # Make each rank in the communicator broadcast their bounding boxes to the others to search
+            for broadcaster in range(0, search_size):
+
+                # Points that I have not found to which rank or element belong to
+                not_found = np.where(self.err_code_partition != 1)[0]
+                n_not_found = not_found.size
+                probe_not_found = self.probe_partition[not_found] 
+                probe_rst_not_found = self.probe_rst_partition[not_found] 
+                el_owner_not_found = self.el_owner_partition[not_found] 
+                glb_el_owner_not_found = self.glb_el_owner_partition[not_found] 
+                rank_owner_not_found = self.rank_owner_partition[not_found] 
+                err_code_not_found = self.err_code_partition[not_found] 
+                test_pattern_not_found = self.test_pattern_partition[not_found] 
+        
+                # Tell every rank in the broadcaster of the local communicator their actual rank
+                broadcaster_global_rank = np.ones((1), dtype=np.intc)*rank
+                search_comm.Bcast(broadcaster_global_rank, root=broadcaster)
+
+                # Tell every rank how much they need to allocate for the broadcaster bounding boxes
+                nelv_in_broadcaster = np.ones((1), dtype=np.intc)*nelv
+                search_comm.Bcast(nelv_in_broadcaster, root=broadcaster)
+
+                # Allocate the recieve buffer for bounding boxes
+                bbox_rec_buff = np.empty((nelv_in_broadcaster[0], 6), dtype = np.double)
+
+                # Only in the broadcaster copy the data
+                if search_rank == broadcaster: bbox_rec_buff[:,:] = np.copy(self.my_bbox[:,:])
+
+                # Broadcast the bounding boxes so each rank can check if the points are there
+                search_comm.Bcast(bbox_rec_buff, root=broadcaster)
+     
+                # Only do the search, if my rank has not already searched the broadcaster
+                if broadcaster_global_rank not in self.ranks_ive_checked: 
+
+                    #================================================================================
+                    if not use_kdtree:
+                        # Find a candidate rank to check
+                        i = 0
+                        if self.progress_bar: pbar= tqdm(total=n_not_found)
+                        for pt in probe_not_found:
+                            found_candidate = False
+                            for e in range(0, bbox_rec_buff.shape[0]):
+                                if pt_in_bbox(pt, bbox_rec_buff[e]):
+                                    found_candidate = True
+                                    #el_owner_not_found[i] = e
+                                    err_code_not_found[i] = 1
+                                    #rank_owner_not_found[i] = broadcaster_global_rank
+
+                            if found_candidate == True:
+                                i = i + 1
+                                if self.progress_bar: pbar.update(1)
+                                continue
+                            i = i + 1
+                            if self.progress_bar: pbar.update(1)
+                        if self.progress_bar: pbar.close()
+                    #================================================================================
+                    elif use_kdtree:
+
+                        # Get bbox centroids and max radius from center to corner for the broadcaster
+                        bbox_centroids, bbox_maxdist = get_bbox_centroids_and_max_dist(bbox_rec_buff)
+                
+                        # Create the KDtree
+                        broadcaster_tree = KDTree(bbox_centroids)
+                        # Query the tree with the probes to reduce the bbox search
+                        candidate_elements = broadcaster_tree.query_ball_point(x=probe_not_found, r=bbox_maxdist, p=2.0, eps=1e-8, workers=1, return_sorted=False, return_length=False)
+
+                        # Do a bbox search over the candidate elements, just as it used to be done (The KD tree allows to avoid searching ALL elements)
+                        i = 0
+                        if self.progress_bar: pbar= tqdm(total=n_not_found)
+                        for pt in probe_not_found:
+                            found_candidate = False
+                            for e in candidate_elements[i]:
+                                if pt_in_bbox(pt, bbox_rec_buff[e]):
+                                    found_candidate = True
+                                    #el_owner_not_found[i] = e
+                                    err_code_not_found[i] = 1
+                                    #rank_owner_not_found[i] = broadcaster_global_rank
+
+                            if found_candidate == True:
+                                i = i + 1
+                                if self.progress_bar: pbar.update(1)
+                                continue
+                            i = i + 1
+                            if self.progress_bar: pbar.update(1)
+                        if self.progress_bar: pbar.close()
+                    #================================================================================
+
+
+                    #Now let the brodcaster gather the points that the other ranks think it has
+                    #broadcaster_is_candidate = np.where(rank_owner_not_found == broadcaster_global_rank)[0] 
+                    broadcaster_is_candidate = np.where(err_code_not_found == 1)[0] 
+            
+                    self.ranks_ive_checked.append(broadcaster_global_rank[0])
+                else:
+                    #If this rank has already checked the broadcaster, just produce an empty list
+                    #broadcaster_is_candidate = np.where(rank_owner_not_found == -10000)[0] 
+                    broadcaster_is_candidate = np.where(err_code_not_found == 10000)[0] 
+
+                probe_broadcaster_is_candidate = probe_not_found[broadcaster_is_candidate]
+                probe_rst_broadcaster_is_candidate = probe_rst_not_found[broadcaster_is_candidate]
+                el_owner_broadcaster_is_candidate = el_owner_not_found[broadcaster_is_candidate]
+                glb_el_owner_broadcaster_is_candidate = glb_el_owner_not_found[broadcaster_is_candidate]
+                rank_owner_broadcaster_is_candidate =   rank_owner_not_found[broadcaster_is_candidate]
+                err_code_broadcaster_is_candidate = err_code_not_found[broadcaster_is_candidate] 
+                test_pattern_broadcaster_is_candidate = test_pattern_not_found[broadcaster_is_candidate] 
+                 
+                root = broadcaster
+                tmp, probe_sendcount_broadcaster_is_candidate = gather_in_root(probe_broadcaster_is_candidate.reshape((probe_broadcaster_is_candidate.size)), root, np.double,  search_comm)
+                if type(tmp) != NoneType:
+                    probe_broadcaster_has = tmp.reshape((int(tmp.size/3),3))
+                
+                # For debugging
+                if broadcaster_global_rank == tr and rank == tr and debug == True: 
+                    print(probe_sendcount_broadcaster_is_candidate/3)
+                    #print(probe_broadcaster_has)
+                
+                tmp, _ = gather_in_root(probe_rst_broadcaster_is_candidate.reshape((probe_rst_broadcaster_is_candidate.size)), root, np.double,  search_comm)
+                if type(tmp) != NoneType:
+                    probe_rst_broadcaster_has = tmp.reshape((int(tmp.size/3),3)) 
+                el_owner_broadcaster_has, el_owner_sendcount_broadcaster_is_candidate = gather_in_root(el_owner_broadcaster_is_candidate, root, np.intc,  search_comm)
+                glb_el_owner_broadcaster_has, _ = gather_in_root(glb_el_owner_broadcaster_is_candidate, root, np.intc,  search_comm)
+                rank_owner_broadcaster_has, _ = gather_in_root(rank_owner_broadcaster_is_candidate, root, np.intc,  search_comm)
+                err_code_broadcaster_has, _ = gather_in_root(err_code_broadcaster_is_candidate, root, np.intc,  search_comm)
+                test_pattern_broadcaster_has, _ = gather_in_root(test_pattern_broadcaster_is_candidate, root, np.double,  search_comm)
+                
+
+                # Now let the broadcaster check if it really had the point. It will go through all the elements again and check rst coordinates
+                if search_rank == broadcaster:
+                    probe_broadcaster_has, probe_rst_broadcaster_has, el_owner_broadcaster_has, glb_el_owner_broadcaster_has, rank_owner_broadcaster_has, err_code_broadcaster_has, test_pattern_broadcaster_has = self.find_rst(probe_broadcaster_has, probe_rst_broadcaster_has, el_owner_broadcaster_has, glb_el_owner_broadcaster_has, rank_owner_broadcaster_has, err_code_broadcaster_has, test_pattern_broadcaster_has, broadcaster_global_rank, self.offset_el,  not_found_code = -10, use_kdtree = use_kdtree)
+
+                # Now scatter the results back to all the other ranks 
+                root = broadcaster
+                if search_rank == root:
+                    sendbuf = probe_broadcaster_has.reshape(probe_broadcaster_has.size)
+                else:
+                    sendbuf = None
+                recvbuf = scatter_from_root(sendbuf, probe_sendcount_broadcaster_is_candidate, root, np.double, search_comm) 
+                probe_broadcaster_is_candidate[:,:] = recvbuf.reshape((int(recvbuf.size/3), 3))[:,:]
+                if search_rank == root:
+                    sendbuf = probe_rst_broadcaster_has.reshape(probe_rst_broadcaster_has.size)
+                else:
+                    sendbuf = None
+                recvbuf = scatter_from_root(sendbuf, probe_sendcount_broadcaster_is_candidate, root, np.double, search_comm) 
+                probe_rst_broadcaster_is_candidate[:,:] = recvbuf.reshape((int(recvbuf.size/3), 3))[:,:]
+                if search_rank == root:
+                    sendbuf = el_owner_broadcaster_has
+                else:
+                    sendbuf = None
+                recvbuf = scatter_from_root(sendbuf, el_owner_sendcount_broadcaster_is_candidate, root, np.intc, search_comm) 
+                el_owner_broadcaster_is_candidate[:] = recvbuf[:]
+                if search_rank == root:
+                    #sendbuf = el_owner_broadcaster_has+self.offset_el 
+                    sendbuf = glb_el_owner_broadcaster_has
+                else:
+                    sendbuf = None
+                recvbuf = scatter_from_root(sendbuf, el_owner_sendcount_broadcaster_is_candidate, root, np.intc, search_comm) 
+                glb_el_owner_broadcaster_is_candidate[:] = recvbuf[:]
+                if search_rank == root:
+                    sendbuf = rank_owner_broadcaster_has
+                else:
+                    sendbuf = None
+                recvbuf = scatter_from_root(sendbuf, el_owner_sendcount_broadcaster_is_candidate, root, np.intc, search_comm) 
+                rank_owner_broadcaster_is_candidate[:] = recvbuf[:]
+                if search_rank == root:
+                    sendbuf = err_code_broadcaster_has
+                else:
+                    sendbuf = None
+                recvbuf = scatter_from_root(sendbuf, el_owner_sendcount_broadcaster_is_candidate, root, np.intc, search_comm) 
+                err_code_broadcaster_is_candidate[:] = recvbuf[:]
+                if search_rank == root:
+                    sendbuf = test_pattern_broadcaster_has
+                else:
+                    sendbuf = None
+                recvbuf = scatter_from_root(sendbuf, el_owner_sendcount_broadcaster_is_candidate, root, np.double, search_comm) 
+                test_pattern_broadcaster_is_candidate[:] = recvbuf[:]
+                                
+                # Now that the data is back at the original ranks, put it in the place of the not found list that it should be
+                probe_not_found[broadcaster_is_candidate,:] = probe_broadcaster_is_candidate[:,:]                 
+                probe_rst_not_found[broadcaster_is_candidate,:] = probe_rst_broadcaster_is_candidate[:,:]         
+                el_owner_not_found[broadcaster_is_candidate] = el_owner_broadcaster_is_candidate[:]           
+                glb_el_owner_not_found[broadcaster_is_candidate] = glb_el_owner_broadcaster_is_candidate[:]                
+                rank_owner_not_found[broadcaster_is_candidate] = rank_owner_broadcaster_is_candidate[:]                 
+                err_code_not_found[broadcaster_is_candidate] = err_code_broadcaster_is_candidate[:]  
+                test_pattern_not_found[broadcaster_is_candidate] = test_pattern_broadcaster_is_candidate[:]  
+
+                # at the end of the broadcaster run, update the information from the previously not found data
+                self.probe_partition[not_found,:] = probe_not_found[:,:] 
+                self.probe_rst_partition[not_found] = probe_rst_not_found[:,:]
+                self.el_owner_partition[not_found] = el_owner_not_found[:]
+                self.glb_el_owner_partition[not_found] = glb_el_owner_not_found[:]
+                self.rank_owner_partition[not_found] = rank_owner_not_found[:]
+                self.err_code_partition[not_found] = err_code_not_found[:]
+                self.test_pattern_partition[not_found] = test_pattern_not_found[:]
+           
+            if debug:
+                print("rank: {}, finding points. finished iteration: {}. time(s): {}".format(rank, j, MPI.Wtime()-start_time))
+            else:
+                if rank == 0: print("rank: {}, finding points. finished iteration: {}. time(s): {}".format(rank, j, MPI.Wtime()-start_time))
+
+            j = j + 1
+            search_comm.Free()
+        
+
+        # Final check
+        for j in range(0, len(self.test_pattern_partition)):
+            #After all iteration are done, check if some points were not found. Use the error code and the test pattern
+            if (self.err_code_partition[j] != 1 and self.test_pattern_partition[j] > test_tol):
+                self.err_code_partition[j] = 0
+        
+            #Check also if the rst are too big, then it needs to be outside
+            #if ( abs(self.probe_rst_partition[j, 0]) +  abs(self.probe_rst_partition[j, 1]) +  abs(self.probe_rst_partition[j, 2]) ) > 3.5:
+            #    self.err_code_partition[j] = 0
+
+
+
+        return
+
+
+    def find_points_comm_pairs(self, comm, use_kdtree = True, test_tol = 1e-4, communicate_candidate_pairs = True):
         
         rank = comm.Get_rank()
         size = comm.Get_size()
