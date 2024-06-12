@@ -392,6 +392,12 @@ class interpolator_c():
         rank = comm.Get_rank()
         size = comm.Get_size()
         self.rank = rank
+            
+        if debug:
+            print("rank: {}, finding points. start".format(rank))
+        else:
+            if rank == 0: print("rank: {}, finding points. start".format(rank))
+        start_time = MPI.Wtime()
         
         # First each rank finds their bounding box 
         self.my_bbox = get_bbox_from_coordinates(self.x, self.y, self.z)
@@ -409,303 +415,196 @@ class interpolator_c():
         # Get candidate ranks from a global kd tree
         candidate_ranks =  get_candidate_ranks(self, comm)
 
-        if communicate_candidate_pairs == True:
-            # Get a global directory with the candidates in all other ranks to determine the best way to communicate
-            global_rank_candidate_dict = get_global_candidate_ranks(self, comm, candidate_ranks)
-        else:
-            global_rank_candidate_dict = None
+        # Get a global directory with the candidates in all other ranks to determine the best way to communicate
+        global_rank_candidate_dict = get_global_candidate_ranks(self, comm, candidate_ranks)
 
         # Create a directory that contains which are the colours for each rank in each iteration
-        rank_dict, colour_dict = get_communication_pairs(self, global_rank_candidate_dict, comm)
+        my_pairs, my_source_dest = get_communication_pairs(self, global_rank_candidate_dict, comm)
 
-        if debug: 
-            comm.Barrier()
-            if rank == 0: 
-                print(" ====== ") 
-                print("Global rank candidates")
-                for rr in range(size):
-                    print("rank {}:".format(rr))
-                    print(global_rank_candidate_dict[rr])
-            
-                print(" ====== ") 
-                print("Rank pair directory")
-                for rr in range(size):
-                    print("rank {}:".format(rr))
-                    print(rank_dict[rr])
+        # Create temporaty arrays that store the points that have not been found
+        not_found = np.where(self.err_code_partition != 1)[0]
+        n_not_found = not_found.size
+        probe_not_found = self.probe_partition[not_found] 
+        probe_rst_not_found = self.probe_rst_partition[not_found] 
+        el_owner_not_found = self.el_owner_partition[not_found] 
+        glb_el_owner_not_found = self.glb_el_owner_partition[not_found] 
+        rank_owner_not_found = self.rank_owner_partition[not_found] 
+        err_code_not_found = self.err_code_partition[not_found] 
+        test_pattern_not_found = self.test_pattern_partition[not_found] 
+        
+        # Tell every rank how many points not found each other rank has
+        not_found_in_this_rank= np.ones((1), dtype=np.intc)*n_not_found
+        not_found_in_all_ranks= np.zeros((comm.Get_size()), dtype=np.intc)
+        comm.Allgather([not_found_in_this_rank, MPI.INT], [not_found_in_all_ranks, MPI.INT])
 
-                print(" ====== ") 
-                print("Rank colours") 
-                for rr in range(size):
-                    print("rank {}:".format(rr))
-                    print(colour_dict[rr])
-            comm.Barrier()
+        # Check how many buffers to create to recieve points which think this rank is a candidate
+        n_buff = len(my_source_dest)
 
-        # Iterate over the pairs. Currently it is assumed that the size is a power of two, therefore all ranks need the same iterations
-        number_of_its = len(colour_dict[rank])
+        # Create buffer for data from other ranks
+        buff_probes = []
+        buff_probes_rst = []
+        buff_el_owner = []
+        buff_glb_el_owner = []
+        buff_rank_owner = []
+        buff_err_code = []
+        buff_test_pattern = []
+        for ni in range(n_buff):
+            # The points in each buffer depend on the points on the sending rank
+            npt = not_found_in_all_ranks[my_source_dest[ni]]
+            buff_probes.append(np.zeros((npt, 3), dtype = np.double))
+            buff_probes_rst.append(np.zeros((npt, 3), dtype = np.double))
+            buff_el_owner.append(np.zeros((npt), dtype = np.intc))
+            buff_glb_el_owner.append(np.zeros((npt), dtype = np.intc))
+            buff_rank_owner.append(np.ones((npt), dtype = np.intc)*-1000)
+            buff_err_code.append(np.zeros((npt), dtype = np.intc)) # 0 not found, 1 is found
+            buff_test_pattern.append(np.ones((npt), dtype = np.double)) # test interpolation holder
+
+        # This rank will send their data to the other ranks in the source_dest list.
+        # These buffers will be used to store the data when the points are sent back
+        obuff_probes = []
+        obuff_probes_rst = []
+        obuff_el_owner = []
+        obuff_glb_el_owner = []
+        obuff_rank_owner = []
+        obuff_err_code = []
+        obuff_test_pattern = []
+        for ni in range(n_buff):
+            # The points in each buffer are the same points in this rank
+            npt = n_not_found
+            obuff_probes.append(np.zeros((npt, 3), dtype = np.double))
+            obuff_probes_rst.append(np.zeros((npt, 3), dtype = np.double))
+            obuff_el_owner.append(np.zeros((npt), dtype = np.intc))
+            obuff_glb_el_owner.append(np.zeros((npt), dtype = np.intc))
+            obuff_rank_owner.append(np.ones((npt), dtype = np.intc)*-1000)
+            obuff_err_code.append(np.zeros((npt), dtype = np.intc)) # 0 not found, 1 is found
+            obuff_test_pattern.append(np.ones((npt), dtype = np.double)) # test interpolation holder
+
+
+        # Send all points around, along with supporting arrays
         j = 0
-        while j < number_of_its :
+        req_list_s = []
+        for dest in my_source_dest:
+            req_list_s.append(comm.Isend(probe_not_found, dest = dest, tag = j))
+            req_list_s.append(comm.Isend(probe_rst_not_found, dest = dest, tag = j))
+            req_list_s.append(comm.Isend(el_owner_not_found, dest = dest, tag = j))
+            req_list_s.append(comm.Isend(glb_el_owner_not_found, dest = dest, tag = j))
+            req_list_s.append(comm.Isend(rank_owner_not_found, dest = dest, tag = j))
+            req_list_s.append(comm.Isend(err_code_not_found, dest = dest, tag = j))
+            req_list_s.append(comm.Isend(test_pattern_not_found, dest = dest, tag = j))
 
-            # Get the colour from the dictionary
-            col = colour_dict[rank][j]
+        # Recieve the data from the other ranks
+        req_list_r = []
+        for source_index in range(0, len(my_source_dest)):
+            source = my_source_dest[source_index]
+            req_list_r.append(comm.Irecv(buff_probes[source_index], source = source, tag = j))
+            req_list_r.append(comm.Irecv(buff_probes_rst[source_index], source = source, tag = j))
+            req_list_r.append(comm.Irecv(buff_el_owner[source_index], source = source, tag = j))
+            req_list_r.append(comm.Irecv(buff_glb_el_owner[source_index], source = source, tag = j))
+            req_list_r.append(comm.Irecv(buff_rank_owner[source_index], source = source, tag = j))
+            req_list_r.append(comm.Irecv(buff_err_code[source_index], source = source, tag = j))
+            req_list_r.append(comm.Irecv(buff_test_pattern[source_index], source = source, tag = j))
 
-            if debug:
-                """"""
-                #print("rank: {}, finding points. start iteration: {}. Color: {}".format(rank, j, col))
-            else:
-                if rank == 0: print("rank: {}, finding points. start iteration: {}. Color: {}".format(rank, j, col))
-            start_time = MPI.Wtime()
-            
-            # Split the communicator
-            search_comm= comm.Split(color = col, key=rank)
-            search_rank = search_comm.Get_rank()
-            search_size = search_comm.Get_size()
+        # The buffers will be now filled with data from other ranks
+        for req in req_list_r:
+            req.wait()
+    
+        # Now find the rst coordinates for the points stored in each of the buffers
+        for source_index in range(0, len(my_source_dest)):
+            [buff_probes[source_index], 
+            buff_probes_rst[source_index], 
+            buff_el_owner[source_index],  
+            buff_glb_el_owner[source_index],
+            buff_rank_owner[source_index], 
+            buff_err_code[source_index], 
+            buff_test_pattern[source_index]] = self.find_rst( 
+            buff_probes[source_index], 
+            buff_probes_rst[source_index],
+            buff_el_owner[source_index],
+            buff_glb_el_owner[source_index], 
+            buff_rank_owner[source_index], 
+            buff_err_code[source_index], 
+            buff_test_pattern[source_index], 
+            rank,
+            self.offset_el, 
+            not_found_code = -10, 
+            use_kdtree = use_kdtree)
 
-            # Get the send_recv ranks in this iteration
-            sr = [rank_dict[rank][j][0], rank_dict[rank][j][1]]
 
-            # See which one is the other rank in the communicator
-            if j == 0:
-                # In the first iteration, I should check my own rank, however
-                other_rank = [x for x in sr]
-            else:
-                other_rank = [x for x in sr if x!= rank]
+        # Send the points from other ranks back to the rank that had it
+        j = 1
+        req_list_s = []
+        for dest_index in range(0,len(my_source_dest)):
+            dest = my_source_dest[dest_index]
+            req_list_s.append(comm.Isend(buff_probes[dest_index], dest = dest, tag = j))
+            req_list_s.append(comm.Isend(buff_probes_rst[dest_index], dest = dest, tag = j))
+            req_list_s.append(comm.Isend(buff_el_owner[dest_index], dest = dest, tag = j))
+            req_list_s.append(comm.Isend(buff_glb_el_owner[dest_index], dest = dest, tag = j))
+            req_list_s.append(comm.Isend(buff_rank_owner[dest_index], dest = dest, tag = j))
+            req_list_s.append(comm.Isend(buff_err_code[dest_index], dest = dest, tag = j))
+            req_list_s.append(comm.Isend(buff_test_pattern[dest_index], dest = dest, tag = j))
+        
 
-            # Check if this other rank is in my candidates
-            communicate_data = np.zeros((1), dtype = np.intc)
-            for r in other_rank:
-                if r in candidate_ranks:
-                    communicate_data[0] = 1
+        # Recieve the points that this rank had sent to others
+        req_list_r = []
+        for source_index in range(0, len(my_source_dest)):
+            source = my_source_dest[source_index]
+            req_list_r.append(comm.Irecv(obuff_probes[source_index], source = source, tag = j))
+            req_list_r.append(comm.Irecv(obuff_probes_rst[source_index], source = source, tag = j))
+            req_list_r.append(comm.Irecv(obuff_el_owner[source_index], source = source, tag = j))
+            req_list_r.append(comm.Irecv(obuff_glb_el_owner[source_index], source = source, tag = j))
+            req_list_r.append(comm.Irecv(obuff_rank_owner[source_index], source = source, tag = j))
+            req_list_r.append(comm.Irecv(obuff_err_code[source_index], source = source, tag = j))
+            req_list_r.append(comm.Irecv(obuff_test_pattern[source_index], source = source, tag = j))
 
-            # Retrieve the information from the other rank in the pair
-            comm_communicate_data = np.zeros((search_size), dtype=np.intc)
-            search_comm.Allgather([communicate_data, MPI.INT], [comm_communicate_data, MPI.INT])
+        for req in req_list_r:
+            req.wait()
 
-            # Now, if one of the ranks is candidate for the other, then keep going with the iterations, otherwise do not
-            communicate = 0
-            comm_list = comm_communicate_data.tolist()
-            for c in comm_list:
-                if c == 1:
-                    communicate = 1
+        # Now loop trhough all the points in the buffers that have been sent back and determine which point was found
+        for point in range(0, n_not_found):
 
-            if communicate != 1:
-                j = j + 1
-                search_comm.Free()
+            # These are the error code and test patterns for this point from all the ranks that sent back
+            all_err_codes = [arr[point] for arr in obuff_err_code]
+            all_test_patterns = [arr[point] for arr in obuff_test_pattern]
+
+            # Check if any rank had certainty that it had found the point
+            found_err_code = np.where(np.array(all_err_codes) == 1)[0]
+
+            # If the point was found in any rank, just choose the first one in the list (in case there was more than one founder):
+            if found_err_code.size > 0:
+                index = found_err_code[0]
+                self.probe_partition[point,:] = obuff_probes[index][point,:] 
+                self.probe_rst_partition[point,:] = obuff_probes_rst[index][point,:]
+                self.el_owner_partition[point] = obuff_el_owner[index][point]
+                self.glb_el_owner_partition[point] = obuff_glb_el_owner[index][point]
+                self.rank_owner_partition[point] = obuff_rank_owner[index][point]
+                self.err_code_partition[point] = obuff_err_code[index][point]
+                self.test_pattern_partition[point] = obuff_test_pattern[index][point]
+               
+                #skip the rest of the loop
                 continue
 
-            # Make each rank in the communicator broadcast their bounding boxes to the others to search
-            for broadcaster in range(0, search_size):
-
-                # Points that I have not found to which rank or element belong to
-                not_found = np.where(self.err_code_partition != 1)[0]
-                n_not_found = not_found.size
-                probe_not_found = self.probe_partition[not_found] 
-                probe_rst_not_found = self.probe_rst_partition[not_found] 
-                el_owner_not_found = self.el_owner_partition[not_found] 
-                glb_el_owner_not_found = self.glb_el_owner_partition[not_found] 
-                rank_owner_not_found = self.rank_owner_partition[not_found] 
-                err_code_not_found = self.err_code_partition[not_found] 
-                test_pattern_not_found = self.test_pattern_partition[not_found] 
-        
-                # Tell every rank in the broadcaster of the local communicator their actual rank
-                broadcaster_global_rank = np.ones((1), dtype=np.intc)*rank
-                search_comm.Bcast(broadcaster_global_rank, root=broadcaster)
-
-                # Tell every rank how much they need to allocate for the broadcaster bounding boxes
-                nelv_in_broadcaster = np.ones((1), dtype=np.intc)*nelv
-                search_comm.Bcast(nelv_in_broadcaster, root=broadcaster)
-
-                # Allocate the recieve buffer for bounding boxes
-                bbox_rec_buff = np.empty((nelv_in_broadcaster[0], 6), dtype = np.double)
-
-                # Only in the broadcaster copy the data
-                if search_rank == broadcaster: bbox_rec_buff[:,:] = np.copy(self.my_bbox[:,:])
-
-                # Broadcast the bounding boxes so each rank can check if the points are there
-                search_comm.Bcast(bbox_rec_buff, root=broadcaster)
-     
-                # Only do the search, if my rank has not already searched the broadcaster
-                if broadcaster_global_rank not in self.ranks_ive_checked: 
-
-                    #================================================================================
-                    if not use_kdtree:
-                        # Find a candidate rank to check
-                        i = 0
-                        if self.progress_bar: pbar= tqdm(total=n_not_found)
-                        for pt in probe_not_found:
-                            found_candidate = False
-                            for e in range(0, bbox_rec_buff.shape[0]):
-                                if pt_in_bbox(pt, bbox_rec_buff[e]):
-                                    found_candidate = True
-                                    #el_owner_not_found[i] = e
-                                    err_code_not_found[i] = 1
-                                    #rank_owner_not_found[i] = broadcaster_global_rank
-
-                            if found_candidate == True:
-                                i = i + 1
-                                if self.progress_bar: pbar.update(1)
-                                continue
-                            i = i + 1
-                            if self.progress_bar: pbar.update(1)
-                        if self.progress_bar: pbar.close()
-                    #================================================================================
-                    elif use_kdtree:
-
-                        # Get bbox centroids and max radius from center to corner for the broadcaster
-                        bbox_centroids, bbox_maxdist = get_bbox_centroids_and_max_dist(bbox_rec_buff)
-                
-                        # Create the KDtree
-                        broadcaster_tree = KDTree(bbox_centroids)
-                        # Query the tree with the probes to reduce the bbox search
-                        candidate_elements = broadcaster_tree.query_ball_point(x=probe_not_found, r=bbox_maxdist, p=2.0, eps=1e-8, workers=1, return_sorted=False, return_length=False)
-
-                        # Do a bbox search over the candidate elements, just as it used to be done (The KD tree allows to avoid searching ALL elements)
-                        i = 0
-                        if self.progress_bar: pbar= tqdm(total=n_not_found)
-                        for pt in probe_not_found:
-                            found_candidate = False
-                            for e in candidate_elements[i]:
-                                if pt_in_bbox(pt, bbox_rec_buff[e]):
-                                    found_candidate = True
-                                    #el_owner_not_found[i] = e
-                                    err_code_not_found[i] = 1
-                                    #rank_owner_not_found[i] = broadcaster_global_rank
-
-                            if found_candidate == True:
-                                i = i + 1
-                                if self.progress_bar: pbar.update(1)
-                                continue
-                            i = i + 1
-                            if self.progress_bar: pbar.update(1)
-                        if self.progress_bar: pbar.close()
-                    #================================================================================
-
-
-                    #Now let the brodcaster gather the points that the other ranks think it has
-                    #broadcaster_is_candidate = np.where(rank_owner_not_found == broadcaster_global_rank)[0] 
-                    broadcaster_is_candidate = np.where(err_code_not_found == 1)[0] 
-            
-                    self.ranks_ive_checked.append(broadcaster_global_rank[0])
-                else:
-                    #If this rank has already checked the broadcaster, just produce an empty list
-                    #broadcaster_is_candidate = np.where(rank_owner_not_found == -10000)[0] 
-                    broadcaster_is_candidate = np.where(err_code_not_found == 10000)[0] 
-
-                probe_broadcaster_is_candidate = probe_not_found[broadcaster_is_candidate]
-                probe_rst_broadcaster_is_candidate = probe_rst_not_found[broadcaster_is_candidate]
-                el_owner_broadcaster_is_candidate = el_owner_not_found[broadcaster_is_candidate]
-                glb_el_owner_broadcaster_is_candidate = glb_el_owner_not_found[broadcaster_is_candidate]
-                rank_owner_broadcaster_is_candidate =   rank_owner_not_found[broadcaster_is_candidate]
-                err_code_broadcaster_is_candidate = err_code_not_found[broadcaster_is_candidate] 
-                test_pattern_broadcaster_is_candidate = test_pattern_not_found[broadcaster_is_candidate] 
-                 
-                root = broadcaster
-                tmp, probe_sendcount_broadcaster_is_candidate = gather_in_root(probe_broadcaster_is_candidate.reshape((probe_broadcaster_is_candidate.size)), root, np.double,  search_comm)
-                if type(tmp) != NoneType:
-                    probe_broadcaster_has = tmp.reshape((int(tmp.size/3),3))
-                
-                # For debugging
-                if broadcaster_global_rank == tr and rank == tr and debug == True: 
-                    """"""
-                    #print(probe_sendcount_broadcaster_is_candidate/3)
-                    #print(probe_broadcaster_has)
-                
-                tmp, _ = gather_in_root(probe_rst_broadcaster_is_candidate.reshape((probe_rst_broadcaster_is_candidate.size)), root, np.double,  search_comm)
-                if type(tmp) != NoneType:
-                    probe_rst_broadcaster_has = tmp.reshape((int(tmp.size/3),3)) 
-                el_owner_broadcaster_has, el_owner_sendcount_broadcaster_is_candidate = gather_in_root(el_owner_broadcaster_is_candidate, root, np.intc,  search_comm)
-                glb_el_owner_broadcaster_has, _ = gather_in_root(glb_el_owner_broadcaster_is_candidate, root, np.intc,  search_comm)
-                rank_owner_broadcaster_has, _ = gather_in_root(rank_owner_broadcaster_is_candidate, root, np.intc,  search_comm)
-                err_code_broadcaster_has, _ = gather_in_root(err_code_broadcaster_is_candidate, root, np.intc,  search_comm)
-                test_pattern_broadcaster_has, _ = gather_in_root(test_pattern_broadcaster_is_candidate, root, np.double,  search_comm)
-                
-
-                # Now let the broadcaster check if it really had the point. It will go through all the elements again and check rst coordinates
-                if search_rank == broadcaster:
-                    probe_broadcaster_has, probe_rst_broadcaster_has, el_owner_broadcaster_has, glb_el_owner_broadcaster_has, rank_owner_broadcaster_has, err_code_broadcaster_has, test_pattern_broadcaster_has = self.find_rst(probe_broadcaster_has, probe_rst_broadcaster_has, el_owner_broadcaster_has, glb_el_owner_broadcaster_has, rank_owner_broadcaster_has, err_code_broadcaster_has, test_pattern_broadcaster_has, broadcaster_global_rank, self.offset_el,  not_found_code = -10, use_kdtree = use_kdtree)
-
-                # Now scatter the results back to all the other ranks 
-                root = broadcaster
-                if search_rank == root:
-                    sendbuf = probe_broadcaster_has.reshape(probe_broadcaster_has.size)
-                else:
-                    sendbuf = None
-                recvbuf = scatter_from_root(sendbuf, probe_sendcount_broadcaster_is_candidate, root, np.double, search_comm) 
-                probe_broadcaster_is_candidate[:,:] = recvbuf.reshape((int(recvbuf.size/3), 3))[:,:]
-                if search_rank == root:
-                    sendbuf = probe_rst_broadcaster_has.reshape(probe_rst_broadcaster_has.size)
-                else:
-                    sendbuf = None
-                recvbuf = scatter_from_root(sendbuf, probe_sendcount_broadcaster_is_candidate, root, np.double, search_comm) 
-                probe_rst_broadcaster_is_candidate[:,:] = recvbuf.reshape((int(recvbuf.size/3), 3))[:,:]
-                if search_rank == root:
-                    sendbuf = el_owner_broadcaster_has
-                else:
-                    sendbuf = None
-                recvbuf = scatter_from_root(sendbuf, el_owner_sendcount_broadcaster_is_candidate, root, np.intc, search_comm) 
-                el_owner_broadcaster_is_candidate[:] = recvbuf[:]
-                if search_rank == root:
-                    #sendbuf = el_owner_broadcaster_has+self.offset_el 
-                    sendbuf = glb_el_owner_broadcaster_has
-                else:
-                    sendbuf = None
-                recvbuf = scatter_from_root(sendbuf, el_owner_sendcount_broadcaster_is_candidate, root, np.intc, search_comm) 
-                glb_el_owner_broadcaster_is_candidate[:] = recvbuf[:]
-                if search_rank == root:
-                    sendbuf = rank_owner_broadcaster_has
-                else:
-                    sendbuf = None
-                recvbuf = scatter_from_root(sendbuf, el_owner_sendcount_broadcaster_is_candidate, root, np.intc, search_comm) 
-                rank_owner_broadcaster_is_candidate[:] = recvbuf[:]
-                if search_rank == root:
-                    sendbuf = err_code_broadcaster_has
-                else:
-                    sendbuf = None
-                recvbuf = scatter_from_root(sendbuf, el_owner_sendcount_broadcaster_is_candidate, root, np.intc, search_comm) 
-                err_code_broadcaster_is_candidate[:] = recvbuf[:]
-                if search_rank == root:
-                    sendbuf = test_pattern_broadcaster_has
-                else:
-                    sendbuf = None
-                recvbuf = scatter_from_root(sendbuf, el_owner_sendcount_broadcaster_is_candidate, root, np.double, search_comm) 
-                test_pattern_broadcaster_is_candidate[:] = recvbuf[:]
-                                
-                # Now that the data is back at the original ranks, put it in the place of the not found list that it should be
-                probe_not_found[broadcaster_is_candidate,:] = probe_broadcaster_is_candidate[:,:]                 
-                probe_rst_not_found[broadcaster_is_candidate,:] = probe_rst_broadcaster_is_candidate[:,:]         
-                el_owner_not_found[broadcaster_is_candidate] = el_owner_broadcaster_is_candidate[:]           
-                glb_el_owner_not_found[broadcaster_is_candidate] = glb_el_owner_broadcaster_is_candidate[:]                
-                rank_owner_not_found[broadcaster_is_candidate] = rank_owner_broadcaster_is_candidate[:]                 
-                err_code_not_found[broadcaster_is_candidate] = err_code_broadcaster_is_candidate[:]  
-                test_pattern_not_found[broadcaster_is_candidate] = test_pattern_broadcaster_is_candidate[:]  
-
-                # at the end of the broadcaster run, update the information from the previously not found data
-                self.probe_partition[not_found,:] = probe_not_found[:,:] 
-                self.probe_rst_partition[not_found] = probe_rst_not_found[:,:]
-                self.el_owner_partition[not_found] = el_owner_not_found[:]
-                self.glb_el_owner_partition[not_found] = glb_el_owner_not_found[:]
-                self.rank_owner_partition[not_found] = rank_owner_not_found[:]
-                self.err_code_partition[not_found] = err_code_not_found[:]
-                self.test_pattern_partition[not_found] = test_pattern_not_found[:]
+            # If the point was not found with certainty, then choose as owner the the one that produced the smaller error in the test pattern
+            min_test_pattern = np.where(np.array(all_test_patterns) == np.array(all_test_patterns).min())[0]
+            if min_test_pattern.size > 0:
+                index = min_test_pattern[0]
+                self.probe_partition[point,:] = obuff_probes[index][point,:] 
+                self.probe_rst_partition[point,:] = obuff_probes_rst[index][point,:]
+                self.el_owner_partition[point] = obuff_el_owner[index][point]
+                self.glb_el_owner_partition[point] = obuff_glb_el_owner[index][point]
+                self.rank_owner_partition[point] = obuff_rank_owner[index][point]
+                self.err_code_partition[point] = obuff_err_code[index][point]
+                self.test_pattern_partition[point] = obuff_test_pattern[index][point]
            
-            if debug:
-                print("rank: {}, finding points. finished iteration: {}. time(s): {}".format(rank, j, MPI.Wtime()-start_time))
-            else:
-                if rank == 0: print("rank: {}, finding points. finished iteration: {}. time(s): {}".format(rank, j, MPI.Wtime()-start_time))
-
-            j = j + 1
-            search_comm.Free()
-
-        # Final check
+        # Go through the points again, if the test pattern was too large, mark that point as not found
         for j in range(0, len(self.test_pattern_partition)):
             #After all iteration are done, check if some points were not found. Use the error code and the test pattern
             if (self.err_code_partition[j] != 1 and self.test_pattern_partition[j] > test_tol):
                 self.err_code_partition[j] = 0
-        
-            #Check also if the rst are too big, then it needs to be outside
-            #if ( abs(self.probe_rst_partition[j, 0]) +  abs(self.probe_rst_partition[j, 1]) +  abs(self.probe_rst_partition[j, 2]) ) > 3.5:
-            #    self.err_code_partition[j] = 0
-
-
+            
+        if debug:
+            print("rank: {}, finding points. finished. time(s): {}".format(rank, MPI.Wtime()-start_time))
+        else:
+            if rank == 0: print("rank: {}, finding points. finished. time(s): {}".format(rank, MPI.Wtime()-start_time))
 
         return
     
@@ -985,14 +884,9 @@ def get_communication_pairs(self, global_rank_candidate_dict, comm):
     # Create a list with all the ranks
     ranks = [ii for ii in range(0, size)]
 
-    # Create a dictionary to hold the pairs and colors for each rank
-    rank_dict = {i: [(i,i)] for i in range(size)}
-    colour_dict = {i: [i + size] for i in range(size)}
-
     # Get all unique pairs and colours
     if type(global_rank_candidate_dict) is NoneType:
         pairs = list(combinations(ranks, 2))
-        colours = [xx + size for xx in range(0, len(pairs))]
     else:
         pairs_temp = [(i,j) for i in range(0, size) for j in global_rank_candidate_dict[i]]
         pairs = []
@@ -1001,51 +895,15 @@ def get_communication_pairs(self, global_rank_candidate_dict, comm):
             j = pairs_temp[tt][1]
             if (i,j) not in pairs and (j,i) not in pairs and i != j:
                 pairs.append((i,j))
-        colours = [xx + size for xx in range(0, len(pairs))]
 
-    # Iterate over all the unique pairs to see which ranks communicate each iteration
-    iterations = 1
-    while len(pairs) > 0:
-        rank_send_recv = [] 
-        included_pairs = []
-        included_col_pairs = []
-        for ii in range (0, len(pairs)): 
-            rs = pairs[ii][0]
-            rr = pairs[ii][1]
-            if rs in rank_send_recv or rr in rank_send_recv:
-                a = 1
-            else: 
-                # Update the pair and colour for this rank
-                rank_dict[rs].append(pairs[ii])
-                rank_dict[rr].append(pairs[ii])
-                colour_dict[rs].append(colours[ii])
-                colour_dict[rr].append(colours[ii])
+    # Find the pairs in which my rank is part of
+    rank = comm.Get_rank()
+    my_pairs = [(i,j) for i,j in pairs if i == rank or j == rank]
+    my_source_dest = [i if i != rank else j for (i,j) in my_pairs]
+    my_source_dest.append(rank)
+    my_source_dest.sort()
 
-                # Keep track of the ranks that have been included
-                included_pairs.append(pairs[ii])
-                included_col_pairs.append(colours[ii])
-                    
-                # Update the list of ranks recieved and sent this iteration
-                rank_send_recv.append(rs)
-                rank_send_recv.append(rr)
-            
-        # Now remove the pairs that have been included this iteration
-        for pair in included_pairs:
-            pairs.remove(pair) 
-        for pair in included_col_pairs:
-            colours.remove(pair)
-
-        iterations = iterations + 1
-        
-        # Check the list. If the iterations are not the same as they should be. Append same pair and rank
-        for ii in range(0, size):
-            testlen = len(rank_dict[ii])
-
-            if testlen != iterations:
-                rank_dict[ii].append((ii,ii))
-                colour_dict[ii].append(ii)
-
-    return rank_dict, colour_dict
+    return my_pairs, my_source_dest
         
 def get_candidate_ranks(self, comm):
 
