@@ -21,12 +21,12 @@ class POD_c():
         rank     = comm.Get_rank()
         size     = comm.Get_size()
 
-        # Set number of threads to be used
-        os.environ["OMP_NUM_THREADS"] = str(threads)
-        os.environ["OPENBLAS_NUM_THREADS"] = str(threads)
-        os.environ["MKL_NUM_THREADS"] = str(threads)
-        os.environ["VECLIB_MAXIMUM_THREADS"] = str(threads)
-        os.environ["NUMEXPR_NUM_THREADS"] = str(threads)
+        ## Set number of threads to be used
+        #os.environ["OMP_NUM_THREADS"] = str(threads)
+        #os.environ["OPENBLAS_NUM_THREADS"] = str(threads)
+        #os.environ["MKL_NUM_THREADS"] = str(threads)
+        #os.environ["VECLIB_MAXIMUM_THREADS"] = str(threads)
+        #os.environ["NUMEXPR_NUM_THREADS"] = str(threads)
 
         # Initialize parameters
         self.k            = number_of_modes_to_update
