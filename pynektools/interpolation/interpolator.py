@@ -413,15 +413,16 @@ class interpolator_c():
         self.ranks_ive_checked = []
 
         # Get candidate ranks from a global kd tree
-        candidate_ranks =  get_candidate_ranks(self, comm)
+        # These are the destination ranks
+        my_dest =  get_candidate_ranks(self, comm)
 
-        # Get a global directory with the candidates in all other ranks to determine the best way to communicate
-        global_rank_candidate_dict = get_global_candidate_ranks(self, comm, candidate_ranks)
+        # Get a global array with the candidates in all other ranks to determine the best way to communicate
+        global_rank_candidate = get_global_candidate_ranks(self, comm, my_dest)
 
-        # Create a directory that contains which are the colours for each rank in each iteration
-        my_pairs, my_source_dest = get_communication_pairs(self, global_rank_candidate_dict, comm)
+        # Get the ranks that have me in their dest, so they become my sources (This tank will check their data)
+        my_source = np.where(np.any(global_rank_candidate == rank, axis = 1))[0]
 
-        # Create temporaty arrays that store the points that have not been found
+        # Create temporary arrays that store the points that have not been found
         not_found = np.where(self.err_code_partition != 1)[0]
         n_not_found = not_found.size
         probe_not_found = self.probe_partition[not_found] 
@@ -435,11 +436,10 @@ class interpolator_c():
         # Tell every rank how many points not found each other rank has
         not_found_in_this_rank= np.ones((1), dtype=np.intc)*n_not_found
         not_found_in_all_ranks= np.zeros((comm.Get_size()), dtype=np.intc)
-        comm.Allgather([not_found_in_this_rank, MPI.INT], [not_found_in_all_ranks, MPI.INT])
+        comm.Allgather([not_found_in_this_rank, MPI.INT], [not_found_in_all_ranks, MPI.INT]) # This allgather can be changed with point2point
 
-        # Check how many buffers to create to recieve points which think this rank is a candidate
-        n_buff = len(my_source_dest)
-
+        # Check how many buffers to create to recieve points from other ranks that think this rank is a candidate
+        n_buff = len(my_source)
         # Create buffer for data from other ranks
         buff_probes = []
         buff_probes_rst = []
@@ -450,7 +450,7 @@ class interpolator_c():
         buff_test_pattern = []
         for ni in range(n_buff):
             # The points in each buffer depend on the points on the sending rank
-            npt = not_found_in_all_ranks[my_source_dest[ni]]
+            npt = not_found_in_all_ranks[my_source[ni]]
             buff_probes.append(np.zeros((npt, 3), dtype = np.double))
             buff_probes_rst.append(np.zeros((npt, 3), dtype = np.double))
             buff_el_owner.append(np.zeros((npt), dtype = np.intc))
@@ -459,8 +459,9 @@ class interpolator_c():
             buff_err_code.append(np.zeros((npt), dtype = np.intc)) # 0 not found, 1 is found
             buff_test_pattern.append(np.ones((npt), dtype = np.double)) # test interpolation holder
 
-        # This rank will send their data to the other ranks in the source_dest list.
+        # This rank will send its data to the other ranks in the dest list.
         # These buffers will be used to store the data when the points are sent back
+        on_buff = len(my_dest)
         obuff_probes = []
         obuff_probes_rst = []
         obuff_el_owner = []
@@ -468,7 +469,7 @@ class interpolator_c():
         obuff_rank_owner = []
         obuff_err_code = []
         obuff_test_pattern = []
-        for ni in range(n_buff):
+        for ni in range(on_buff):
             # The points in each buffer are the same points in this rank
             npt = n_not_found
             obuff_probes.append(np.zeros((npt, 3), dtype = np.double))
@@ -483,7 +484,7 @@ class interpolator_c():
         # Send all points around, along with supporting arrays
         j = 0
         req_list_s = []
-        for dest in my_source_dest:
+        for dest in my_dest:
             req_list_s.append(comm.Isend(probe_not_found, dest = dest, tag = j))
             req_list_s.append(comm.Isend(probe_rst_not_found, dest = dest, tag = j))
             req_list_s.append(comm.Isend(el_owner_not_found, dest = dest, tag = j))
@@ -494,8 +495,8 @@ class interpolator_c():
 
         # Recieve the data from the other ranks
         req_list_r = []
-        for source_index in range(0, len(my_source_dest)):
-            source = my_source_dest[source_index]
+        for source_index in range(0, len(my_source)):
+            source = my_source[source_index]
             req_list_r.append(comm.Irecv(buff_probes[source_index], source = source, tag = j))
             req_list_r.append(comm.Irecv(buff_probes_rst[source_index], source = source, tag = j))
             req_list_r.append(comm.Irecv(buff_el_owner[source_index], source = source, tag = j))
@@ -509,7 +510,7 @@ class interpolator_c():
             req.wait()
     
         # Now find the rst coordinates for the points stored in each of the buffers
-        for source_index in range(0, len(my_source_dest)):
+        for source_index in range(0, len(my_source)):
             [buff_probes[source_index], 
             buff_probes_rst[source_index], 
             buff_el_owner[source_index],  
@@ -533,8 +534,8 @@ class interpolator_c():
         # Send the points from other ranks back to the rank that had it
         j = 1
         req_list_s = []
-        for dest_index in range(0,len(my_source_dest)):
-            dest = my_source_dest[dest_index]
+        for dest_index in range(0,len(my_source)):
+            dest = my_source[dest_index]
             req_list_s.append(comm.Isend(buff_probes[dest_index], dest = dest, tag = j))
             req_list_s.append(comm.Isend(buff_probes_rst[dest_index], dest = dest, tag = j))
             req_list_s.append(comm.Isend(buff_el_owner[dest_index], dest = dest, tag = j))
@@ -546,8 +547,8 @@ class interpolator_c():
 
         # Recieve the points that this rank had sent to others
         req_list_r = []
-        for source_index in range(0, len(my_source_dest)):
-            source = my_source_dest[source_index]
+        for source_index in range(0, len(my_dest)):
+            source = my_dest[source_index]
             req_list_r.append(comm.Irecv(obuff_probes[source_index], source = source, tag = j))
             req_list_r.append(comm.Irecv(obuff_probes_rst[source_index], source = source, tag = j))
             req_list_r.append(comm.Irecv(obuff_el_owner[source_index], source = source, tag = j))
@@ -963,15 +964,15 @@ def get_global_candidate_ranks(self, comm, candidate_ranks):
     rank_candidates_in_this_rank = np.ones((1, nc), dtype = np.intc) * -1 # Set default to -1 to filter out easily later
     for i in range(0, len(candidate_ranks)):
         rank_candidates_in_this_rank[0, i] = candidate_ranks[i]
-    comm.Allgather([rank_candidates_in_this_rank, MPI.INT], [rank_candidates_in_all_ranks, MPI.INT])
+    comm.Allgather([rank_candidates_in_this_rank, MPI.INT], [rank_candidates_in_all_ranks, MPI.INT]) # This all gather can be changed for gather and broadcast
 
-    # Filter out the -1 entries for ranks that had less candidates than the maximun determined before
-    global_rank_candidate_dict = {i: [] for i in range(size)}
-    for i in range(0, size):
-        for j in range(0, nc):
-            if rank_candidates_in_all_ranks[i,j] != -1:
-                global_rank_candidate_dict[i].append(rank_candidates_in_all_ranks[i,j]) 
-    # Delete the big array
-    del rank_candidates_in_all_ranks
+    ## Filter out the -1 entries for ranks that had less candidates than the maximun determined before
+    #global_rank_candidate_dict = {i: [] for i in range(size)}
+    #for i in range(0, size):
+    #    for j in range(0, nc):
+    #        if rank_candidates_in_all_ranks[i,j] != -1:
+    #            global_rank_candidate_dict[i].append(rank_candidates_in_all_ranks[i,j]) 
+    ## Delete the big array
+    #del rank_candidates_in_all_ranks
 
-    return global_rank_candidate_dict
+    return rank_candidates_in_all_ranks
