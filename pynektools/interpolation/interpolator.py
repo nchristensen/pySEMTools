@@ -865,7 +865,7 @@ def pt_in_bbox(pt, bbox, rel_tol = 0.01):
 def get_bbox_from_coordinates(x, y, z):
 
     nelv = x.shape[0]
-    lx = field.shape[3] # This is not a mistake. This is how the data is read
+    lx = x.shape[3] # This is not a mistake. This is how the data is read
     ly = x.shape[2]
     lz = x.shape[1]
 
