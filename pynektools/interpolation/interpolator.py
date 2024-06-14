@@ -130,7 +130,7 @@ class interpolator_c():
         return
 
 
-    def find_points(self, comm, use_kdtree = True, test_tol = 1e-4):
+    def find_points(self, comm, use_kdtree = True, test_tol = 1e-4, elem_percent_expansion = 0.01):
         
         rank = comm.Get_rank()
         size = comm.Get_size()
@@ -211,7 +211,7 @@ class interpolator_c():
                         for pt in probe_not_found:
                             found_candidate = False
                             for e in range(0, bbox_rec_buff.shape[0]):
-                                if pt_in_bbox(pt, bbox_rec_buff[e]):
+                                if pt_in_bbox(pt, bbox_rec_buff[e], rel_tol = elem_percent_expansion):
                                     found_candidate = True
                                     #el_owner_not_found[i] = e
                                     err_code_not_found[i] = 1
@@ -233,7 +233,7 @@ class interpolator_c():
                         # Create the KDtree
                         broadcaster_tree = KDTree(bbox_centroids)
                         # Query the tree with the probes to reduce the bbox search
-                        candidate_elements = broadcaster_tree.query_ball_point(x=probe_not_found, r=bbox_maxdist, p=2.0, eps=1e-8, workers=1, return_sorted=False, return_length=False)
+                        candidate_elements = broadcaster_tree.query_ball_point(x=probe_not_found, r=bbox_maxdist, p=2.0, eps=elem_percent_expansion, workers=1, return_sorted=False, return_length=False)
 
                         # Do a bbox search over the candidate elements, just as it used to be done (The KD tree allows to avoid searching ALL elements)
                         i = 0
@@ -241,7 +241,7 @@ class interpolator_c():
                         for pt in probe_not_found:
                             found_candidate = False
                             for e in candidate_elements[i]:
-                                if pt_in_bbox(pt, bbox_rec_buff[e]):
+                                if pt_in_bbox(pt, bbox_rec_buff[e], rel_tol = elem_percent_expansion):
                                     found_candidate = True
                                     #el_owner_not_found[i] = e
                                     err_code_not_found[i] = 1
@@ -297,7 +297,7 @@ class interpolator_c():
 
                 # Now let the broadcaster check if it really had the point. It will go through all the elements again and check rst coordinates
                 if search_rank == broadcaster:
-                    probe_broadcaster_has, probe_rst_broadcaster_has, el_owner_broadcaster_has, glb_el_owner_broadcaster_has, rank_owner_broadcaster_has, err_code_broadcaster_has, test_pattern_broadcaster_has = self.find_rst(probe_broadcaster_has, probe_rst_broadcaster_has, el_owner_broadcaster_has, glb_el_owner_broadcaster_has, rank_owner_broadcaster_has, err_code_broadcaster_has, test_pattern_broadcaster_has, broadcaster_global_rank, self.offset_el,  not_found_code = -10, use_kdtree = use_kdtree)
+                    probe_broadcaster_has, probe_rst_broadcaster_has, el_owner_broadcaster_has, glb_el_owner_broadcaster_has, rank_owner_broadcaster_has, err_code_broadcaster_has, test_pattern_broadcaster_has = self.find_rst(probe_broadcaster_has, probe_rst_broadcaster_has, el_owner_broadcaster_has, glb_el_owner_broadcaster_has, rank_owner_broadcaster_has, err_code_broadcaster_has, test_pattern_broadcaster_has, broadcaster_global_rank, self.offset_el,  not_found_code = -10, use_kdtree = use_kdtree, elem_percent_expansion = elem_percent_expansion)
 
                 # Now scatter the results back to all the other ranks 
                 root = broadcaster
@@ -387,7 +387,7 @@ class interpolator_c():
         return
 
 
-    def find_points_comm_pairs(self, comm, use_kdtree = True, test_tol = 1e-4, communicate_candidate_pairs = True):
+    def find_points_comm_pairs(self, comm, use_kdtree = True, test_tol = 1e-4, communicate_candidate_pairs = True, elem_percent_expansion = 0.01):
         
         rank = comm.Get_rank()
         size = comm.Get_size()
@@ -535,7 +535,8 @@ class interpolator_c():
             rank,
             self.offset_el, 
             not_found_code = -10, 
-            use_kdtree = use_kdtree)
+            use_kdtree = use_kdtree,
+            elem_percent_expansion = elem_percent_expansion)
 
         # Set the request to Recieve back the data that I have sent to my candidates
         oreq_list_r = []
@@ -621,7 +622,7 @@ class interpolator_c():
 
         return
     
-    def find_rst(self, probes, probes_rst, el_owner, glb_el_owner, rank_owner, err_code, test_pattern, rank, offset_el, not_found_code = -10, use_kdtree = True, test_interp = True):
+    def find_rst(self, probes, probes_rst, el_owner, glb_el_owner, rank_owner, err_code, test_pattern, rank, offset_el, not_found_code = -10, use_kdtree = True, test_interp = True, elem_percent_expansion = 0.01):
         
         # Reset the element owner and the error code so this rank checks again
         #el_owner[:] = 0
@@ -636,7 +637,7 @@ class interpolator_c():
             for pt in probes:
                 element_candidates.append([])        
                 for e in range(0, self.my_bbox.shape[0]):
-                    if pt_in_bbox(pt, self.my_bbox[e]):
+                    if pt_in_bbox(pt, self.my_bbox[e], rel_tol = elem_percent_expansion):
                         element_candidates[i].append(e)
                 i = i + 1
                 if self.progress_bar: pbar.update(1)
@@ -645,7 +646,7 @@ class interpolator_c():
         elif use_kdtree:
                 
             # Query the tree with the probes to reduce the bbox search
-            candidate_elements = self.my_tree.query_ball_point(x=probes, r=self.my_bbox_maxdist, p=2.0, eps=1e-8, workers=1, return_sorted=False, return_length=False)
+            candidate_elements = self.my_tree.query_ball_point(x=probes, r=self.my_bbox_maxdist, p=2.0, eps=elem_percent_expansion, workers=1, return_sorted=False, return_length=False)
             
             element_candidates = []
             i = 0
@@ -653,7 +654,7 @@ class interpolator_c():
             for pt in probes:
                 element_candidates.append([])        
                 for e in candidate_elements[i]:
-                    if pt_in_bbox(pt, self.my_bbox[e]):
+                    if pt_in_bbox(pt, self.my_bbox[e], rel_tol = elem_percent_expansion):
                         element_candidates[i].append(e)
                 i = i + 1
                 if self.progress_bar: pbar.update(1)
@@ -831,18 +832,27 @@ class interpolator_c():
         return sampled_field_at_probe
 
 
-def pt_in_bbox(pt, bbox):
-                            
+def pt_in_bbox(pt, bbox, rel_tol = 0.01):
+    # rel_tol=1% enlargement of the bounding box by default
+
     state = False
     found_x = False
     found_y = False
     found_z = False
-                     
-    if pt[0] >= bbox[0] and pt[0] <= bbox[1]: 
+    
+    d = bbox[1] - bbox[0]
+    tol = d*rel_tol/2
+    if pt[0] >= bbox[0] - tol  and pt[0] <= bbox[1] + tol: 
         found_x=True
-    if pt[1] >= bbox[2] and pt[1] <= bbox[3]: 
+    
+    d = bbox[3] - bbox[2]
+    tol = d*rel_tol/2
+    if pt[1] >= bbox[2] - tol and pt[1] <= bbox[3] + tol: 
         found_y=True
-    if pt[2] >= bbox[4] and pt[2] <= bbox[5]: 
+
+    d = bbox[5] - bbox[4]
+    tol = d*rel_tol/2
+    if pt[2] >= bbox[4] - tol and pt[2] <= bbox[5] + tol: 
         found_z=True
 
     if found_x == True and found_y == True and found_z == True: 
@@ -855,9 +865,9 @@ def pt_in_bbox(pt, bbox):
 def get_bbox_from_coordinates(x, y, z):
 
     nelv = x.shape[0]
-    lx = x.shape[1]
+    lx = field.shape[3] # This is not a mistake. This is how the data is read
     ly = x.shape[2]
-    lz = x.shape[3]
+    lz = x.shape[1]
 
     bbox = np.zeros((nelv, 6), dtype = np.double)
 
