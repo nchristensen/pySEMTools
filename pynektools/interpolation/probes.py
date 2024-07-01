@@ -16,7 +16,7 @@ class probes_c():
             self.dataPath = params_file["dataPath"]
             self.index = params_file["first_index"]
         
-    def __init__(self, comm, filename = None, probes = None, msh = None, write_coords = True, progress_bar = False, modal_search = True, communicate_candidate_pairs = False, elem_percent_expansion = 0.01):
+    def __init__(self, comm, filename = None, probes = None, msh = None, write_coords = True, progress_bar = False, modal_search = True, communicate_candidate_pairs = True, elem_percent_expansion = 0.01):
         
         rank = comm.Get_rank()
         size = comm.Get_size()
