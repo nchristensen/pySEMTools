@@ -60,6 +60,7 @@ if comm.Get_rank() == 0:
     print('The r coordinates were found correctly: {}'.format(np.allclose(exact_r, found_r)))
     print('The s coordinates were found correctly: {}'.format(np.allclose(exact_s, found_s)))
     print('The t coordinates were found correctly: {}'.format(np.allclose(exact_t, found_t)))
+    print('sem: The last point took: {} iterations'.format(ei.iterations))
 
     # Interpolate back to the xyz coordinates
     for k in range(0, msh_ref.lz):

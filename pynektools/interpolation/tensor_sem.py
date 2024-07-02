@@ -28,12 +28,14 @@ class element_interpolator_c():
         get_basis_transformation_matrices(self)
         
         # Allocate relevant arrays
+        ## The xyz coordinates are invariant
         self.xj = np.zeros((max_pts,1, 1, 1))
         self.yj = np.zeros((max_pts,1, 1, 1))
         self.zj = np.zeros((max_pts,1, 1, 1))
-        self.rj = np.zeros_like(self.xj)
-        self.sj = np.zeros_like(self.yj)
-        self.tj = np.zeros_like(self.zj)
+        ## The rst coordinates depend on the point and on the element
+        self.rj = np.zeros((max_pts,max_elems, 1, 1))
+        self.sj = np.zeros((max_pts,max_elems, 1, 1))
+        self.tj = np.zeros((max_pts,max_elems, 1, 1))
         self.rstj = np.zeros((max_pts, max_elems, 3,1))
         self.eps_rst = np.ones((max_pts, max_elems, 3,1))
         self.jac = np.zeros((max_pts, max_elems, 3,3))
@@ -63,12 +65,11 @@ class element_interpolator_c():
                 self.z_e_hat = np.einsum('ijkl,ijlm->ijkm', self.v_inv, self.z_e[:npoints,:nelems,:,:])
             
             else:
-
+                
+                # Keep in mind, the operators are already transposed here.
                 self.x_e_hat = apply_operators_3d(self.v1d_inv, self.v1d_inv, self.v1d_inv, self.x_e[:npoints,:nelems,:,:])
                 self.y_e_hat = apply_operators_3d(self.v1d_inv, self.v1d_inv, self.v1d_inv, self.y_e[:npoints,:nelems,:,:])
-                self.z_e_hat = apply_operators_3d(self.v1d_inv, self.v1d_inv, self.v1d_inv, self.z_e[:npoints,:nelems,:,:])
-
-
+                self.z_e_hat = apply_operators_3d(self.v1d_inv, self.v1d_inv, self.v1d_inv, self.z_e[:npoints,:nelems,:,:]) 
         else:
             raise RuntimeError("Non-modal search is not implemented with tensor support")
 
@@ -85,20 +86,20 @@ class element_interpolator_c():
         nelems = self.x_e_hat.shape[1]
         n = self.n
 
-        self.rj[:npoints,:,:,:] = rj[:,:,:,:]
-        self.sj[:npoints,:,:,:] = sj[:,:,:,:]
-        self.tj[:npoints,:,:,:] = tj[:,:,:,:]
+        self.rj[:npoints,:nelems,:,:] = rj[:,:,:,:]
+        self.sj[:npoints,:nelems,:,:] = sj[:,:,:,:]
+        self.tj[:npoints,:nelems,:,:] = tj[:,:,:,:]
 
         # Find the basis for each coordinate separately
         if self.modal_search:
             # If modal search, the basis is legendre
-            ortho_basis_rj = legendre_basis_at_xtest(n, self.rj[:npoints,:,:,:])
-            ortho_basis_sj = legendre_basis_at_xtest(n, self.sj[:npoints,:,:,:])
-            ortho_basis_tj = legendre_basis_at_xtest(n, self.tj[:npoints,:,:,:])
+            ortho_basis_rj = legendre_basis_at_xtest(n, self.rj[:npoints,:nelems,:,:])
+            ortho_basis_sj = legendre_basis_at_xtest(n, self.sj[:npoints,:nelems,:,:])
+            ortho_basis_tj = legendre_basis_at_xtest(n, self.tj[:npoints,:nelems,:,:])
 
-            ortho_basis_prm_rj = legendre_basis_derivative_at_xtest(ortho_basis_rj, self.rj[:npoints,:,:,:])
-            ortho_basis_prm_sj = legendre_basis_derivative_at_xtest(ortho_basis_sj, self.sj[:npoints,:,:,:])
-            ortho_basis_prm_tj = legendre_basis_derivative_at_xtest(ortho_basis_tj, self.tj[:npoints,:,:,:])
+            ortho_basis_prm_rj = legendre_basis_derivative_at_xtest(ortho_basis_rj, self.rj[:npoints,:nelems,:,:])
+            ortho_basis_prm_sj = legendre_basis_derivative_at_xtest(ortho_basis_sj, self.sj[:npoints,:nelems,:,:])
+            ortho_basis_prm_tj = legendre_basis_derivative_at_xtest(ortho_basis_tj, self.tj[:npoints,:nelems,:,:])
 
         else:
             raise RuntimeError("Non-modal search is not implemented with tensor support")
@@ -108,7 +109,7 @@ class element_interpolator_c():
             raise RuntimeError("Only worrking by applying 1d operators")
 
         elif apply_1d_ops:
-
+            
             x = apply_operators_3d(ortho_basis_rj.transpose(0,1,3,2), ortho_basis_sj.transpose(0,1,3,2), ortho_basis_tj.transpose(0,1,3,2), self.x_e_hat)   
             y = apply_operators_3d(ortho_basis_rj.transpose(0,1,3,2), ortho_basis_sj.transpose(0,1,3,2), ortho_basis_tj.transpose(0,1,3,2), self.y_e_hat)
             z = apply_operators_3d(ortho_basis_rj.transpose(0,1,3,2), ortho_basis_sj.transpose(0,1,3,2), ortho_basis_tj.transpose(0,1,3,2), self.z_e_hat)
@@ -126,6 +127,89 @@ class element_interpolator_c():
             self.jac[:npoints, :nelems, 2, 2] = apply_operators_3d(ortho_basis_rj.transpose(0,1,3,2)    , ortho_basis_sj.transpose(0,1,3,2)    , ortho_basis_prm_tj.transpose(0,1,3,2), self.z_e_hat)[:,:,0,0]    
 
         return x, y, z
+
+    def find_rst_from_xyz(self, xj, yj, zj, tol = np.finfo(np.double).eps*10, max_iterations = 1000):
+
+        self.point_inside_element = False
+        
+        npoints = xj.shape[0]
+        nelems = self.x_e_hat.shape[1]
+        n = self.n
+               
+        self.xj[:npoints,:,:,:] = xj[:,:,:,:]
+        self.yj[:npoints,:,:,:] = yj[:,:,:,:]
+        self.zj[:npoints,:,:,:] = zj[:,:,:,:]
+
+        # Determine the initial conditions
+        determine_initial_guess(self, npoints = npoints, nelems = nelems) # This populates self.rj, self.sj, self.tj for 1st iteration
+
+        # Use the newton method to identify the coordinates
+        self.iterations = 0
+        self.eps_rst[:npoints, :nelems, :,:] = 1
+        
+        while np.any(np.linalg.norm(self.eps_rst[:npoints, :nelems], axis=(2,3)) > tol) and self.iterations < max_iterations:
+
+            # Update the guess
+            self.rstj[:npoints, :nelems, 0,0] = self.rj[:npoints,:nelems,0,0]
+            self.rstj[:npoints, :nelems, 1,0] = self.sj[:npoints,:nelems,0,0]
+            self.rstj[:npoints, :nelems, 2,0] = self.tj[:npoints,:nelems,0,0]
+
+            # Estimate the xyz values from rst and also the jacobian (it is updated inside self.jac)
+            # The elements are determined by the number of x_hats, this is given in the projection function
+            # Check that one out if you forget.
+            xj_found, yj_found, zj_found = self.get_xyz_from_rst(self.rj[:npoints,:nelems,:,:], self.sj[:npoints,:nelems,:,:], self.tj[:npoints,:nelems,:,:])
+
+            # Find the residuals and the jacobian inverse.
+            self.eps_rst[:npoints, :nelems, 0, 0] = (self.xj[:npoints, :nelems, :, :] - xj_found)[:,:,0,0]
+            self.eps_rst[:npoints, :nelems, 1, 0] = (self.yj[:npoints, :nelems, :, :] - yj_found)[:,:,0,0]
+            self.eps_rst[:npoints, :nelems, 2, 0] = (self.zj[:npoints, :nelems, :, :] - zj_found)[:,:,0,0]
+            jac_inv = np.linalg.inv(self.jac[:npoints, :nelems])
+
+            # Find the new guess
+            self.rstj[:npoints, :nelems] = self.rstj[:npoints, :nelems] - (0 - np.einsum('ijkl,ijlm->ijkm', jac_inv, self.eps_rst[:npoints,:nelems]))
+
+            # Update the values
+            self.rj[:npoints, :nelems, 0, 0] = self.rstj[:npoints, :nelems, 0, 0]
+            self.sj[:npoints, :nelems, 0, 0] = self.rstj[:npoints, :nelems, 1, 0]
+            self.tj[:npoints, :nelems, 0, 0] = self.rstj[:npoints, :nelems, 2, 0]
+            self.iterations += 1
+
+        # Here I am omiting some logic to check if the point is inside the element.
+        # This is present in sem.py, so check there for reference how it has been done. 
+        
+        return self.rj[:npoints, :nelems], self.sj[:npoints, :nelems], self.tj[:npoints, :nelems]
+
+def determine_initial_guess(self, npoints = 1, nelems = 1):
+    '''
+    Note: Find a way to evaluate if this routine does help. 
+    It might be that this is not such a good way of making the guess.
+    '''
+
+    if self.modal_search:
+
+        ## Find the closest point for each element
+        #diff_x = self.x_e_hat.reshape(npoints, nelems, self.n, self.n, self.n) - self.xj[:npoints,:,:,:].reshape(npoints, 1, 1, 1, 1)
+        #diff_y = self.y_e_hat.reshape(npoints, nelems, self.n, self.n, self.n) - self.yj[:npoints,:,:,:].reshape(npoints, 1, 1, 1, 1)
+        #diff_z = self.z_e_hat.reshape(npoints, nelems, self.n, self.n, self.n) - self.zj[:npoints,:,:,:].reshape(npoints, 1, 1, 1, 1)
+
+        #distances = np.sqrt(diff_x**2 + diff_y**2 + diff_z**2)
+        
+        #minim = np.min(distances, axis=(2,3,4)).reshape(npoints, nelems, 1, 1, 1)
+        #min_index = np.where(distances == minim)
+
+        #self.rj[min_index[0],min_index[1],0,0] = self.x_gll[min_index[4],0,0,0]
+        #self.sj[min_index[0],min_index[1],0,0] = self.x_gll[min_index[3],0,0,0]
+        #self.tj[min_index[0],min_index[1],0,0] = self.x_gll[min_index[2],0,0,0]
+
+        self.rj[:npoints, :nelems, 0, 0] = 0
+        self.sj[:npoints, :nelems, 0, 0] = 0
+        self.tj[:npoints, :nelems, 0, 0] = 0
+    else:
+        self.rj[:npoints,:nelems,:,:] = 0
+        self.sj[:npoints,:nelems,:,:] = 0
+        self.tj[:npoints,:nelems,:,:] = 0
+
+    return
 
 
 
@@ -252,27 +336,24 @@ def legendre_basis_at_xtest(n, xtest):
     '''
     The legendre basis depends on the element order and the points
 
-    If it is to be evaluated in a different element, it will not change, 
-
-    therefore the size is [n_pts, 1, n, 1], where n is the order of the element
-
     '''
 
     m = xtest.shape[0]
+    m2 = xtest.shape[1]
  
     # Allocate space
-    Leg=np.zeros((m, 1, n, 1))
+    Leg=np.zeros((m, m2, n, 1))
 
         
     #First row is filled with 1 according to recursive formula
-    Leg[:,0,0,0]=np.ones((m,1,1,1))[:,0,0,0]
+    Leg[:,:,0,0]=np.ones((m,m2,1,1))[:,:,0,0]
     #Second row is filled with x according to recursive formula
-    Leg[:,0,1,0]=np.multiply(np.ones((m, 1, 1, 1)), xtest)[:,0,0,0]
+    Leg[:,:,1,0]=np.multiply(np.ones((m, m2, 1, 1)), xtest)[:,:,0,0]
     
     # Apply the recursive formula for all x_i
     # look for recursive formula here if you want to verify https://en.wikipedia.org/wiki/Legendre_polynomials
     for j in range(1,n-1):
-        Leg[:,0, j+1,0]=((2*j+1)*xtest[:,0,0,0]*Leg[:,0,j,0]-j*Leg[:,0,j-1,0])/(j+1)
+        Leg[:,:, j+1,0]=((2*j+1)*xtest[:,:,0,0]*Leg[:,:,j,0]-j*Leg[:,:,j-1,0])/(j+1)
 
     return Leg
 
@@ -284,31 +365,26 @@ def legendre_basis_derivative_at_xtest(legtest, xtest):
     This is a slow implementaiton with a slow recursion. It does not need 
     special treatmet at the boundary
 
-    The legendre basis derivative depends on the element order and the points
-
-    If it is to be evaluated in a different element, it will not change, 
-
-    therefore the size is [n_pts, 1, n, 1], where n is the order of the element
-
     '''
 
     ## Now find the derivative matrix D_N,ij=(dpi_j/dxi)_at_xi=xi_i
     ##https://en.wikipedia.org/wiki/Legendre_polynomials
 
     m = legtest.shape[0]
+    m2 = xtest.shape[1]
     n = legtest.shape[2]
     
     # Allocate space
-    D_N=np.zeros((m, 1, n, 1))
+    D_N=np.zeros((m, m2, n, 1))
 
     # For first polynomial: derivatice is 0
-    D_N[:,0,0,0]=np.zeros((m,1,1,1))[:,0,0,0]
+    D_N[:,:,0,0]=np.zeros((m,m2,1,1))[:,:,0,0]
     # For second polynomial: derivatice is 1
-    D_N[:,0,1,0]=np.ones((m, 1, 1, 1))[:,0,0,0]
+    D_N[:,:,1,0]=np.ones((m, m2, 1, 1))[:,:,0,0]
     
     for j in range(1,n-1):
         for p in range(j, 0 - 1, -2):
-            D_N[:, 0,j+1, 0] += 2*legtest[:,0,p, 0]/(np.sqrt(2/(2*p+1))**2)
+            D_N[:, :,j+1, 0] += 2*legtest[:,:,p, 0]/(np.sqrt(2/(2*p+1))**2)
 
     return D_N
 

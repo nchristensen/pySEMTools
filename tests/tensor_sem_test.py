@@ -1,3 +1,11 @@
+import os
+import sys
+os.environ["OMP_NUM_THREADS"] = "1"
+os.environ["OPENBLAS_NUM_THREADS"] = "1"
+os.environ["MKL_NUM_THREADS"] = "1"
+os.environ["VECLIB_MAXIMUM_THREADS"] = "1"
+os.environ["NUMEXPR_NUM_THREADS"] = "1"
+
 # Initialize MPI
 from mpi4py import MPI
 comm = MPI.COMM_WORLD
@@ -51,16 +59,19 @@ if comm.Get_rank() == 0:
     found_z = np.zeros_like(exact_s)
     
     # Find the rst coordinates of the refined element
-    ei.project_element_into_basis(msh.x[elem,:,:,:], msh.y[elem,:,:,:], msh.z[elem,:,:,:])    
+    start_time = MPI.Wtime()
     for k in range(0, msh_ref.lz):
         for j in range(0, msh_ref.ly):
             for i in range(0, msh_ref.lx):
+                ei.project_element_into_basis(msh.x[elem,:,:,:], msh.y[elem,:,:,:], msh.z[elem,:,:,:])    
                 found_r[k,j,i], found_s[k,j,i], found_t[k,j,i] = ei.find_rst_from_xyz(msh_ref.x[elem,k,j,i], msh_ref.y[elem,k,j,i], msh_ref.z[elem,k,j,i])
+    print('sem: Time to find rst: {}'.format(MPI.Wtime() - start_time))
+    print('sem: The last point took: {} iterations'.format(ei.iterations))
 
     print('sem: The r coordinates were found correctly: {}'.format(np.allclose(exact_r, found_r)))
     print('sem: The s coordinates were found correctly: {}'.format(np.allclose(exact_s, found_s)))
     print('sem: The t coordinates were found correctly: {}'.format(np.allclose(exact_t, found_t)))
-
+    
     # Interpolate back to the xyz coordinates
     for k in range(0, msh_ref.lz):
         for j in range(0, msh_ref.ly):
@@ -71,8 +82,8 @@ if comm.Get_rank() == 0:
     
 
     print('sem: The x coordinates were found correctly: {}'.format(np.allclose(msh_ref.x[elem,:,:,:], found_x)))
-    print('sem: y coordinates were found correctly: {}'.format(np.allclose(msh_ref.y[elem,:,:,:], found_y)))
-    print('sem: z coordinates were found correctly: {}'.format(np.allclose(msh_ref.z[elem,:,:,:], found_z)))
+    print('sem: The y coordinates were found correctly: {}'.format(np.allclose(msh_ref.y[elem,:,:,:], found_y)))
+    print('sem: The z coordinates were found correctly: {}'.format(np.allclose(msh_ref.z[elem,:,:,:], found_z)))
     
     
     # ========================================================================================#
@@ -83,7 +94,7 @@ if comm.Get_rank() == 0:
     from pynektools.interpolation.tensor_sem import element_interpolator_c as tensor_element_interpolator_c
 
     # Instance the tensor interpolator
-    max_pts   = 100
+    max_pts   = 128
     max_elems = 1
     tei       = tensor_element_interpolator_c(msh.lx, max_pts=max_pts)
      
@@ -127,6 +138,8 @@ if comm.Get_rank() == 0:
         end   = (i+1) * max_pts
         if end > total_pts:
             end = total_pts
+        npoints = end - start
+        tei.project_element_into_basis(rshp_x[:npoints,:,:,:], rshp_y[:npoints,:,:,:], rshp_z[:npoints,:,:,:])
         xx[start:end], yy[start:end], zz[start:end] = tei.get_xyz_from_rst(new_r[start:end], new_s[start:end], new_t[start:end], apply_1d_ops = True)
     print('tensor_sem: Time to get all xyz: {}'.format(MPI.Wtime() - start_time))
  
@@ -143,3 +156,29 @@ if comm.Get_rank() == 0:
         x2, y2, z2 = tei.get_xyz_from_rst(test_r, test_s, test_t)
         print('tensor_sem: Jacobian calculated correctly: {}'.format(np.allclose(ei.jac, tei.jac[0,0,:,:])))
 
+
+    print('=====================')
+    # Get the xyz coordinates from the rst coordinates with the tensor
+    rr = np.zeros_like(new_r)
+    ss = np.zeros_like(new_s)
+    tt = np.zeros_like(new_t)
+
+    total_pts = msh_ref.lz*msh_ref.ly*msh_ref.lx
+    total_iterations = np.ceil(total_pts / max_pts)
+
+    #Check the search function
+    start_time = MPI.Wtime()
+    for i in range(0, int(total_iterations)):
+        start = i * max_pts
+        end   = (i+1) * max_pts
+        if end > total_pts:
+            end = total_pts
+        npoints = end - start
+        tei.project_element_into_basis(rshp_x[:npoints,:,:,:], rshp_y[:npoints,:,:,:], rshp_z[:npoints,:,:,:])
+        rr[start:end], ss[start:end], tt[start:end] = tei.find_rst_from_xyz(new_x[start:end], new_y[start:end], new_z[start:end])
+    print('tensor_sem: Time to find rst: {}'.format(MPI.Wtime() - start_time))
+    print('tensor_sem: Last run took: {} iterations'.format(ei.iterations))
+    
+    print('tensor_sem: The r coordinates were found correctly: {}'.format(np.allclose(rr, new_r)))
+    print('tensor_sem: The s coordinates were found correctly: {}'.format(np.allclose(ss, new_s)))
+    print('tensor_sem: The t coordinates were found correctly: {}'.format(np.allclose(tt, new_t)))
