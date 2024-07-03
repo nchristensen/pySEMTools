@@ -258,7 +258,7 @@ def test_sem_and_tensor_sem(n_new = 8, elem = 1, max_pts = 1, use_torch = False,
             tei.project_element_into_basis(rshp_x[:npoints,:,:,:,:], rshp_y[:npoints,:,:,:,:], rshp_z[:npoints,:,:,:,:], use_torch=use_torch)
             rr[start:end], ss[start:end], tt[start:end] = tei.find_rst_from_xyz(new_x[start:end], new_y[start:end], new_z[start:end], use_torch=use_torch)
         print('tensor_sem.py: Time to find rst: {}'.format(MPI.Wtime() - start_time))
-        print('tensor_sem.py: Last run took: {} iterations'.format(ei.iterations))
+        print('tensor_sem.py: Last run took: {} iterations'.format(tei.iterations))
         
         if not use_torch: 
             t1 = np.allclose(new_r, rr)
@@ -360,7 +360,7 @@ if comm.Get_rank() == 0: print('================')
 
 test_sem_and_tensor_sem(n_new = 8, elem = 1, max_pts = 128, use_torch = False, verbose = False)
 
-#if comm.Get_rank() == 0: print('================')
-#if comm.Get_rank() == 0: print('================')
+if comm.Get_rank() == 0: print('================')
+if comm.Get_rank() == 0: print('================')
 
-#test_sem_and_tensor_sem(n_new = 8, elem = 1, max_pts = 128, use_torch = True, verbose = False)
+test_sem_and_tensor_sem(n_new = 8, elem = 1, max_pts = 128, use_torch = True, verbose = False)
