@@ -78,6 +78,10 @@ itp.find_points_comm_pairs(comm, communicate_candidate_pairs = True, elem_percen
 itp.gather_probes_to_io_rank(0, comm)
 itp.redistribute_probes_to_owners_from_io_rank(0, comm)
 
+print(len(np.where(itp.err_code_partition == 1)[0]))
+print(len(np.where(itp.err_code_partition == -10)[0]))
+print(len(np.where(itp.err_code_partition == 0)[0]))
+
 # Now interpolate xyz to check if the process is correct
 my_interpolated_fields = np.zeros((itp.my_probes.shape[0], 3), dtype = np.double)
 if comm.Get_rank() == 0:
@@ -142,11 +146,18 @@ rank_owner = t_itp.rank_owner_partition[not_found]
 err_code = t_itp.err_code_partition[not_found] 
 test_pattern = t_itp.test_pattern_partition[not_found] 
 
-# This part is form find_rst
+# This part onwards is form find_rst
 
 not_found_code = -10
 elem_percent_expansion = 0.01
 offset_el = 0
+max_pts = 16200
+max_elems = 1
+rank  = comm.Get_rank()
+use_torch = True
+
+from pynektools.interpolation.tensor_sem import element_interpolator_c as tensor_element_interpolator_c
+tei = tensor_element_interpolator_c(t_itp.ei.n, max_pts=max_pts, use_torch = use_torch)
 
 err_code[:] = not_found_code
 
@@ -164,6 +175,92 @@ for pt in probe:
     i = i + 1
 
 
-print(element_candidates[0:10])
-
 # Start by finding multiple points with 1 element at a time
+
+## Set up a buffer to hold the data
+if not use_torch:
+    r = np.zeros((max_pts, max_elems, 1, 1), dtype = np.double)
+    s = np.zeros((max_pts, max_elems, 1, 1), dtype = np.double)
+    t = np.zeros((max_pts, max_elems, 1, 1), dtype = np.double)
+else:
+    r = torch.zeros((max_pts, max_elems, 1, 1), dtype=torch.float64, device=device)
+    s = torch.zeros((max_pts, max_elems, 1, 1), dtype=torch.float64, device=device)
+    t = torch.zeros((max_pts, max_elems, 1, 1), dtype=torch.float64, device=device)
+
+# Identify variables
+pts_n = probe.shape[0]
+max_candidate_elements = np.max([len(elist) for elist in element_candidates])
+iterations = np.ceil((pts_n / max_pts))
+checked_elements = [[] for i in range(0, pts_n)]
+
+start_time = MPI.Wtime()
+exit_flag = False
+# The following logic only works for nelems = 1
+npoints = 10000
+nelems = 1
+for e in range(0, max_candidate_elements):   
+    if exit_flag:
+        break
+    for j in range(0, int(iterations)):
+        if npoints == 0:
+            exit_flag = True
+            break
+ 
+        # Get the index of points that have not been found
+        pt_not_found_indices = np.where(err_code != 1)[0]
+        # Get the indices of these points that still have elements remaining to check
+        pt_not_found_indices = pt_not_found_indices[np.where([ len(checked_elements[i]) < len(element_candidates[i]) for i in pt_not_found_indices])[0]]
+        # Select only the maximum number of points
+        pt_not_found_indices = pt_not_found_indices[:max_pts]
+ 
+        # See which element should be checked in this iteration
+        temp_candidates = [element_candidates[i] for i in pt_not_found_indices]
+        temp_checked = [checked_elements[i] for i in pt_not_found_indices] 
+        temp_to_check_ = [list(set(temp_candidates[i]) - set(temp_checked[i])) for i in range(len(temp_candidates))]
+        # Sort them by order of closeness
+        temp_to_check = [sorted(temp_to_check_[i], key=temp_candidates[i].index) for i in range(len(temp_candidates))]
+        
+        elem_to_check_per_point = [elist[0] for elist in temp_to_check]
+        # Update the checked elements
+        for i in range(0, len(pt_not_found_indices)):
+            checked_elements[pt_not_found_indices[i]].append(elem_to_check_per_point[i])
+
+        npoints = len(pt_not_found_indices)
+
+        if npoints == 0:
+            exit_flag = True
+            break
+
+        probe_new_shape = (npoints, 1, 1, 1)
+        elem_new_shape = (npoints, nelems, t_itp.x.shape[1], t_itp.x.shape[2],t_itp.x.shape[3])
+        
+        tei.project_element_into_basis(t_itp.x[elem_to_check_per_point].reshape(elem_new_shape), t_itp.y[elem_to_check_per_point].reshape(elem_new_shape), t_itp.z[elem_to_check_per_point].reshape(elem_new_shape), use_torch=use_torch)
+        r[:npoints, :nelems], s[:npoints, :nelems], t[:npoints, :nelems] = tei.find_rst_from_xyz(probe[pt_not_found_indices, 0].reshape(probe_new_shape), probe[pt_not_found_indices, 1].reshape(probe_new_shape), probe[pt_not_found_indices, 2].reshape(probe_new_shape), use_torch=use_torch)
+
+        #Reshape results
+        result_r = r[:npoints, :nelems, :, :].reshape((len(pt_not_found_indices)))
+        result_s = s[:npoints, :nelems, :, :].reshape((len(pt_not_found_indices)))
+        result_t = t[:npoints, :nelems, :, :].reshape((len(pt_not_found_indices)))
+        result_code_bool = tei.point_inside_element[:npoints, :nelems, :, :].reshape((len(pt_not_found_indices)))
+        # Assign the error codes
+        if not use_torch:
+            probe_rst[pt_not_found_indices, 0] = result_r
+            probe_rst[pt_not_found_indices, 1] = result_s
+            probe_rst[pt_not_found_indices, 2] = result_t
+            el_owner[pt_not_found_indices] = elem_to_check_per_point
+            glb_el_owner[pt_not_found_indices] = el_owner[pt_not_found_indices] + offset_el
+            rank_owner[pt_not_found_indices] = rank
+            err_code[pt_not_found_indices] = np.where(result_code_bool, 1, not_found_code)
+        else:
+            probe_rst[pt_not_found_indices, 0] = result_r.cpu().numpy()
+            probe_rst[pt_not_found_indices, 1] = result_s.cpu().numpy()
+            probe_rst[pt_not_found_indices, 2] = result_t.cpu().numpy()
+            el_owner[pt_not_found_indices] = elem_to_check_per_point
+            glb_el_owner[pt_not_found_indices] = el_owner[pt_not_found_indices] + offset_el
+            rank_owner[pt_not_found_indices] = rank
+            err_code[pt_not_found_indices] = np.where(result_code_bool.cpu().numpy(), 1, not_found_code)
+
+print('tensor_interpolator : Time to find: {}'.format(MPI.Wtime() - start_time))
+print(len(np.where(err_code == 1)[0]))
+print(len(np.where(err_code == -10)[0]))
+print(len(np.where(err_code == 0)[0]))
