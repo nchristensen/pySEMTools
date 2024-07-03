@@ -43,7 +43,7 @@ class element_interpolator_c():
         self.jac = np.zeros((max_pts, max_elems, 3,3))
         self.iterations = 0
         self.field_e = np.zeros((max_pts, 1, self.x_e.shape[2], 1))
-        self.point_inside_element = False
+        self.point_inside_element = np.zeros((max_pts, max_elems, 1, 1), dtype=bool)
 
         ## Defined in get ref element
         if self.use_torch:
@@ -65,6 +65,7 @@ class element_interpolator_c():
             self.eps_rst = torch.as_tensor(self.eps_rst, dtype=torch.float64, device=device)
             self.jac = torch.as_tensor(self.jac, dtype=torch.float64, device=device)
             self.field_e = torch.as_tensor(self.field_e, dtype=torch.float64, device=device)
+            self.point_inside_element = torch.as_tensor(self.point_inside_element, dtype=torch.bool, device=device)
 
          
         return
@@ -242,7 +243,7 @@ class element_interpolator_c():
 
         if not use_torch:
 
-            self.point_inside_element = False
+            self.point_inside_element[:,:,:,:] = False
             
             npoints = xj.shape[0]
             nelems = self.x_e_hat.shape[1]
@@ -286,12 +287,18 @@ class element_interpolator_c():
                 self.tj[:npoints, :nelems, 0, 0] = self.rstj[:npoints, :nelems, 2, 0]
                 self.iterations += 1
 
-            # Here I am omiting some logic to check if the point is inside the element.
-            # This is present in sem.py, so check there for reference how it has been done. 
-        
+            # Check if points are inside the element
+            limit = 1 + np.finfo(np.single).eps
+            t1 = (abs(self.rj[:npoints, :nelems, 0, 0]) <= limit).reshape(npoints, nelems, 1, 1)
+            t2 = (abs(self.sj[:npoints, :nelems, 0, 0]) <= limit).reshape(npoints, nelems, 1, 1)
+            t3 = (abs(self.tj[:npoints, :nelems, 0, 0]) <= limit).reshape(npoints, nelems, 1, 1)
+
+            # Pointwise comparison
+            self.point_inside_element[:npoints, :nelems, :, :] = (t1 & t2 & t3)
+
         else:
             
-            self.point_inside_element = False
+            self.point_inside_element[:,:,:,:] = False
             
             npoints = xj.shape[0]
             nelems = self.x_e_hat.shape[1]
@@ -334,9 +341,15 @@ class element_interpolator_c():
                 self.sj[:npoints, :nelems, 0, 0] = self.rstj[:npoints, :nelems, 1, 0]
                 self.tj[:npoints, :nelems, 0, 0] = self.rstj[:npoints, :nelems, 2, 0]
                 self.iterations += 1
+            
+            # Check if points are inside the element
+            limit = 1 + np.finfo(np.single).eps
+            t1 = (abs(self.rj[:npoints, :nelems, 0, 0]) <= limit).reshape(npoints, nelems, 1, 1)
+            t2 = (abs(self.sj[:npoints, :nelems, 0, 0]) <= limit).reshape(npoints, nelems, 1, 1)
+            t3 = (abs(self.tj[:npoints, :nelems, 0, 0]) <= limit).reshape(npoints, nelems, 1, 1)
 
-            # Here I am omiting some logic to check if the point is inside the element.
-            # This is present in sem.py, so check there for reference how it has been done. 
+            # Pointwise comparison
+            self.point_inside_element[:npoints, :nelems, :, :] = (t1 & t2 & t3)
 
         return self.rj[:npoints, :nelems], self.sj[:npoints, :nelems], self.tj[:npoints, :nelems]
 
