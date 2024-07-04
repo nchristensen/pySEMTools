@@ -526,6 +526,10 @@ def get_derivative_matrix(n,dim):
             if (i==j and i != 0 and i!=(p-1)):
                 D_N[i,j]=0
 
+    if dim==1:
+        DX=D_N
+        DY=None
+        DZ=None
 
     if dim==2:
         DX2D=np.kron(np.eye(p),D_N)

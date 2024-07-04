@@ -2,8 +2,11 @@ import numpy as np
 from pymech.core import HexaData
 from pymech.neksuite.field import Header
 from pymech.core import HexaData
+from .msh import msh_c
 from .field import field_c
 from ..ppymech.neksuite import pwritenek
+from ..interpolation.interpolator import get_bbox_from_coordinates, get_bbox_centroids_and_max_dist
+from ..interpolation.mesh_to_mesh import p_refiner_c    
 import sys
 NoneType = type(None)
 
@@ -160,4 +163,72 @@ def write_fld_file_from_list(fname, comm, msh, field_list = []):
     if comm.Get_rank() == 0: print("Writing file: " + fname)
     pwritenek(fname,out_data, comm)
     
+    return 
+
+
+def write_fld_subdomain_from_list(fname, comm, msh, field_list = [], subdomain = [], p = None):
+
+    number_of_fields = len(field_list)
+    # Decide if my rank should write data
+    my_rank_writes = 1
+    #write_these_e = np.where(msh.x == msh.x)[0]
+
+    if subdomain is not []:
+
+        # Find the which elements are contained in the subdomain
+        bbox = get_bbox_from_coordinates(msh.x, msh.y, msh.z)
+        bbox_centroids, bbox_max_dist = get_bbox_centroids_and_max_dist(bbox)
+
+        condition_one = bbox_centroids[:,0] > subdomain[0][0]
+        condition_two = bbox_centroids[:,1] > subdomain[1][0]
+        condition_tree = bbox_centroids[:,2] > subdomain[2][0]
+        condition_four = bbox_centroids[:,0] < subdomain[0][1]
+        condition_five = bbox_centroids[:,1] < subdomain[1][1]
+        condition_six = bbox_centroids[:,2] < subdomain[2][1]
+
+        write_these_e = np.where(np.all([condition_one, condition_two, condition_tree, condition_four, condition_five, condition_six], axis=0))[0]
+        
+        # Check if my rank should write data
+        if write_these_e.size == 0: my_rank_writes = 0
+
+    # Create communicator for writing
+    write_comm = comm.Split(color = my_rank_writes, key=comm.Get_rank())
+
+    if my_rank_writes == 1:
+
+        x_sub = msh.x[write_these_e,:,:,:]
+        y_sub = msh.y[write_these_e,:,:,:]
+        z_sub = msh.z[write_these_e,:,:,:]
+        msh_sub = msh_c(write_comm, x = x_sub, y = y_sub, z = z_sub)
+
+        field_list_sub = []
+        for field in range(0, number_of_fields):
+            field_list_sub.append(field_list[field][write_these_e,:,:,:])    
+
+        # Refine the order of the mesh if needed:
+        if type(p) != NoneType:
+            pref = p_refiner_c(n_old = msh_sub.lx, n_new = p)
+           
+            # Get the new mesh
+            msh_sub = pref.get_new_mesh(write_comm, msh = msh_sub)
+
+            # Get the new fields
+            for field in range(0, number_of_fields):
+                field_list_sub[field] = pref.interpolate_from_field_list(write_comm, [field_list_sub[field]])[0]
+
+        ## Create an empty field and update its metadata
+        out_fld = field_c(write_comm)
+        for field in range(0, number_of_fields):
+            out_fld.fields["scal"].append(field_list_sub[field])
+        out_fld.update_vars()
+
+        ## Create the hexadata to write out
+        out_data = create_hexadata_from_msh_fld(msh = msh_sub, fld = out_fld)
+
+        ## Write out a file
+        if write_comm.Get_rank() == 0: print("Writing file: " + fname)
+        pwritenek(fname,out_data, write_comm)
+
+    comm.Barrier()
+
     return 

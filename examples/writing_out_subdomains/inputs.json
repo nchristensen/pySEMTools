@@ -1,0 +1,16 @@
+{
+    "Version": 1.0,
+    "number_of_snapshots": 10,
+    "IO":{
+        "mesh_data": {
+            "dataPath"           : "/scratch/adperez/archive/neko/examples/2d_cylinder/data_re160/",
+            "casename"           : "field",
+            "first_index"        : 0
+        },
+        "field_data": {
+            "dataPath"           : "/scratch/adperez/archive/neko/examples/2d_cylinder/data_re160/",
+            "casename"           : "field",
+            "first_index"        : 0
+        }
+    }
+    }
