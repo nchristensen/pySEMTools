@@ -1026,26 +1026,58 @@ class interpolator_c():
     
     def interpolate_field_from_rst(self, sampled_field):
 
-        x = self.x
-        y = self.y
-        z = self.z
-        my_probes = self.my_probes
-        my_probes_rst = self.my_probes_rst
-        my_err_code = self.my_err_code
-        sampled_field_at_probe = np.empty((my_probes.shape[0]))
-        
-        i = 0 #Counter for the number of probes
-        if self.progress_bar: pbar= tqdm(total=my_probes.shape[0])
-        for e in self.my_el_owner:
-            if my_err_code[i] != 0 :
-                #self.ei.project_element_into_basis(x[e,:,:,:], y[e,:,:,:], z[e,:,:,:])
-                tmp = self.ei.interpolate_field_at_rst(my_probes_rst[i,0], my_probes_rst[i,1], my_probes_rst[i,2], sampled_field[e,:,:,:])
-                sampled_field_at_probe[i] = tmp
-            else:
-                sampled_field_at_probe[i] = 0
-            i = i+1
-            if self.progress_bar: pbar.update(1)
-        if self.progress_bar: pbar.close()
+        if self.use_tensor == False and self.use_torch == False: 
+
+            x = self.x
+            y = self.y
+            z = self.z
+            my_probes = self.my_probes
+            my_probes_rst = self.my_probes_rst
+            my_err_code = self.my_err_code
+            sampled_field_at_probe = np.empty((my_probes.shape[0]))
+            
+            i = 0 #Counter for the number of probes
+            if self.progress_bar: pbar= tqdm(total=my_probes.shape[0])
+            for e in self.my_el_owner:
+                if my_err_code[i] != 0 :
+                    #self.ei.project_element_into_basis(x[e,:,:,:], y[e,:,:,:], z[e,:,:,:])
+                    tmp = self.ei.interpolate_field_at_rst(my_probes_rst[i,0], my_probes_rst[i,1], my_probes_rst[i,2], sampled_field[e,:,:,:])
+                    sampled_field_at_probe[i] = tmp
+                else:
+                    sampled_field_at_probe[i] = 0
+                i = i+1
+                if self.progress_bar: pbar.update(1)
+            if self.progress_bar: pbar.close()
+
+        elif self.use_tensor == True or self.use_torch == True:
+
+            print('WARNING: This implementation interpolates points with error code = 0 ')
+            print('WARNING: Check the non tensor implementation to add a fix for this ')
+            
+            max_pts = self.max_pts
+            pts_n = self.my_probes.shape[0]
+            iterations = np.ceil((pts_n / max_pts))
+            
+            sampled_field_at_probe = np.empty((self.my_probes.shape[0]))
+            
+            for i in range(0, int(iterations)):
+                start = i * max_pts
+                end   = (i+1) * max_pts
+                if end > pts_n:
+                    end = pts_n
+                npoints = end - start
+                nelems = 1
+
+                rst_new_shape = (npoints, nelems, 1, 1)
+                field_new_shape = (npoints, nelems, self.x.shape[1], self.x.shape[2], self.x.shape[3])
+
+                self.test_interp[:npoints, :nelems] = self.ei.interpolate_field_at_rst(self.my_probes_rst[start:end, 0].reshape(rst_new_shape), self.my_probes_rst[start:end, 1].reshape(rst_new_shape), self.my_probes_rst[start:end, 2].reshape(rst_new_shape), sampled_field[self.my_el_owner[start:end]].reshape(field_new_shape), use_torch=self.use_torch)
+                
+                # Populate the sampled field
+                if not self.use_torch: 
+                    sampled_field_at_probe[start:end] = self.test_interp[:npoints, :nelems].reshape(npoints)
+                else:
+                    sampled_field_at_probe[start:end] = self.test_interp[:npoints, :nelems].reshape(npoints).to('cpu').numpy()
  
         return sampled_field_at_probe
 
