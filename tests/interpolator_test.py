@@ -49,21 +49,58 @@ exact_r = ei_ref.x_e.reshape(msh_ref.lz, msh_ref.ly, msh_ref.lx)
 exact_s = ei_ref.y_e.reshape(msh_ref.lz, msh_ref.ly, msh_ref.lx) 
 exact_t = ei_ref.z_e.reshape(msh_ref.lz, msh_ref.ly, msh_ref.lx) 
 
-# Get the points to find
-probes = np.zeros((msh_ref.x.size, 3))
-probes_rst_exact = np.zeros((msh_ref.x.size, 3))
-point = 0
-for e in range(msh_ref.nelv):
-    for k in range(0, msh_ref.lz):
-        for j in range(0, msh_ref.ly):
-            for i in range(0, msh_ref.lx):
-                probes[point, 0] = msh_ref.x[e, k, j, i]
-                probes[point, 1] = msh_ref.y[e, k, j, i]
-                probes[point, 2] = msh_ref.z[e, k, j, i]
-                probes_rst_exact[point, 0] = exact_r[k, j, i]
-                probes_rst_exact[point, 1] = exact_s[k, j, i]
-                probes_rst_exact[point, 2] = exact_t[k, j, i]
-                point = point + 1
+interpolate_sem_mesh = False
+
+if interpolate_sem_mesh:
+
+    # Get the points to find
+    probes = np.zeros((msh_ref.x.size, 3))
+    probes_rst_exact = np.zeros((msh_ref.x.size, 3))
+    point = 0
+    for e in range(msh_ref.nelv):
+        for k in range(0, msh_ref.lz):
+            for j in range(0, msh_ref.ly):
+                for i in range(0, msh_ref.lx):
+                    probes[point, 0] = msh_ref.x[e, k, j, i]
+                    probes[point, 1] = msh_ref.y[e, k, j, i]
+                    probes[point, 2] = msh_ref.z[e, k, j, i]
+                    probes_rst_exact[point, 0] = exact_r[k, j, i]
+                    probes_rst_exact[point, 1] = exact_s[k, j, i]
+                    probes_rst_exact[point, 2] = exact_t[k, j, i]
+                    point = point + 1
+
+else:
+    import pynektools.interpolation.utils as interp_utils
+    import pynektools.interpolation.pointclouds as pcs
+
+    # Create a polar mesh
+    nn = msh_ref.x.size
+    nx = int(nn**(1/3))
+    ny = int(nn**(1/3))
+    nz = int(nn**(1/3))
+
+    # Choose the boundaries of the interpolation mesh
+    # boundaries
+    x_bbox = [0, 0.05]
+    y_bbox = [0, 2*np.pi]
+    z_bbox = [0 , 1]
+
+    # Generate the points in 1D
+    start_time = MPI.Wtime()
+    x_1d = pcs.generate_1d_arrays(x_bbox, nx, mode="equal")
+    y_1d = pcs.generate_1d_arrays(y_bbox, ny, mode="equal")
+    z_1d = pcs.generate_1d_arrays(z_bbox, nz, mode="equal")
+
+    # Create 3D arrays
+    r, th, z = np.meshgrid(x_1d, y_1d, z_1d, indexing='ij')
+    x = r*np.cos(th)
+    y = r*np.sin(th)
+
+    # Create a list with the points
+    if comm.Get_rank() == 0:    
+        probes = interp_utils.transform_from_array_to_list(nx,ny,nz,[x, y, z])
+    else:
+        probes = 1
 
 # Instance the interpolator
 itp = interpolator_c(msh.x, msh.y, msh.z, probes, comm, progress_bar = True, modal_search = True)
@@ -77,10 +114,6 @@ itp.find_points_comm_pairs(comm, communicate_candidate_pairs = True, elem_percen
 # Peform needed redistributions
 itp.gather_probes_to_io_rank(0, comm)
 itp.redistribute_probes_to_owners_from_io_rank(0, comm)
-
-print(len(np.where(itp.err_code_partition == 1)[0]))
-print(len(np.where(itp.err_code_partition == -10)[0]))
-print(len(np.where(itp.err_code_partition == 0)[0]))
 
 # Now interpolate xyz to check if the process is correct
 my_interpolated_fields = np.zeros((itp.my_probes.shape[0], 3), dtype = np.double)
@@ -151,10 +184,15 @@ test_pattern = t_itp.test_pattern_partition[not_found]
 not_found_code = -10
 elem_percent_expansion = 0.01
 offset_el = 0
-max_pts = 16200
 max_elems = 1
 rank  = comm.Get_rank()
-use_torch = True
+use_test_pattern = True
+use_torch = False
+
+if not use_torch:
+    max_pts = 128
+else:
+    max_pts = itp.probe_partition.shape[0]
 
 from pynektools.interpolation.tensor_sem import element_interpolator_c as tensor_element_interpolator_c
 tei = tensor_element_interpolator_c(t_itp.ei.n, max_pts=max_pts, use_torch = use_torch)
@@ -175,6 +213,11 @@ for pt in probe:
     i = i + 1
 
 
+# =================================================================================================================
+# =================================================================================================================
+# =================================================================================================================
+# =================================================================================================================
+
 # Start by finding multiple points with 1 element at a time
 
 ## Set up a buffer to hold the data
@@ -182,10 +225,12 @@ if not use_torch:
     r = np.zeros((max_pts, max_elems, 1, 1), dtype = np.double)
     s = np.zeros((max_pts, max_elems, 1, 1), dtype = np.double)
     t = np.zeros((max_pts, max_elems, 1, 1), dtype = np.double)
+    test_interp = np.zeros((max_pts, max_elems, 1, 1), dtype = np.double)
 else:
     r = torch.zeros((max_pts, max_elems, 1, 1), dtype=torch.float64, device=device)
     s = torch.zeros((max_pts, max_elems, 1, 1), dtype=torch.float64, device=device)
     t = torch.zeros((max_pts, max_elems, 1, 1), dtype=torch.float64, device=device)
+    test_interp = torch.zeros((max_pts, max_elems, 1, 1), dtype=torch.float64, device=device)
 
 # Identify variables
 pts_n = probe.shape[0]
@@ -244,23 +289,147 @@ for e in range(0, max_candidate_elements):
         result_code_bool = tei.point_inside_element[:npoints, :nelems, :, :].reshape((len(pt_not_found_indices)))
         # Assign the error codes
         if not use_torch:
-            probe_rst[pt_not_found_indices, 0] = result_r
-            probe_rst[pt_not_found_indices, 1] = result_s
-            probe_rst[pt_not_found_indices, 2] = result_t
-            el_owner[pt_not_found_indices] = elem_to_check_per_point
-            glb_el_owner[pt_not_found_indices] = el_owner[pt_not_found_indices] + offset_el
-            rank_owner[pt_not_found_indices] = rank
-            err_code[pt_not_found_indices] = np.where(result_code_bool, 1, not_found_code)
-        else:
-            probe_rst[pt_not_found_indices, 0] = result_r.cpu().numpy()
-            probe_rst[pt_not_found_indices, 1] = result_s.cpu().numpy()
-            probe_rst[pt_not_found_indices, 2] = result_t.cpu().numpy()
-            el_owner[pt_not_found_indices] = elem_to_check_per_point
-            glb_el_owner[pt_not_found_indices] = el_owner[pt_not_found_indices] + offset_el
-            rank_owner[pt_not_found_indices] = rank
-            err_code[pt_not_found_indices] = np.where(result_code_bool.cpu().numpy(), 1, not_found_code)
 
+            # Update indices of points that were found and those that were not
+            pt_found_this_it = np.where(result_code_bool)[0]
+            pt_not_found_this_it = np.where(~result_code_bool)[0]
+
+            # Create a list with the original indices for each of this
+            real_index_pt_found_this_it = [pt_not_found_indices[pt_found_this_it[i]] for i in range(0, len(pt_found_this_it))]
+            real_index_pt_not_found_this_it = [pt_not_found_indices[pt_not_found_this_it[i]] for i in range(0, len(pt_not_found_this_it))]
+
+            # Update codes for points found in this iteration
+            probe_rst[real_index_pt_found_this_it, 0] = result_r[pt_found_this_it]
+            probe_rst[real_index_pt_found_this_it, 1] = result_s[pt_found_this_it]
+            probe_rst[real_index_pt_found_this_it, 2] = result_t[pt_found_this_it]
+            el_owner[real_index_pt_found_this_it] = np.array(elem_to_check_per_point)[pt_found_this_it]
+            glb_el_owner[real_index_pt_found_this_it] = el_owner[real_index_pt_found_this_it] + offset_el
+            rank_owner[real_index_pt_found_this_it] = rank
+            err_code[real_index_pt_found_this_it] = 1
+
+            # If user has selected to check a test pattern:
+            if use_test_pattern: 
+                
+                # Get shapes
+                ntest = len(pt_not_found_this_it)
+                test_probe_new_shape = (ntest, nelems, 1, 1)
+                test_elem_new_shape = (ntest, nelems, t_itp.x.shape[1], t_itp.x.shape[2],t_itp.x.shape[3])
+
+                # Define new arrays (On the cpu)                
+                test_elems = np.array(elem_to_check_per_point)[pt_not_found_this_it]
+                test_fields = t_itp.x[test_elems,:,:,:]**2 + t_itp.y[test_elems,:,:,:]**2 + t_itp.z[test_elems,:,:,:]**2
+                test_probes = probe[real_index_pt_not_found_this_it, 0]**2 +  probe[real_index_pt_not_found_this_it, 1]**2 + probe[real_index_pt_not_found_this_it, 2]**2 
+
+                # Perform the test interpolation
+                test_interp[:ntest, :nelems] = tei.interpolate_field_at_rst(result_r[pt_not_found_this_it].reshape(test_probe_new_shape), result_s[pt_not_found_this_it].reshape(test_probe_new_shape), result_t[pt_not_found_this_it].reshape(test_probe_new_shape), test_fields.reshape(test_elem_new_shape), use_torch=use_torch)
+                test_result = test_interp[:ntest, :nelems].reshape(ntest)
+
+                # Check if the test pattern is satisfied
+                test_error = abs(test_probes - test_result)
+
+                # Now assign 
+                real_list = np.array(real_index_pt_not_found_this_it)
+                relative_list = np.array(pt_not_found_this_it)
+                better_test = np.where(test_error < test_pattern[real_index_pt_not_found_this_it])[0]
+
+                if len(better_test) > 0:
+                    probe_rst[real_list[better_test], 0] = result_r[relative_list[better_test]]
+                    probe_rst[real_list[better_test], 1] = result_s[relative_list[better_test]]
+                    probe_rst[real_list[better_test], 2] = result_t[relative_list[better_test]]
+                    el_owner[real_list[better_test]] = np.array(elem_to_check_per_point)[relative_list[better_test]]
+                    glb_el_owner[real_list[better_test]] = el_owner[real_list[better_test]] + offset_el
+                    rank_owner[real_list[better_test]] = rank
+                    err_code[real_list[better_test]] = not_found_code
+                    test_pattern[real_list[better_test]] = test_error[better_test]
+
+            else:
+                
+                probe_rst[real_index_pt_not_found_this_it, 0] = result_r[pt_not_found_this_it]
+                probe_rst[real_index_pt_not_found_this_it, 1] = result_s[pt_not_found_this_it]
+                probe_rst[real_index_pt_not_found_this_it, 2] = result_t[pt_not_found_this_it]
+                el_owner[real_index_pt_not_found_this_it] = np.array(elem_to_check_per_point)[pt_not_found_this_it]
+                glb_el_owner[real_index_pt_not_found_this_it] = el_owner[real_index_pt_not_found_this_it] + offset_el
+                rank_owner[real_index_pt_not_found_this_it] = rank
+                err_code[real_index_pt_not_found_this_it] = not_found_code
+
+
+        else:
+
+            result_code_bool = result_code_bool.cpu().numpy()
+            result_r = result_r.cpu().numpy()
+            result_s = result_s.cpu().numpy()
+            result_t = result_t.cpu().numpy()
+
+            pt_found_this_it = np.where(result_code_bool)[0]
+            pt_not_found_this_it = np.where(~result_code_bool)[0]
+
+            # Create a list with the original indices for each of this
+            real_index_pt_found_this_it = [pt_not_found_indices[pt_found_this_it[i]] for i in range(0, len(pt_found_this_it))]
+            real_index_pt_not_found_this_it = [pt_not_found_indices[pt_not_found_this_it[i]] for i in range(0, len(pt_not_found_this_it))]
+
+            # Update codes for points found in this iteration
+            probe_rst[real_index_pt_found_this_it, 0] = result_r[pt_found_this_it]
+            probe_rst[real_index_pt_found_this_it, 1] = result_s[pt_found_this_it]
+            probe_rst[real_index_pt_found_this_it, 2] = result_t[pt_found_this_it]
+            el_owner[real_index_pt_found_this_it] = np.array(elem_to_check_per_point)[pt_found_this_it]
+            glb_el_owner[real_index_pt_found_this_it] = el_owner[real_index_pt_found_this_it] + offset_el
+            rank_owner[real_index_pt_found_this_it] = rank
+            err_code[real_index_pt_found_this_it] = 1
+
+            # If user has selected to check a test pattern:
+            if use_test_pattern: 
+                
+                # Get shapes
+                ntest = len(pt_not_found_this_it)
+                test_probe_new_shape = (ntest, nelems, 1, 1)
+                test_elem_new_shape = (ntest, nelems, t_itp.x.shape[1], t_itp.x.shape[2],t_itp.x.shape[3])
+
+                # Define new arrays (On the cpu)                
+                test_elems = np.array(elem_to_check_per_point)[pt_not_found_this_it]
+                test_fields = t_itp.x[test_elems,:,:,:]**2 + t_itp.y[test_elems,:,:,:]**2 + t_itp.z[test_elems,:,:,:]**2
+                test_probes = probe[real_index_pt_not_found_this_it, 0]**2 +  probe[real_index_pt_not_found_this_it, 1]**2 + probe[real_index_pt_not_found_this_it, 2]**2 
+
+                # Perform the test interpolation
+                test_interp[:ntest, :nelems] = tei.interpolate_field_at_rst(result_r[pt_not_found_this_it].reshape(test_probe_new_shape), result_s[pt_not_found_this_it].reshape(test_probe_new_shape), result_t[pt_not_found_this_it].reshape(test_probe_new_shape), test_fields.reshape(test_elem_new_shape), use_torch=use_torch)
+                test_result = test_interp[:ntest, :nelems].reshape(ntest)
+
+                # Check if the test pattern is satisfied
+                test_error = abs(test_probes - test_result.cpu().numpy())
+
+                # Now assign 
+                real_list = np.array(real_index_pt_not_found_this_it)
+                relative_list = np.array(pt_not_found_this_it)
+                better_test = np.where(test_error < test_pattern[real_index_pt_not_found_this_it])[0]
+
+                if len(better_test) > 0:
+                    probe_rst[real_list[better_test], 0] = result_r[relative_list[better_test]]
+                    probe_rst[real_list[better_test], 1] = result_s[relative_list[better_test]]
+                    probe_rst[real_list[better_test], 2] = result_t[relative_list[better_test]]
+                    el_owner[real_list[better_test]] = np.array(elem_to_check_per_point)[relative_list[better_test]]
+                    glb_el_owner[real_list[better_test]] = el_owner[real_list[better_test]] + offset_el
+                    rank_owner[real_list[better_test]] = rank
+                    err_code[real_list[better_test]] = not_found_code
+                    test_pattern[real_list[better_test]] = test_error[better_test]
+                
+            else: 
+                
+                probe_rst[real_index_pt_not_found_this_it, 0] = result_r[pt_not_found_this_it]
+                probe_rst[real_index_pt_not_found_this_it, 1] = result_s[pt_not_found_this_it]
+                probe_rst[real_index_pt_not_found_this_it, 2] = result_t[pt_not_found_this_it]
+                el_owner[real_index_pt_not_found_this_it] = np.array(elem_to_check_per_point)[pt_not_found_this_it]
+                glb_el_owner[real_index_pt_not_found_this_it] = el_owner[real_index_pt_not_found_this_it] + offset_el
+                rank_owner[real_index_pt_not_found_this_it] = rank
+                err_code[real_index_pt_not_found_this_it] = not_found_code
+
+
+
+print(r.device)
 print('tensor_interpolator : Time to find: {}'.format(MPI.Wtime() - start_time))
-print(len(np.where(err_code == 1)[0]))
-print(len(np.where(err_code == -10)[0]))
-print(len(np.where(err_code == 0)[0]))
+
+print(np.where(el_owner != itp.el_owner_partition)[0])
+
+# Print if the results are the same
+if interpolate_sem_mesh:
+    print(np.allclose(probe_rst, itp.probe_rst_partition))
+    print(np.allclose(el_owner, itp.el_owner_partition))
+
