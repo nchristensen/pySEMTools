@@ -115,6 +115,10 @@ itp.find_points_comm_pairs(comm, communicate_candidate_pairs = True, elem_percen
 itp.gather_probes_to_io_rank(0, comm)
 itp.redistribute_probes_to_owners_from_io_rank(0, comm)
 
+print(np.allclose(itp.probe_partition[itp.sort_by_rank], itp.my_probes))
+print(np.allclose(itp.probe_rst_partition[itp.sort_by_rank], itp.my_probes_rst))
+print(np.allclose(itp.el_owner_partition[itp.sort_by_rank], itp.my_el_owner))
+
 # Now interpolate xyz to check if the process is correct
 my_interpolated_fields = np.zeros((itp.my_probes.shape[0], 3), dtype = np.double)
 if comm.Get_rank() == 0:
@@ -426,10 +430,73 @@ for e in range(0, max_candidate_elements):
 print(r.device)
 print('tensor_interpolator : Time to find: {}'.format(MPI.Wtime() - start_time))
 
-print(np.where(el_owner != itp.el_owner_partition)[0])
+#print(np.where(el_owner != itp.el_owner_partition)[0])
 
 # Print if the results are the same
 if interpolate_sem_mesh:
     print(np.allclose(probe_rst, itp.probe_rst_partition))
     print(np.allclose(el_owner, itp.el_owner_partition))
 
+# =================================================================================================================
+# =================================================================================================================
+# =================================================================================================================
+# =================================================================================================================
+
+
+# Now check the interpolation one
+if not use_torch:
+    f1 = np.zeros((max_pts, max_elems, 1, 1), dtype = np.double)
+    f2 = np.zeros((max_pts, max_elems, 1, 1), dtype = np.double)
+    f3 = np.zeros((max_pts, max_elems, 1, 1), dtype = np.double)
+else:
+    f1 = torch.zeros((max_pts, max_elems, 1, 1), dtype=torch.float64, device=device)
+    f2 = torch.zeros((max_pts, max_elems, 1, 1), dtype=torch.float64, device=device)
+    f3 = torch.zeros((max_pts, max_elems, 1, 1), dtype=torch.float64, device=device)
+
+
+# Identify variables
+pts_n = probe.shape[0]
+iterations = np.ceil((pts_n / max_pts))
+# Inputs
+field1 = t_itp.x
+field2 = t_itp.y
+field3 = t_itp.z
+interpolated_fields_tensor = np.zeros_like(probe)
+
+# Identify variables
+pts_n = probe.shape[0]
+iterations = np.ceil((pts_n / max_pts))
+start_time = MPI.Wtime()
+for i in range(0, int(iterations)):
+    start = i * max_pts
+    end   = (i+1) * max_pts
+    if end > pts_n:
+        end = pts_n
+    npoints = end - start
+    nelems = 1
+
+    rst_new_shape = (npoints, nelems, 1, 1)
+    field_new_shape = (npoints, nelems, t_itp.x.shape[1], t_itp.x.shape[2],t_itp.x.shape[3])
+
+    f1[:npoints, :nelems] = tei.interpolate_field_at_rst(probe_rst[start:end, 0].reshape(rst_new_shape), probe_rst[start:end, 1].reshape(rst_new_shape), probe_rst[start:end, 2].reshape(rst_new_shape), field1[el_owner[start:end]].reshape(field_new_shape), use_torch=use_torch)
+    f2[:npoints, :nelems] = tei.interpolate_field_at_rst(probe_rst[start:end, 0].reshape(rst_new_shape), probe_rst[start:end, 1].reshape(rst_new_shape), probe_rst[start:end, 2].reshape(rst_new_shape), field2[el_owner[start:end]].reshape(field_new_shape), use_torch=use_torch)
+    f3[:npoints, :nelems] = tei.interpolate_field_at_rst(probe_rst[start:end, 0].reshape(rst_new_shape), probe_rst[start:end, 1].reshape(rst_new_shape), probe_rst[start:end, 2].reshape(rst_new_shape), field3[el_owner[start:end]].reshape(field_new_shape), use_torch=use_torch)
+
+    # Populate the sampled field
+    if not use_torch: 
+        interpolated_fields_tensor[start:end, 0] = f1[:npoints, :nelems].reshape(npoints)
+        interpolated_fields_tensor[start:end, 1] = f2[:npoints, :nelems].reshape(npoints)
+        interpolated_fields_tensor[start:end, 2] = f3[:npoints, :nelems].reshape(npoints)
+    else:
+        interpolated_fields_tensor[start:end, 0] = f1[:npoints, :nelems].reshape(npoints).to('cpu').numpy()
+        interpolated_fields_tensor[start:end, 1] = f2[:npoints, :nelems].reshape(npoints).to('cpu').numpy()
+        interpolated_fields_tensor[start:end, 2] = f3[:npoints, :nelems].reshape(npoints).to('cpu').numpy()
+
+
+print('tensor_interpolator: Time to interpolate: {}'.format(MPI.Wtime() - start_time))
+
+# Checking with itself
+print(np.allclose(interpolated_fields_tensor, probe))
+
+# Checking with the other interpolator 
+print(np.allclose(interpolated_fields_tensor, interpolated_fields))
