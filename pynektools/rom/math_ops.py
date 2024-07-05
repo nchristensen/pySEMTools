@@ -1,116 +1,102 @@
-import sys
-import os
-import copy
-#os.environ["OMP_NUM_THREADS"] = "1" # export OMP_NUM_THREADS=4
-#os.environ["OPENBLAS_NUM_THREADS"] = "1" # export OPENBLAS_NUM_THREADS=4 
-#os.environ["MKL_NUM_THREADS"] = "1" # export MKL_NUM_THREADS=6
-#os.environ["VECLIB_MAXIMUM_THREADS"] = "1" # export VECLIB_MAXIMUM_THREADS=4
-#os.environ["NUMEXPR_NUM_THREADS"] = "1" # export NUMEXPR_NUM_THREADS=6
+""" Module that defines some mathematical operations"""
 
 from mpi4py import MPI
 import numpy as np
-import scipy.optimize
-from .mpi_ops import gather_in_root, scatter_from_root
+from .mpi_ops import gather_in_root
 
 NoneType = type(None)
 
 
-class math_ops_c():
+class MathOps:
+    """Class that contains methods for math operations"""
+
     def __init__(self):
-        a=1
+        pass
 
-    def scale_data(self, X,bm,rows,columns,scale):
-        
-        #Scale the data with the mass matrix
-        if scale=='mult':
-            for i in range(0,columns):
-                #for j in range(0,rows):
-                    #X[j,i]= X[j,i]*bm[j,0]
-                X[:,i]= X[:,i]*bm[:,0]
-        elif scale=='div':
-            for i in range(0,columns):
-                #for j in range(0,rows):
-                #    X[j,i]= X[j,i]/bm[j,0]
-                X[:,i]= X[:,i]/bm[:,0]
+    def scale_data(self, x, bm, rows, columns, scale):
+        """Method to scale the data with the given mass matrix"""
+        # Scale the data with the mass matrix
+        if scale == "mult":
+            for i in range(0, columns):
+                x[:, i] = x[:, i] * bm[:, 0]
+        elif scale == "div":
+            for i in range(0, columns):
+                x[:, i] = x[:, i] / bm[:, 0]
 
-    
-    def get_perp_ratio(self,U,v):
-        m=U.conj().T@v
-        v_parallel=U@m
-        v_orthogonal=v-v_parallel
-        nrm_o=np.linalg.norm(v_orthogonal)
-        nrm=np.linalg.norm(v)    
-        return nrm_o/nrm
+    def get_perp_ratio(self, u, v):
+        """Method to get the ratio of how much a vector is perpendicular
+        to another one in serial execution"""
+        m = u.conj().T @ v
+        v_parallel = u @ m
+        v_orthogonal = v - v_parallel
+        nrm_o = np.linalg.norm(v_orthogonal)
+        nrm = np.linalg.norm(v)
+        return nrm_o / nrm
 
-    def mpi_get_perp_ratio(self,U,v,comm):
-        # Get information from the communicator
-        rank = comm.Get_rank()
-        size = comm.Get_size()
-        
+    def mpi_get_perp_ratio(self, u, v, comm):
+        """Method to get the ratio of how much a vector is perpendicular
+        to another one in parallel execution"""
         # Get the local partial step
-        mi=U.conj().T@v
+
+        mi = u.conj().T @ v
 
         # Use MPI_SUM to get the global one by aggregating local
-        m = np.zeros_like(mi,dtype=mi.dtype)
+        m = np.zeros_like(mi, dtype=mi.dtype)
         comm.Allreduce(mi, m, op=MPI.SUM)
-        
+
         # Get local parallel component
-        v_parallel=U@m
+        v_parallel = u @ m
         # Get local orthogonal component
-        v_orthogonal=v-v_parallel
+        v_orthogonal = v - v_parallel
 
         #  Do a local sum of squares
-        nrmi=np.zeros((2))
-        nrmi[0]=np.sum(v_orthogonal**2)
-        nrmi[1]=np.sum(v**2)    
+        nrmi = np.zeros((2))
+        nrmi[0] = np.sum(v_orthogonal**2)
+        nrmi[1] = np.sum(v**2)
 
         # Then do an all reduce
-        nrm = np.zeros_like(nrmi,dtype=nrmi.dtype)
+        nrm = np.zeros_like(nrmi, dtype=nrmi.dtype)
         comm.Allreduce(nrmi, nrm, op=MPI.SUM)
- 
+
         # Get the actual norm
-        nrm_o=np.sqrt(nrm[0])
-        nrm=np.sqrt(nrm[1])
+        nrm_o = np.sqrt(nrm[0])
+        nrm = np.sqrt(nrm[1])
 
-        return nrm_o/nrm
-    
-    def gatherModesandMass_atRank0(self,U_1t,BM1, n,comm):
-        
+        return nrm_o / nrm
+
+    def gather_modes_and_mass_at_rank0(self, u_1t, bm, n, comm):
+        """Method to gather modes and mass matrix in rank zero"""
         # Get information from the communicator
         rank = comm.Get_rank()
-        size = comm.Get_size()
-        m = U_1t.shape[1]
+        m = u_1t.shape[1]
 
-        U = None #prepare the buffer for recieving
-        bm1sqrt = None #prepare the buffer for recieving
+        u = None  # prepare the buffer for recieving
+        bm1sqrt = None  # prepare the buffer for recieving
         if rank == 0:
-           #Generate the buffer to gather in rank 0
-            U = np.empty((n,m),dtype=U_1t.dtype)
-            bm1sqrt = np.empty((n,1))
-        comm.Gather(U_1t, U, root=0)
-        comm.Gather(BM1, bm1sqrt, root=0)
-        return U, bm1sqrt
-    
-    def gatherModesandMass_atRoot(self,U_1t,BM1, n,comm, root = 0):
-        
-        # Get information from the communicator
-        rank = comm.Get_rank()
-        size = comm.Get_size()
-        m = U_1t.shape[1]
+            # Generate the buffer to gather in rank 0
+            u = np.empty((n, m), dtype=u_1t.dtype)
+            bm1sqrt = np.empty((n, 1))
+        comm.Gather(u_1t, u, root=0)
+        comm.Gather(bm, bm1sqrt, root=0)
+        return u, bm1sqrt
 
-        sendbuf = U_1t.reshape((U_1t.size))
-        recvbuf, _ = gather_in_root(sendbuf, root, sendbuf.dtype,  comm)
-        if type(recvbuf) != NoneType:
-            U = recvbuf.reshape((n, int(recvbuf.size/n)))
+    def gather_modes_and_mass_at_root(self, u_1t, bm, n, comm, root=0):
+        """Method to gather modes and mass matrix in a given root"""
+
+        sendbuf = u_1t.reshape((u_1t.size))
+        recvbuf, _ = gather_in_root(sendbuf, root, sendbuf.dtype, comm)
+
+        if not isinstance(recvbuf, NoneType):
+            u = recvbuf.reshape((n, int(recvbuf.size / n)))
         else:
-            U = None
+            u = None
 
-        sendbuf = BM1.reshape((BM1.size))
-        recvbuf, _ = gather_in_root(sendbuf, root, sendbuf.dtype,  comm)
-        if type(recvbuf) != NoneType:
-            bm1sqrt = recvbuf.reshape((n, int(recvbuf.size/n)))
+        sendbuf = bm.reshape((bm.size))
+        recvbuf, _ = gather_in_root(sendbuf, root, sendbuf.dtype, comm)
+
+        if not isinstance(recvbuf, NoneType):
+            bm1sqrt = recvbuf.reshape((n, int(recvbuf.size / n)))
         else:
             bm1sqrt = None
 
-        return U, bm1sqrt
-
+        return u, bm1sqrt
