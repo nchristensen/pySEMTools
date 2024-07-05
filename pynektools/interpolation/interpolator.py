@@ -44,6 +44,9 @@ class interpolator_c():
                 self.s = torch.zeros((max_pts, max_elems, 1, 1), dtype=torch.float64, device=device)
                 self.t = torch.zeros((max_pts, max_elems, 1, 1), dtype=torch.float64, device=device)
                 self.test_interp = torch.zeros((max_pts, max_elems, 1, 1), dtype=torch.float64, device=device)
+            
+            if comm.Get_rank() == 0: print('Using device: {}'.format(self.r.device))
+
         else:
             self.ei = element_interpolator_c(x.shape[1], modal_search = modal_search)
         
@@ -1050,34 +1053,40 @@ class interpolator_c():
             if self.progress_bar: pbar.close()
 
         elif self.use_tensor == True or self.use_torch == True:
-
-            print('WARNING: This implementation interpolates points with error code = 0 ')
-            print('WARNING: Check the non tensor implementation to add a fix for this ')
-            
+ 
             max_pts = self.max_pts
             pts_n = self.my_probes.shape[0]
             iterations = np.ceil((pts_n / max_pts))
             
             sampled_field_at_probe = np.empty((self.my_probes.shape[0]))
+            probe_interpolated = np.zeros((self.my_probes.shape[0]))
             
             for i in range(0, int(iterations)):
-                start = i * max_pts
-                end   = (i+1) * max_pts
-                if end > pts_n:
-                    end = pts_n
-                npoints = end - start
+
+                # Check the probes to interpolate this iteration
+                probes_to_interpolate = np.where((self.my_err_code != 0) & (probe_interpolated == 0))[0]
+                probes_to_interpolate = probes_to_interpolate[:max_pts]
+
+                # Check the number of probes
+                npoints = len(probes_to_interpolate)
                 nelems = 1
+
+                if npoints == 0:
+                    break
+                
+                # Inmediately update the points that will be interpolated
+                probe_interpolated[probes_to_interpolate] = 1
 
                 rst_new_shape = (npoints, nelems, 1, 1)
                 field_new_shape = (npoints, nelems, self.x.shape[1], self.x.shape[2], self.x.shape[3])
 
-                self.test_interp[:npoints, :nelems] = self.ei.interpolate_field_at_rst(self.my_probes_rst[start:end, 0].reshape(rst_new_shape), self.my_probes_rst[start:end, 1].reshape(rst_new_shape), self.my_probes_rst[start:end, 2].reshape(rst_new_shape), sampled_field[self.my_el_owner[start:end]].reshape(field_new_shape), use_torch=self.use_torch)
+                self.test_interp[:npoints, :nelems] = self.ei.interpolate_field_at_rst(self.my_probes_rst[probes_to_interpolate, 0].reshape(rst_new_shape), self.my_probes_rst[probes_to_interpolate, 1].reshape(rst_new_shape), self.my_probes_rst[probes_to_interpolate, 2].reshape(rst_new_shape), sampled_field[self.my_el_owner[probes_to_interpolate]].reshape(field_new_shape), use_torch=self.use_torch)
                 
                 # Populate the sampled field
                 if not self.use_torch: 
-                    sampled_field_at_probe[start:end] = self.test_interp[:npoints, :nelems].reshape(npoints)
+                    sampled_field_at_probe[probes_to_interpolate] = self.test_interp[:npoints, :nelems].reshape(npoints)
                 else:
-                    sampled_field_at_probe[start:end] = self.test_interp[:npoints, :nelems].reshape(npoints).to('cpu').numpy()
+                    sampled_field_at_probe[probes_to_interpolate] = self.test_interp[:npoints, :nelems].reshape(npoints).to('cpu').numpy()
  
         return sampled_field_at_probe
 

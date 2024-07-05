@@ -146,7 +146,7 @@ else:
 
 #========================================================
 
-use_torch = True
+use_torch = False
 if not use_torch:
     max_pts = 128
 else:

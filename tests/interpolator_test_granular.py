@@ -467,30 +467,41 @@ interpolated_fields_tensor = np.zeros_like(probe)
 pts_n = probe.shape[0]
 iterations = np.ceil((pts_n / max_pts))
 start_time = MPI.Wtime()
+
+probe_interpolated = np.zeros((probe.shape[0]))
+
 for i in range(0, int(iterations)):
-    start = i * max_pts
-    end   = (i+1) * max_pts
-    if end > pts_n:
-        end = pts_n
-    npoints = end - start
+
+    # Check the probes to interpolate this iteration
+    probes_to_interpolate = np.where((err_code != 0) & (probe_interpolated == 0))[0]
+    probes_to_interpolate = probes_to_interpolate[:max_pts]
+
+    # Check the number of probes
+    npoints = len(probes_to_interpolate)
     nelems = 1
+
+    if npoints == 0:
+        break
+    
+    # Inmediately update the points that will be interpolated
+    probe_interpolated[probes_to_interpolate] = 1
 
     rst_new_shape = (npoints, nelems, 1, 1)
     field_new_shape = (npoints, nelems, t_itp.x.shape[1], t_itp.x.shape[2],t_itp.x.shape[3])
 
-    f1[:npoints, :nelems] = tei.interpolate_field_at_rst(probe_rst[start:end, 0].reshape(rst_new_shape), probe_rst[start:end, 1].reshape(rst_new_shape), probe_rst[start:end, 2].reshape(rst_new_shape), field1[el_owner[start:end]].reshape(field_new_shape), use_torch=use_torch)
-    f2[:npoints, :nelems] = tei.interpolate_field_at_rst(probe_rst[start:end, 0].reshape(rst_new_shape), probe_rst[start:end, 1].reshape(rst_new_shape), probe_rst[start:end, 2].reshape(rst_new_shape), field2[el_owner[start:end]].reshape(field_new_shape), use_torch=use_torch)
-    f3[:npoints, :nelems] = tei.interpolate_field_at_rst(probe_rst[start:end, 0].reshape(rst_new_shape), probe_rst[start:end, 1].reshape(rst_new_shape), probe_rst[start:end, 2].reshape(rst_new_shape), field3[el_owner[start:end]].reshape(field_new_shape), use_torch=use_torch)
+    f1[:npoints, :nelems] = tei.interpolate_field_at_rst(probe_rst[probes_to_interpolate, 0].reshape(rst_new_shape), probe_rst[probes_to_interpolate, 1].reshape(rst_new_shape), probe_rst[probes_to_interpolate, 2].reshape(rst_new_shape), field1[el_owner[probes_to_interpolate]].reshape(field_new_shape), use_torch=use_torch)
+    f2[:npoints, :nelems] = tei.interpolate_field_at_rst(probe_rst[probes_to_interpolate, 0].reshape(rst_new_shape), probe_rst[probes_to_interpolate, 1].reshape(rst_new_shape), probe_rst[probes_to_interpolate, 2].reshape(rst_new_shape), field2[el_owner[probes_to_interpolate]].reshape(field_new_shape), use_torch=use_torch)
+    f3[:npoints, :nelems] = tei.interpolate_field_at_rst(probe_rst[probes_to_interpolate, 0].reshape(rst_new_shape), probe_rst[probes_to_interpolate, 1].reshape(rst_new_shape), probe_rst[probes_to_interpolate, 2].reshape(rst_new_shape), field3[el_owner[probes_to_interpolate]].reshape(field_new_shape), use_torch=use_torch)
 
     # Populate the sampled field
     if not use_torch: 
-        interpolated_fields_tensor[start:end, 0] = f1[:npoints, :nelems].reshape(npoints)
-        interpolated_fields_tensor[start:end, 1] = f2[:npoints, :nelems].reshape(npoints)
-        interpolated_fields_tensor[start:end, 2] = f3[:npoints, :nelems].reshape(npoints)
+        interpolated_fields_tensor[probes_to_interpolate, 0] = f1[:npoints, :nelems].reshape(npoints)
+        interpolated_fields_tensor[probes_to_interpolate, 1] = f2[:npoints, :nelems].reshape(npoints)
+        interpolated_fields_tensor[probes_to_interpolate, 2] = f3[:npoints, :nelems].reshape(npoints)
     else:
-        interpolated_fields_tensor[start:end, 0] = f1[:npoints, :nelems].reshape(npoints).to('cpu').numpy()
-        interpolated_fields_tensor[start:end, 1] = f2[:npoints, :nelems].reshape(npoints).to('cpu').numpy()
-        interpolated_fields_tensor[start:end, 2] = f3[:npoints, :nelems].reshape(npoints).to('cpu').numpy()
+        interpolated_fields_tensor[probes_to_interpolate, 0] = f1[:npoints, :nelems].reshape(npoints).to('cpu').numpy()
+        interpolated_fields_tensor[probes_to_interpolate, 1] = f2[:npoints, :nelems].reshape(npoints).to('cpu').numpy()
+        interpolated_fields_tensor[probes_to_interpolate, 2] = f3[:npoints, :nelems].reshape(npoints).to('cpu').numpy()
 
 
 print('tensor_interpolator: Time to interpolate: {}'.format(MPI.Wtime() - start_time))
