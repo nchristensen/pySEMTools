@@ -1,4 +1,5 @@
 __pycache__
+.idea
 *0.f0*
 *.nek5000
 *_checkpoints
