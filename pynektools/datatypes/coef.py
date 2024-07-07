@@ -55,7 +55,7 @@ class COEF:
         self.jac = np.zeros_like(self.dxdr, dtype=np.double)
         # This maps drst/dxyz
         self.jac_inv = np.zeros_like(self.dxdr, dtype=np.double)
-        self.b = np.zeros_like(self.dxdr, dtype=np.double)
+        self.B = np.zeros_like(self.dxdr, dtype=np.double)
 
         if msh.gdim > 2:
             temp_mat = np.zeros((3, 3))
@@ -84,7 +84,7 @@ class COEF:
                         # Fill the jaconian determinant, its inverse and the mass matrix
                         self.jac[e, k, j, i] = np.linalg.det(temp_mat)
                         self.jac_inv[e, k, j, i] = 1 / self.jac[e, k, j, i]
-                        self.b[e, k, j, i] = (
+                        self.B[e, k, j, i] = (
                             self.jac[e, k, j, i]
                             * np.diag(self.w3).reshape((msh.lz, msh.ly, msh.lx))[
                                 k, j, i
