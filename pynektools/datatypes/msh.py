@@ -11,7 +11,7 @@ class MSH:
 
     def __init__(self, comm, data=None, x=None, y=None, z=None):
 
-        if not isinstance(type(data), NoneType):
+        if not isinstance(data, NoneType):
             self.x, self.y, self.z = get_coordinates_from_hexadata(data)
         else:
             self.x = x

@@ -6,7 +6,7 @@ class IoPathData:
 
     def __init__(self, params_file):
         self.casename = params_file["casename"]
-        self.data_path = params_file["dataPath"]
+        self.dataPath = params_file["dataPath"]
         self.index = params_file["first_index"]
 
 

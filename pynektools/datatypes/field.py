@@ -15,7 +15,7 @@ class FLD:
         self.fields["pres"] = []
         self.fields["temp"] = []
         self.fields["scal"] = []
-        if not isinstance(type(data), NoneType):
+        if not isinstance(data, NoneType):
             vars_ = data.var
             self.vel_fields = vars_[1]
             self.pres_fields = vars_[2]

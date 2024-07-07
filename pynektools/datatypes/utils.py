@@ -262,7 +262,7 @@ def write_fld_subdomain_from_list(
             field_list_sub.append(field_list[field][write_these_e, :, :, :])
 
         # Refine the order of the mesh if needed:
-        if not isinstance(type(p), NoneType):
+        if not isinstance(p, NoneType):
             pref = p_refiner_c(n_old=msh_sub.lx, n_new=p)
 
             # Get the new mesh

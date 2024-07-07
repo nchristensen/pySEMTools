@@ -1,6 +1,6 @@
 import numpy as np
 from .sem import element_interpolator_c
-from ..datatypes.msh import msh_c
+from ..datatypes.msh import MSH as msh_c
 
 class p_refiner_c():
     def __init__(self, n_old = 8, n_new = 8):
