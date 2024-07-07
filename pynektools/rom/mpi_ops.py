@@ -1,10 +1,12 @@
+""" Define some MPI operation wrappers"""
+
 import numpy as np
 
 
 def gather_in_root(sendbuf, root, dtype, comm):
+    """Gather data from all processes to the root process"""
 
     rank = comm.Get_rank()
-    size = comm.Get_size()
 
     # Collect local array sizes using the high-level mpi4py gather
     sendcounts = np.array(comm.allgather(sendbuf.size))
@@ -21,9 +23,9 @@ def gather_in_root(sendbuf, root, dtype, comm):
 
 
 def scatter_from_root(sendbuf, sendcounts, root, dtype, comm):
+    """Scatter data from the root process to all processes"""
 
     rank = comm.Get_rank()
-    size = comm.Get_size()
 
     recvbuf = np.ones(sendcounts[rank], dtype=dtype) * -100
 
