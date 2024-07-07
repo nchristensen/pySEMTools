@@ -1,9 +1,11 @@
 # pyNekTools
-A package for post processing SEM data
+A package for post-processing SEM data.
 
 # Installation.
 
-To install in your pip enviroment, clone this repository and execute the install.sh script.
+To install in your pip enviroment, clone this repository and execute `pip install  --editable .`.
+The `--editable` flag is optional, and will allow changes in the code of the package to be used
+directly without reinstalling.
 
 # Use.
 
