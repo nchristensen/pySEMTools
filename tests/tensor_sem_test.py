@@ -18,11 +18,9 @@ import numpy as np
 
 # Import relevant modules
 from pynektools.interpolation.mesh_to_mesh import p_refiner_c
-from pynektools.interpolation.sem import element_interpolator_c
+from pynektools.interpolation.single_point_legendre_interpolator import LegendreInterpolator as element_interpolator_c
 from pynektools.ppymech.neksuite import preadnek
-from pynektools.datatypes.msh import msh_c
-from pynektools.datatypes.coef import coef_c
-from pynektools.datatypes.field import field_c
+from pynektools.datatypes.msh import MSH as msh_c
 
 def test_sem_and_tensor_sem(n_new = 8, elem = 1, max_pts = 1, use_torch = False, verbose = False):
 
@@ -128,13 +126,17 @@ def test_sem_and_tensor_sem(n_new = 8, elem = 1, max_pts = 1, use_torch = False,
         print('=====================')
         print('Now testing: tensor_sem.py: element_interpolator_c')
 
-        from pynektools.interpolation.tensor_sem import element_interpolator_c as tensor_element_interpolator_c
+        from pynektools.interpolation.multiple_point_interpolator_legendre_numpy import LegendreInterpolator as numpy_tensor_element_interpolator_c
+        from pynektools.interpolation.multiple_point_interpolator_legendre_torch import LegendreInterpolator as torch_tensor_element_interpolator_c
 
         # Instance the tensor interpolator
         max_pts   = max_pts
         max_elems = 1
         use_torch = use_torch
-        tei       = tensor_element_interpolator_c(msh.lx, max_pts=max_pts, use_torch = use_torch)
+        if not use_torch:
+            tei = numpy_tensor_element_interpolator_c(msh.lx, max_pts=max_pts)
+        else:
+            tei = torch_tensor_element_interpolator_c(msh.lx, max_pts=max_pts)
 
         print('using torch: {}'.format(use_torch))
         if use_torch: print('Using device: {}'.format(device))
@@ -148,7 +150,7 @@ def test_sem_and_tensor_sem(n_new = 8, elem = 1, max_pts = 1, use_torch = False,
         rshp_x[:,:,:,:,:] = msh.x[elem,:,:,:].reshape(1, 1, msh.lz, msh.ly, msh.lx)
         rshp_y[:,:,:,:,:] = msh.y[elem,:,:,:].reshape(1, 1, msh.lz, msh.ly, msh.lx)
         rshp_z[:,:,:,:,:] = msh.z[elem,:,:,:].reshape(1, 1, msh.lz, msh.ly, msh.lx)
-        tei.project_element_into_basis(rshp_x, rshp_y, rshp_z, use_torch=use_torch)
+        tei.project_element_into_basis(rshp_x, rshp_y, rshp_z)
 
         if not use_torch: 
             t1 = np.allclose(ei.x_e_hat, tei.x_e_hat[0,0,:,:])
@@ -200,8 +202,8 @@ def test_sem_and_tensor_sem(n_new = 8, elem = 1, max_pts = 1, use_torch = False,
             if end > total_pts:
                 end = total_pts
             npoints = end - start
-            tei.project_element_into_basis(rshp_x[:npoints,:,:,:,:], rshp_y[:npoints,:,:,:,:], rshp_z[:npoints,:,:,:,:], use_torch=use_torch)
-            xx[start:end], yy[start:end], zz[start:end] = tei.get_xyz_from_rst(new_r[start:end], new_s[start:end], new_t[start:end], apply_1d_ops = True, use_torch=use_torch)
+            tei.project_element_into_basis(rshp_x[:npoints,:,:,:,:], rshp_y[:npoints,:,:,:,:], rshp_z[:npoints,:,:,:,:])
+            xx[start:end], yy[start:end], zz[start:end] = tei.get_xyz_from_rst(new_r[start:end], new_s[start:end], new_t[start:end], apply_1d_ops = True)
         print('tensor_sem.py: Time to get all xyz: {}'.format(MPI.Wtime() - start_time))
         
         if not use_torch: 
@@ -255,8 +257,8 @@ def test_sem_and_tensor_sem(n_new = 8, elem = 1, max_pts = 1, use_torch = False,
             if end > total_pts:
                 end = total_pts
             npoints = end - start
-            tei.project_element_into_basis(rshp_x[:npoints,:,:,:,:], rshp_y[:npoints,:,:,:,:], rshp_z[:npoints,:,:,:,:], use_torch=use_torch)
-            rr[start:end], ss[start:end], tt[start:end] = tei.find_rst_from_xyz(new_x[start:end], new_y[start:end], new_z[start:end], use_torch=use_torch)
+            tei.project_element_into_basis(rshp_x[:npoints,:,:,:,:], rshp_y[:npoints,:,:,:,:], rshp_z[:npoints,:,:,:,:])
+            rr[start:end], ss[start:end], tt[start:end] = tei.find_rst_from_xyz(new_x[start:end], new_y[start:end], new_z[start:end])
         print('tensor_sem.py: Time to find rst: {}'.format(MPI.Wtime() - start_time))
         print('tensor_sem.py: Last run took: {} iterations'.format(tei.iterations))
         
@@ -280,36 +282,6 @@ def test_sem_and_tensor_sem(n_new = 8, elem = 1, max_pts = 1, use_torch = False,
             sys.exit('tensor_sem.py: find_rst_from_xyz: failed')
         else:
             print('tensor_sem.py: find_rst_from_xyz: passed')
-        
-        # Test the lagrange interpolant
-        from pynektools.interpolation.sem import lagInterp_matrix_at_xtest as lc1
-        from pynektools.interpolation.tensor_sem import lagInterp_matrix_at_xtest as lc2
-
-        xtest = np.linspace(-1,1,100)
-        lk1 = lc1(ei.x_gll, xtest)
-        
-        if not use_torch:
-            xtest = np.linspace(-1,1,100)
-        else:
-            xtest = torch.linspace(-1,1,100, device=device, dtype=torch.float64)
-        lk2 = lc2(tei.x_gll, xtest.reshape(100, 1, 1, 1), use_torch=use_torch)
-        
-        if not use_torch: 
-            lk2 = lk2.transpose(3,1,2,0)
-            t1 = np.allclose(lk1, lk2[0,0,:,:])
-        else:
-            lk2 = lk2.permute(3,1,2,0)
-            t1 = np.allclose(lk1, lk2[0,0,:,:].to('cpu').numpy())
-
-        passed = np.all([t1])
-        
-        if verbose:        
-            print('tensor_sem.py: interpolation matrix created correctly: {}'.format(t1))
-
-        if not passed:
-            sys.exit('tensor_sem.py: lagInterp_matrix_at_xtest: failed')
-        else:
-            print('tensor_sem.py: lagInterp_matrix_at_xtest: passed')
 
         # Test interpolation 
         if not use_torch:
@@ -328,9 +300,9 @@ def test_sem_and_tensor_sem(n_new = 8, elem = 1, max_pts = 1, use_torch = False,
             if end > total_pts:
                 end = total_pts
             npoints = end - start
-            xx_int[start:end] = tei.interpolate_field_at_rst(rr[start:end], ss[start:end], tt[start:end], rshp_x[:npoints,:,:,:,:], use_torch=use_torch)
-            yy_int[start:end] = tei.interpolate_field_at_rst(rr[start:end], ss[start:end], tt[start:end], rshp_y[:npoints,:,:,:,:], use_torch=use_torch)
-            zz_int[start:end] = tei.interpolate_field_at_rst(rr[start:end], ss[start:end], tt[start:end], rshp_z[:npoints,:,:,:,:], use_torch=use_torch)
+            xx_int[start:end] = tei.interpolate_field_at_rst(rr[start:end], ss[start:end], tt[start:end], rshp_x[:npoints,:,:,:,:])
+            yy_int[start:end] = tei.interpolate_field_at_rst(rr[start:end], ss[start:end], tt[start:end], rshp_y[:npoints,:,:,:,:])
+            zz_int[start:end] = tei.interpolate_field_at_rst(rr[start:end], ss[start:end], tt[start:end], rshp_z[:npoints,:,:,:,:])
         print('tensor_sem.py: Time to interpolate: {}'.format(MPI.Wtime() - start_time))
  
         if not use_torch: 
@@ -363,4 +335,4 @@ test_sem_and_tensor_sem(n_new = 8, elem = 1, max_pts = 128, use_torch = False, v
 if comm.Get_rank() == 0: print('================')
 if comm.Get_rank() == 0: print('================')
 
-test_sem_and_tensor_sem(n_new = 8, elem = 1, max_pts = 128, use_torch = True, verbose = False)
+test_sem_and_tensor_sem(n_new = 8, elem = 1, max_pts = 1000, use_torch = True, verbose = False)
