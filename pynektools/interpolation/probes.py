@@ -16,7 +16,7 @@ class probes_c():
             self.dataPath = params_file["dataPath"]
             self.index = params_file["first_index"]
         
-    def __init__(self, comm, filename = None, probes = None, msh = None, write_coords = True, progress_bar = False, modal_search = True, communicate_candidate_pairs = True, elem_percent_expansion = 0.01):
+    def __init__(self, comm, filename = None, probes = None, msh = None, write_coords = True, progress_bar = False, point_interpolator_type = 'single_point_legendre', max_pts = 128, find_points_comm_pattern = 'point_to_point', elem_percent_expansion = 0.01):
         
         rank = comm.Get_rank()
         size = comm.Get_size()
@@ -69,19 +69,14 @@ class probes_c():
 
 
         # Initialize the interpolator
-        self.itp = interpolator_c(self.x, self.y, self.z, self.probes, comm, progress_bar, modal_search = modal_search)
+        self.itp = interpolator_c(self.x, self.y, self.z, self.probes, comm, progress_bar, point_interpolator_type = point_interpolator_type, max_pts=max_pts)
 
         # Scatter the probes to all ranks
         self.itp.scatter_probes_from_io_rank(0, comm)
 
         # Find where the point in each rank should be
         if comm.Get_rank() == 0 : print("finding points")
-        if communicate_candidate_pairs == False:
-            if comm.Get_rank() == 0 : print("Not identifying rank pairs - only works with powers of 2 ranks")
-            self.itp.find_points(comm, elem_percent_expansion = elem_percent_expansion)
-        else:
-            if comm.Get_rank() == 0 : print("Identifying rank pairs - Might be slower")
-            self.itp.find_points_comm_pairs(comm, communicate_candidate_pairs = communicate_candidate_pairs, elem_percent_expansion = elem_percent_expansion)
+        self.itp.find_points(comm, find_points_comm_pattern = find_points_comm_pattern, elem_percent_expansion = elem_percent_expansion)
         
         # Gather probes to rank 0 again
         self.itp.gather_probes_to_io_rank(0, comm)

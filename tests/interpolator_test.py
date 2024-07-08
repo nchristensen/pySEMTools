@@ -107,7 +107,7 @@ itp = interpolator_c(msh.x, msh.y, msh.z, probes, comm, progress_bar = True, poi
 itp.scatter_probes_from_io_rank(0, comm)
 
 # Find the points
-itp.find_points_comm_pairs(comm, communicate_candidate_pairs = True, elem_percent_expansion = 0.01)
+itp.find_points(comm, find_points_comm_pattern='point_to_point', elem_percent_expansion = 0.01)
 
 # Peform needed redistributions
 itp.gather_probes_to_io_rank(0, comm)
@@ -160,7 +160,7 @@ t_itp = interpolator_c(msh.x, msh.y, msh.z, probes, comm, progress_bar = True, p
 t_itp.scatter_probes_from_io_rank(0, comm)
 
 # Find the points
-t_itp.find_points_comm_pairs(comm, communicate_candidate_pairs = True, elem_percent_expansion = 0.01)
+t_itp.find_points(comm, find_points_comm_pattern='point_to_point', elem_percent_expansion = 0.01)
 
 if interpolate_sem_mesh:
     print(np.allclose(t_itp.probe_rst_partition, itp.probe_rst_partition))

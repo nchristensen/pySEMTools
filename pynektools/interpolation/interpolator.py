@@ -145,8 +145,16 @@ class interpolator_c():
         
         return
 
+    def find_points(self, comm, find_points_comm_pattern = 'point_to_point', use_kdtree = True, test_tol = 1e-4, elem_percent_expansion = 0.01):
 
-    def find_points(self, comm, use_kdtree = True, test_tol = 1e-4, elem_percent_expansion = 0.01):
+        if comm.Get_rank() == 0: print("Using communication pattern: {}".format(find_points_comm_pattern))
+
+        if find_points_comm_pattern == 'collective':
+            self.find_points_collective_(comm, use_kdtree = use_kdtree, test_tol = test_tol, elem_percent_expansion = elem_percent_expansion)
+        elif find_points_comm_pattern == 'point_to_point':
+            self.find_points_point_to_point_(comm, use_kdtree = use_kdtree, test_tol = test_tol, elem_percent_expansion = elem_percent_expansion)
+
+    def find_points_collective_(self, comm, use_kdtree = True, test_tol = 1e-4, elem_percent_expansion = 0.01):
         
         rank = comm.Get_rank()
         size = comm.Get_size()
@@ -219,7 +227,6 @@ class interpolator_c():
                 # Only do the search, if my rank has not already searched the broadcaster
                 if broadcaster_global_rank not in self.ranks_ive_checked: 
 
-                    #================================================================================
                     if not use_kdtree:
                         # Find a candidate rank to check
                         i = 0
@@ -240,7 +247,6 @@ class interpolator_c():
                             i = i + 1
                             if self.progress_bar: pbar.update(1)
                         if self.progress_bar: pbar.close()
-                    #================================================================================
                     elif use_kdtree:
 
                         # Get bbox centroids and max radius from center to corner for the broadcaster
@@ -270,8 +276,6 @@ class interpolator_c():
                             i = i + 1
                             if self.progress_bar: pbar.update(1)
                         if self.progress_bar: pbar.close()
-                    #================================================================================
-
 
                     #Now let the brodcaster gather the points that the other ranks think it has
                     #broadcaster_is_candidate = np.where(rank_owner_not_found == broadcaster_global_rank)[0] 
@@ -438,9 +442,8 @@ class interpolator_c():
             #    self.err_code_partition[j] = 0
 
         return
-
-
-    def find_points_comm_pairs(self, comm, use_kdtree = True, test_tol = 1e-4, communicate_candidate_pairs = True, elem_percent_expansion = 0.01):
+    
+    def find_points_point_to_point_(self, comm, use_kdtree = True, test_tol = 1e-4, elem_percent_expansion = 0.01):
         
         rank = comm.Get_rank()
         size = comm.Get_size()
