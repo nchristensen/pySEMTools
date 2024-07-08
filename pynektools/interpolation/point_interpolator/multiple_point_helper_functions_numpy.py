@@ -215,7 +215,7 @@ def get_reference_element(self):
 
     n = self.n
     max_pts = self.max_pts
-    max_elems = self.max_elemes
+    max_elems = self.max_elems
 
     # Get the quadrature nodes
     x,w_=GLL_pwts(n) # The outputs of this functions are not exactly in the order we want (start from 1 not -1)

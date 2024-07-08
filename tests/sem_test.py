@@ -7,7 +7,7 @@ import numpy as np
 
 # Import relevant modules
 from pynektools.interpolation.mesh_to_mesh import p_refiner_c
-from pynektools.interpolation.single_point_legendre_interpolator import LegendreInterpolator as element_interpolator_c
+from pynektools.interpolation.point_interpolator.single_point_legendre_interpolator import LegendreInterpolator as element_interpolator_c
 from pynektools.ppymech.neksuite import preadnek
 from pynektools.datatypes.msh import MSH as msh_c
 from pynektools.datatypes.coef import COEF as coef_c

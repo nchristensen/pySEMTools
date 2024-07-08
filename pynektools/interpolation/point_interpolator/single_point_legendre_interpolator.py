@@ -2,14 +2,14 @@ import numpy as np
 from .single_point_interpolator import SinglePointInterpolator
 from .single_point_helper_functions import *
 
-class LagrangeInterpolator(SinglePointInterpolator):
+class LegendreInterpolator(SinglePointInterpolator):
     def __init__(self, n):
         # Initialize parent class
         super().__init__(n)
 
-
-
-
+        # Get reference element
+        get_legendre_transformation_matrices(self)
+        
     def project_element_into_basis(self, x_e, y_e, z_e, apply_1d_ops = True):
         
         # Assing the inputs to proper formats
@@ -17,17 +17,17 @@ class LagrangeInterpolator(SinglePointInterpolator):
         self.y_e[:,0] = y_e[:,:,:].reshape(-1,1)[:,0]
         self.z_e[:,0] = z_e[:,:,:].reshape(-1,1)[:,0]
 
-        # Use the nodal representation
-        self.x_e_hat = self.x_e
-        self.y_e_hat = self.y_e
-        self.z_e_hat = self.z_e
+        if not apply_1d_ops:    
+            self.x_e_hat = self.v_inv@self.x_e
+            self.y_e_hat = self.v_inv@self.y_e
+            self.z_e_hat = self.v_inv@self.z_e 
+        elif apply_1d_ops:
+            self.x_e_hat = apply_operators_3d(self.v1d_inv, self.v1d_inv, self.v1d_inv, self.x_e)
+            self.y_e_hat = apply_operators_3d(self.v1d_inv, self.v1d_inv, self.v1d_inv, self.y_e)
+            self.z_e_hat = apply_operators_3d(self.v1d_inv, self.v1d_inv, self.v1d_inv, self.z_e)
 
         return
     
-
-
-
-
     def get_xyz_from_rst(self, rj, sj, tj, apply_1d_ops = True):
 
         n = self.n
@@ -35,14 +35,14 @@ class LagrangeInterpolator(SinglePointInterpolator):
         self.sj[0] = sj
         self.tj[0] = tj
         
-        # If nodal search, the basis is lagrange
-        ortho_basis_rj = lagInterp_matrix_at_xtest(self.x_gll,self.rj)
-        ortho_basis_sj = lagInterp_matrix_at_xtest(self.x_gll,self.sj)
-        ortho_basis_tj = lagInterp_matrix_at_xtest(self.x_gll,self.tj)
-            
-        ortho_basis_prm_rj = lagInterp_derivative_matrix_at_xtest(self.x_gll, ortho_basis_rj, self.rj)
-        ortho_basis_prm_sj = lagInterp_derivative_matrix_at_xtest(self.x_gll, ortho_basis_sj, self.sj)
-        ortho_basis_prm_tj = lagInterp_derivative_matrix_at_xtest(self.x_gll, ortho_basis_tj, self.tj)
+        # Find the basis for each coordinate separately
+        ortho_basis_rj = legendre_basis_at_xtest(n, self.rj)
+        ortho_basis_sj = legendre_basis_at_xtest(n, self.sj)
+        ortho_basis_tj = legendre_basis_at_xtest(n, self.tj)
+
+        ortho_basis_prm_rj = legendre_basis_derivative_at_xtest(ortho_basis_rj, self.rj)
+        ortho_basis_prm_sj = legendre_basis_derivative_at_xtest(ortho_basis_sj, self.sj)
+        ortho_basis_prm_tj = legendre_basis_derivative_at_xtest(ortho_basis_tj, self.tj)
             
         if not apply_1d_ops:
             # Construct the 3d basis
@@ -90,9 +90,20 @@ class LagrangeInterpolator(SinglePointInterpolator):
 
     def determine_initial_guess(self):
 
-        # If using lagrange basis, set initial guess to zero to avoid divide by zero
-        self.rj[0] = 0
-        self.sj[0] = 0
-        self.tj[0] = 0
+        # Find the closest gll point to the point of interest
+        n = self.n
+        distances = np.sqrt((self.xj[0]-self.x_e.reshape((n,n,n), order = "F"))**2+(self.yj[0]-self.y_e.reshape((n,n,n), order = "F"))**2+(self.zj[0]-self.z_e.reshape((n,n,n), order = "F"))**2)
+
+        min_index_x = np.argmin(distances[:,0,0])
+        min_index_y = np.argmin(distances[0,:,0])
+        min_index_z = np.argmin(distances[0,0,:])
+
+        # Knowing the indices, see what the rst values would be in a reference element
+        self.rj[0] = self.x_gll[min_index_x]
+        self.sj[0] = self.x_gll[min_index_y]
+        self.tj[0] = self.x_gll[min_index_z]
 
         return
+    
+    def alloc_result_buffer(self, *args, **kwargs):
+        return None

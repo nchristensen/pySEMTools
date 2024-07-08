@@ -3,7 +3,7 @@ from scipy.interpolate import griddata
 from scipy.spatial import KDTree
 from tqdm import tqdm
 from .mpi_ops import *
-from .sem import element_interpolator_c
+from .point_interpolator.point_interpolator_factory import get_point_interpolator
 from mpi4py import MPI # for the timer
 from itertools import combinations
 
@@ -14,42 +14,29 @@ debug = False
 tr = 7
 
 class interpolator_c():
-    def __init__(self, x, y, z, probes, comm, progress_bar = False, modal_search = True, use_tensor = False, use_torch = False, max_pts = 128, max_elems = 1):
+    def __init__(self, x, y, z, probes, comm, progress_bar = False, point_interpolator_type = 'single_point_legendre', max_pts = 128, max_elems = 1):
 
         self.x = x
         self.y = y
         self.z = z
         self.probes = probes
 
-        self.use_tensor = use_tensor
-        self.use_torch = use_torch
+        self.point_interpolator_type = point_interpolator_type
         self.max_pts = max_pts
         self.max_elems = max_elems
 
-        if use_torch == True: 
-            import torch
-            device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
- 
-        if use_tensor == True or use_torch == True:
-            from .tensor_sem import element_interpolator_c as ei_c
-            self.ei = ei_c(x.shape[1], modal_search = modal_search, use_torch = use_torch, max_pts = max_pts, max_elems = max_elems)
-       
-            if not use_torch:
-                self.r = np.zeros((max_pts, max_elems, 1, 1), dtype = np.double)
-                self.s = np.zeros((max_pts, max_elems, 1, 1), dtype = np.double)
-                self.t = np.zeros((max_pts, max_elems, 1, 1), dtype = np.double)
-                self.test_interp = np.zeros((max_pts, max_elems, 1, 1), dtype = np.double)
-            else:
-                self.r = torch.zeros((max_pts, max_elems, 1, 1), dtype=torch.float64, device=device)
-                self.s = torch.zeros((max_pts, max_elems, 1, 1), dtype=torch.float64, device=device)
-                self.t = torch.zeros((max_pts, max_elems, 1, 1), dtype=torch.float64, device=device)
-                self.test_interp = torch.zeros((max_pts, max_elems, 1, 1), dtype=torch.float64, device=device)
-            
-            if comm.Get_rank() == 0: print('Using device: {}'.format(self.r.device))
+        # Determine which point interpolator to use
+        self.ei = get_point_interpolator(point_interpolator_type, x.shape[1], max_pts = max_pts, max_elems = max_elems)
 
-        else:
-            self.ei = element_interpolator_c(x.shape[1], modal_search = modal_search)
+        # Determine which buffer to use
+        self.r = self.ei.alloc_result_buffer(dtype = 'double')
+        self.s = self.ei.alloc_result_buffer(dtype = 'double')
+        self.t = self.ei.alloc_result_buffer(dtype = 'double')
+        self.test_interp = self.ei.alloc_result_buffer(dtype = 'double')
         
+        # Print what you are using 
+        if comm.Get_rank() == 0 and not isinstance(self.r, NoneType): print('Using device: {}'.format(self.r.device))
+ 
         self.progress_bar = progress_bar
         
         #Find the element offset of each rank so you can store the global element number
@@ -326,7 +313,46 @@ class interpolator_c():
 
                 # Now let the broadcaster check if it really had the point. It will go through all the elements again and check rst coordinates
                 if search_rank == broadcaster:
-                    probe_broadcaster_has, probe_rst_broadcaster_has, el_owner_broadcaster_has, glb_el_owner_broadcaster_has, rank_owner_broadcaster_has, err_code_broadcaster_has, test_pattern_broadcaster_has = self.find_rst(probe_broadcaster_has, probe_rst_broadcaster_has, el_owner_broadcaster_has, glb_el_owner_broadcaster_has, rank_owner_broadcaster_has, err_code_broadcaster_has, test_pattern_broadcaster_has, broadcaster_global_rank, self.offset_el,  not_found_code = -10, use_kdtree = use_kdtree, elem_percent_expansion = elem_percent_expansion)
+                    
+                    probes_info = {}
+                    probes_info['probes'] = probe_broadcaster_has
+                    probes_info['probes_rst'] = probe_rst_broadcaster_has
+                    probes_info['el_owner'] = el_owner_broadcaster_has
+                    probes_info['glb_el_owner'] = glb_el_owner_broadcaster_has
+                    probes_info['rank_owner'] = rank_owner_broadcaster_has
+                    probes_info['err_code'] = err_code_broadcaster_has
+                    probes_info['test_pattern'] = test_pattern_broadcaster_has
+                    probes_info['rank'] = broadcaster_global_rank
+                    probes_info['offset_el'] = self.offset_el
+
+                    mesh_info = {}
+                    mesh_info['x'] = self.x
+                    mesh_info['y'] = self.y
+                    mesh_info['z'] = self.z
+                    mesh_info['bbox'] = self.my_bbox                    
+                    if hasattr(self, 'my_tree'):
+                        mesh_info['kd_tree'] = self.my_tree
+                        mesh_info['bbox_max_dist'] = self.my_bbox_maxdist
+
+                    settings = {}
+                    settings['not_found_code'] = -10
+                    settings['use_test_pattern'] = True
+                    settings['elem_percent_expansion'] = elem_percent_expansion
+                    settings['progress_bar'] = self.progress_bar 
+
+                    buffers = {}
+                    buffers['r'] = self.r
+                    buffers['s'] = self.s
+                    buffers['t'] = self.t
+                    buffers['test_interp'] = self.test_interp
+                    
+                    [probe_broadcaster_has, 
+                     probe_rst_broadcaster_has, 
+                     el_owner_broadcaster_has, 
+                     glb_el_owner_broadcaster_has, 
+                     rank_owner_broadcaster_has, 
+                     err_code_broadcaster_has, 
+                     test_pattern_broadcaster_has] = self.ei.find_rst(probes_info, mesh_info,  settings, buffers=buffers)
 
                 # Now scatter the results back to all the other ranks 
                 root = broadcaster
@@ -542,28 +568,50 @@ class interpolator_c():
         for source_index in range(0, len(my_source)): 
             for req in req_list_r[source_index]:
                 req.wait()
-    
+
+        # Set the information for the coordinate search in this rank
+        mesh_info = {}
+        mesh_info['x'] = self.x
+        mesh_info['y'] = self.y
+        mesh_info['z'] = self.z
+        mesh_info['bbox'] = self.my_bbox                    
+        if hasattr(self, 'my_tree'):
+            mesh_info['kd_tree'] = self.my_tree
+            mesh_info['bbox_max_dist'] = self.my_bbox_maxdist
+
+        settings = {}
+        settings['not_found_code'] = -10
+        settings['use_test_pattern'] = True
+        settings['elem_percent_expansion'] = elem_percent_expansion
+        settings['progress_bar'] = self.progress_bar 
+                    
+        buffers = {}
+        buffers['r'] = self.r
+        buffers['s'] = self.s
+        buffers['t'] = self.t
+        buffers['test_interp'] = self.test_interp
+
         # Now find the rst coordinates for the points stored in each of the buffers
         for source_index in range(0, len(my_source)):
+             
+            probes_info = {}
+            probes_info['probes'] = buff_probes[source_index]
+            probes_info['probes_rst'] = buff_probes_rst[source_index]
+            probes_info['el_owner'] = buff_el_owner[source_index]
+            probes_info['glb_el_owner'] = buff_glb_el_owner[source_index]
+            probes_info['rank_owner'] = buff_rank_owner[source_index]
+            probes_info['err_code'] = buff_err_code[source_index]
+            probes_info['test_pattern'] = buff_test_pattern[source_index]
+            probes_info['rank'] = rank
+            probes_info['offset_el'] = self.offset_el            
+            
             [buff_probes[source_index], 
             buff_probes_rst[source_index], 
             buff_el_owner[source_index],  
             buff_glb_el_owner[source_index],
             buff_rank_owner[source_index], 
             buff_err_code[source_index], 
-            buff_test_pattern[source_index]] = self.find_rst( 
-            buff_probes[source_index], 
-            buff_probes_rst[source_index],
-            buff_el_owner[source_index],
-            buff_glb_el_owner[source_index], 
-            buff_rank_owner[source_index], 
-            buff_err_code[source_index], 
-            buff_test_pattern[source_index], 
-            rank,
-            self.offset_el, 
-            not_found_code = -10, 
-            use_kdtree = use_kdtree,
-            elem_percent_expansion = elem_percent_expansion)
+            buff_test_pattern[source_index]] = self.ei.find_rst(probes_info, mesh_info, settings, buffers=buffers) 
 
         # Set the request to Recieve back the data that I have sent to my candidates
         oreq_list_r = []
@@ -648,293 +696,6 @@ class interpolator_c():
             if rank == 0: print("rank: {}, finding points. finished. time(s): {}".format(rank, MPI.Wtime()-start_time))
 
         return
-    
-    def find_rst(self, probes, probes_rst, el_owner, glb_el_owner, rank_owner, err_code, test_pattern, rank, offset_el, not_found_code = -10, use_kdtree = True, use_test_pattern = True, elem_percent_expansion = 0.01):
-        
-        # Reset the element owner and the error code so this rank checks again
-        #el_owner[:] = 0
-        err_code[:] = not_found_code
-
-        # Find the elements in this rank that could hold the point. Check all elements even if you had a guide as an input
-        #================================================================================
-        if not use_kdtree:
-            element_candidates = []
-            i = 0
-            if self.progress_bar: pbar= tqdm(total=probes.shape[0])
-            for pt in probes:
-                element_candidates.append([])        
-                for e in range(0, self.my_bbox.shape[0]):
-                    if pt_in_bbox(pt, self.my_bbox[e], rel_tol = elem_percent_expansion):
-                        element_candidates[i].append(e)
-                i = i + 1
-                if self.progress_bar: pbar.update(1)
-            if self.progress_bar: pbar.close()
-        #================================================================================
-        elif use_kdtree:
-                
-            # Query the tree with the probes to reduce the bbox search
-            candidate_elements = self.my_tree.query_ball_point(x=probes, r=self.my_bbox_maxdist, p=2.0, eps=elem_percent_expansion, workers=1, return_sorted=False, return_length=False)
-            
-            element_candidates = []
-            i = 0
-            if self.progress_bar: pbar= tqdm(total=probes.shape[0])
-            for pt in probes:
-                element_candidates.append([])        
-                for e in candidate_elements[i]:
-                    if pt_in_bbox(pt, self.my_bbox[e], rel_tol = elem_percent_expansion):
-                        element_candidates[i].append(e)
-                i = i + 1
-                if self.progress_bar: pbar.update(1)
-            if self.progress_bar: pbar.close() 
-        #================================================================================
-        #if self.rank == tr and debug == True: print(element_candidates)
-
-        if self.use_tensor == False and self.use_torch == False: 
-
-            if self.progress_bar: pbar= tqdm(total=probes.shape[0])
-            for pts in range(0, probes.shape[0]):
-                if err_code[pts] != 1:
-                    for e in element_candidates[pts]:
-                        self.ei.project_element_into_basis(self.x[e,:,:,:], self.y[e,:,:,:], self.z[e,:,:,:])
-                        r, s, t = self.ei.find_rst_from_xyz(probes[pts,0], probes[pts,1], probes[pts,2]) 
-                        if self.ei.point_inside_element:
-                            probes_rst[pts, 0] = r
-                            probes_rst[pts, 1] = s
-                            probes_rst[pts, 2] = t
-                            el_owner[pts] = e
-                            glb_el_owner[pts] = e + offset_el
-                            rank_owner[pts] = rank
-                            err_code[pts] = 1                    
-                            break
-                        else:
-
-                            # Perform test interpolation and update if the results are better than previously stored
-                            if use_test_pattern:
-                                test_field = self.x[e,:,:,:]**2 + self.y[e,:,:,:]**2 + self.z[e,:,:,:]**2
-                                test_probe = probes[pts, 0]**2 +  probes[pts, 1]**2 + probes[pts, 2]**2 
-                                test_interp = self.ei.interpolate_field_at_rst(r, s, t, test_field)
-
-                                test_error = abs(test_probe - test_interp)
-
-                                if test_error < test_pattern[pts]:
-                                    probes_rst[pts, 0] = r
-                                    probes_rst[pts, 1] = s
-                                    probes_rst[pts, 2] = t
-                                    el_owner[pts] = e
-                                    glb_el_owner[pts] = e + offset_el
-                                    rank_owner[pts] = rank
-                                    err_code[pts] = not_found_code
-                                    test_pattern[pts] = test_error
-
-                            # Otherwise progressively update
-                            else:
-                                probes_rst[pts, 0] = r
-                                probes_rst[pts, 1] = s
-                                probes_rst[pts, 2] = t
-                                el_owner[pts] = e
-                                glb_el_owner[pts] = e + offset_el
-                                rank_owner[pts] = rank
-                                err_code[pts] = not_found_code
-
-
-                if self.progress_bar: pbar.update(1)
-            if self.progress_bar: pbar.close()
-
-        elif self.use_tensor == True or self.use_torch == True:
-
-            # Identify variables
-            max_pts = self.max_pts
-            pts_n = probes.shape[0]
-            max_candidate_elements = np.max([len(elist) for elist in element_candidates])
-            iterations = np.ceil((pts_n / max_pts))
-            checked_elements = [[] for i in range(0, pts_n)]
-
-            start_time = MPI.Wtime()
-            exit_flag = False
-            # The following logic only works for nelems = 1
-            npoints = 10000
-            nelems = 1
-            for e in range(0, max_candidate_elements):   
-                if exit_flag:
-                    break
-                for j in range(0, int(iterations)):
-                    if npoints == 0:
-                        exit_flag = True
-                        break
-            
-                    # Get the index of points that have not been found
-                    pt_not_found_indices = np.where(err_code != 1)[0]
-                    # Get the indices of these points that still have elements remaining to check
-                    pt_not_found_indices = pt_not_found_indices[np.where([ len(checked_elements[i]) < len(element_candidates[i]) for i in pt_not_found_indices])[0]]
-                    # Select only the maximum number of points
-                    pt_not_found_indices = pt_not_found_indices[:max_pts]
-            
-                    # See which element should be checked in this iteration
-                    temp_candidates = [element_candidates[i] for i in pt_not_found_indices]
-                    temp_checked = [checked_elements[i] for i in pt_not_found_indices] 
-                    temp_to_check_ = [list(set(temp_candidates[i]) - set(temp_checked[i])) for i in range(len(temp_candidates))]
-                    # Sort them by order of closeness
-                    temp_to_check = [sorted(temp_to_check_[i], key=temp_candidates[i].index) for i in range(len(temp_candidates))]
-                    
-                    elem_to_check_per_point = [elist[0] for elist in temp_to_check]
-                    # Update the checked elements
-                    for i in range(0, len(pt_not_found_indices)):
-                        checked_elements[pt_not_found_indices[i]].append(elem_to_check_per_point[i])
-
-                    npoints = len(pt_not_found_indices)
-
-                    if npoints == 0:
-                        exit_flag = True
-                        break
-
-                    probe_new_shape = (npoints, 1, 1, 1)
-                    elem_new_shape = (npoints, nelems, self.x.shape[1], self.x.shape[2],self.x.shape[3])
-                    
-                    self.ei.project_element_into_basis(self.x[elem_to_check_per_point].reshape(elem_new_shape), self.y[elem_to_check_per_point].reshape(elem_new_shape), self.z[elem_to_check_per_point].reshape(elem_new_shape), use_torch=self.use_torch)
-                    self.r[:npoints, :nelems], self.s[:npoints, :nelems], self.t[:npoints, :nelems] = self.ei.find_rst_from_xyz(probes[pt_not_found_indices, 0].reshape(probe_new_shape), probes[pt_not_found_indices, 1].reshape(probe_new_shape), probes[pt_not_found_indices, 2].reshape(probe_new_shape), use_torch=self.use_torch)
-
-                    #Reshape results
-                    result_r = self.r[:npoints, :nelems, :, :].reshape((len(pt_not_found_indices)))
-                    result_s = self.s[:npoints, :nelems, :, :].reshape((len(pt_not_found_indices)))
-                    result_t = self.t[:npoints, :nelems, :, :].reshape((len(pt_not_found_indices)))
-                    result_code_bool = self.ei.point_inside_element[:npoints, :nelems, :, :].reshape((len(pt_not_found_indices)))
-                    # Assign the error codes
-                    if not self.use_torch:
-
-                        # Update indices of points that were found and those that were not
-                        pt_found_this_it = np.where(result_code_bool)[0]
-                        pt_not_found_this_it = np.where(~result_code_bool)[0]
-
-                        # Create a list with the original indices for each of this
-                        real_index_pt_found_this_it = [pt_not_found_indices[pt_found_this_it[i]] for i in range(0, len(pt_found_this_it))]
-                        real_index_pt_not_found_this_it = [pt_not_found_indices[pt_not_found_this_it[i]] for i in range(0, len(pt_not_found_this_it))]
-
-                        # Update codes for points found in this iteration
-                        probes_rst[real_index_pt_found_this_it, 0] = result_r[pt_found_this_it]
-                        probes_rst[real_index_pt_found_this_it, 1] = result_s[pt_found_this_it]
-                        probes_rst[real_index_pt_found_this_it, 2] = result_t[pt_found_this_it]
-                        el_owner[real_index_pt_found_this_it] = np.array(elem_to_check_per_point)[pt_found_this_it]
-                        glb_el_owner[real_index_pt_found_this_it] = el_owner[real_index_pt_found_this_it] + offset_el
-                        rank_owner[real_index_pt_found_this_it] = rank
-                        err_code[real_index_pt_found_this_it] = 1
-
-                        # If user has selected to check a test pattern:
-                        if use_test_pattern: 
-                            
-                            # Get shapes
-                            ntest = len(pt_not_found_this_it)
-                            test_probe_new_shape = (ntest, nelems, 1, 1)
-                            test_elem_new_shape = (ntest, nelems, self.x.shape[1], self.x.shape[2],self.x.shape[3])
-
-                            # Define new arrays (On the cpu)                
-                            test_elems = np.array(elem_to_check_per_point)[pt_not_found_this_it]
-                            test_fields = self.x[test_elems,:,:,:]**2 + self.y[test_elems,:,:,:]**2 + self.z[test_elems,:,:,:]**2
-                            test_probes = probes[real_index_pt_not_found_this_it, 0]**2 +  probes[real_index_pt_not_found_this_it, 1]**2 + probes[real_index_pt_not_found_this_it, 2]**2 
-
-                            # Perform the test interpolation
-                            self.test_interp[:ntest, :nelems] = self.ei.interpolate_field_at_rst(result_r[pt_not_found_this_it].reshape(test_probe_new_shape), result_s[pt_not_found_this_it].reshape(test_probe_new_shape), result_t[pt_not_found_this_it].reshape(test_probe_new_shape), test_fields.reshape(test_elem_new_shape), use_torch=self.use_torch)
-                            test_result = self.test_interp[:ntest, :nelems].reshape(ntest)
-
-                            # Check if the test pattern is satisfied
-                            test_error = abs(test_probes - test_result)
-
-                            # Now assign 
-                            real_list = np.array(real_index_pt_not_found_this_it)
-                            relative_list = np.array(pt_not_found_this_it)
-                            better_test = np.where(test_error < test_pattern[real_index_pt_not_found_this_it])[0]
-
-                            if len(better_test) > 0:
-                                probes_rst[real_list[better_test], 0] = result_r[relative_list[better_test]]
-                                probes_rst[real_list[better_test], 1] = result_s[relative_list[better_test]]
-                                probes_rst[real_list[better_test], 2] = result_t[relative_list[better_test]]
-                                el_owner[real_list[better_test]] = np.array(elem_to_check_per_point)[relative_list[better_test]]
-                                glb_el_owner[real_list[better_test]] = el_owner[real_list[better_test]] + offset_el
-                                rank_owner[real_list[better_test]] = rank
-                                err_code[real_list[better_test]] = not_found_code
-                                test_pattern[real_list[better_test]] = test_error[better_test]
-
-                        else:
-                            
-                            probes_rst[real_index_pt_not_found_this_it, 0] = result_r[pt_not_found_this_it]
-                            probes_rst[real_index_pt_not_found_this_it, 1] = result_s[pt_not_found_this_it]
-                            probes_rst[real_index_pt_not_found_this_it, 2] = result_t[pt_not_found_this_it]
-                            el_owner[real_index_pt_not_found_this_it] = np.array(elem_to_check_per_point)[pt_not_found_this_it]
-                            glb_el_owner[real_index_pt_not_found_this_it] = el_owner[real_index_pt_not_found_this_it] + offset_el
-                            rank_owner[real_index_pt_not_found_this_it] = rank
-                            err_code[real_index_pt_not_found_this_it] = not_found_code
-
-
-                    else:
-
-                        result_code_bool = result_code_bool.cpu().numpy()
-                        result_r = result_r.cpu().numpy()
-                        result_s = result_s.cpu().numpy()
-                        result_t = result_t.cpu().numpy()
-
-                        pt_found_this_it = np.where(result_code_bool)[0]
-                        pt_not_found_this_it = np.where(~result_code_bool)[0]
-
-                        # Create a list with the original indices for each of this
-                        real_index_pt_found_this_it = [pt_not_found_indices[pt_found_this_it[i]] for i in range(0, len(pt_found_this_it))]
-                        real_index_pt_not_found_this_it = [pt_not_found_indices[pt_not_found_this_it[i]] for i in range(0, len(pt_not_found_this_it))]
-
-                        # Update codes for points found in this iteration
-                        probes_rst[real_index_pt_found_this_it, 0] = result_r[pt_found_this_it]
-                        probes_rst[real_index_pt_found_this_it, 1] = result_s[pt_found_this_it]
-                        probes_rst[real_index_pt_found_this_it, 2] = result_t[pt_found_this_it]
-                        el_owner[real_index_pt_found_this_it] = np.array(elem_to_check_per_point)[pt_found_this_it]
-                        glb_el_owner[real_index_pt_found_this_it] = el_owner[real_index_pt_found_this_it] + offset_el
-                        rank_owner[real_index_pt_found_this_it] = rank
-                        err_code[real_index_pt_found_this_it] = 1
-
-                        # If user has selected to check a test pattern:
-                        if use_test_pattern: 
-                            
-                            # Get shapes
-                            ntest = len(pt_not_found_this_it)
-                            test_probe_new_shape = (ntest, nelems, 1, 1)
-                            test_elem_new_shape = (ntest, nelems, self.x.shape[1], self.x.shape[2],self.x.shape[3])
-
-                            # Define new arrays (On the cpu)                
-                            test_elems = np.array(elem_to_check_per_point)[pt_not_found_this_it]
-                            test_fields = self.x[test_elems,:,:,:]**2 + self.y[test_elems,:,:,:]**2 + self.z[test_elems,:,:,:]**2
-                            test_probes = probes[real_index_pt_not_found_this_it, 0]**2 +  probes[real_index_pt_not_found_this_it, 1]**2 + probes[real_index_pt_not_found_this_it, 2]**2 
-
-                            # Perform the test interpolation
-                            self.test_interp[:ntest, :nelems] = self.ei.interpolate_field_at_rst(result_r[pt_not_found_this_it].reshape(test_probe_new_shape), result_s[pt_not_found_this_it].reshape(test_probe_new_shape), result_t[pt_not_found_this_it].reshape(test_probe_new_shape), test_fields.reshape(test_elem_new_shape), use_torch=self.use_torch)
-                            test_result = self.test_interp[:ntest, :nelems].reshape(ntest)
-
-                            # Check if the test pattern is satisfied
-                            test_error = abs(test_probes - test_result.cpu().numpy())
-
-                            # Now assign 
-                            real_list = np.array(real_index_pt_not_found_this_it)
-                            relative_list = np.array(pt_not_found_this_it)
-                            better_test = np.where(test_error < test_pattern[real_index_pt_not_found_this_it])[0]
-
-                            if len(better_test) > 0:
-                                probes_rst[real_list[better_test], 0] = result_r[relative_list[better_test]]
-                                probes_rst[real_list[better_test], 1] = result_s[relative_list[better_test]]
-                                probes_rst[real_list[better_test], 2] = result_t[relative_list[better_test]]
-                                el_owner[real_list[better_test]] = np.array(elem_to_check_per_point)[relative_list[better_test]]
-                                glb_el_owner[real_list[better_test]] = el_owner[real_list[better_test]] + offset_el
-                                rank_owner[real_list[better_test]] = rank
-                                err_code[real_list[better_test]] = not_found_code
-                                test_pattern[real_list[better_test]] = test_error[better_test]
-                            
-                        else: 
-                            
-                            probes_rst[real_index_pt_not_found_this_it, 0] = result_r[pt_not_found_this_it]
-                            probes_rst[real_index_pt_not_found_this_it, 1] = result_s[pt_not_found_this_it]
-                            probes_rst[real_index_pt_not_found_this_it, 2] = result_t[pt_not_found_this_it]
-                            el_owner[real_index_pt_not_found_this_it] = np.array(elem_to_check_per_point)[pt_not_found_this_it]
-                            glb_el_owner[real_index_pt_not_found_this_it] = el_owner[real_index_pt_not_found_this_it] + offset_el
-                            rank_owner[real_index_pt_not_found_this_it] = rank
-                            err_code[real_index_pt_not_found_this_it] = not_found_code
-
-        return probes, probes_rst, el_owner, glb_el_owner, rank_owner, err_code, test_pattern
-
-
 
     def redistribute_probes_to_owners_from_io_rank(self, io_rank, comm):
 
@@ -1025,68 +786,21 @@ class interpolator_c():
         self.sort_by_rank = sort_by_rank
 
         return
-
-    
+ 
     def interpolate_field_from_rst(self, sampled_field):
 
-        if self.use_tensor == False and self.use_torch == False: 
+        # Probes info
+        probes_info = {}
+        probes_info['probes'] = self.my_probes
+        probes_info['probes_rst'] = self.my_probes_rst
+        probes_info['el_owner'] = self.my_el_owner
+        probes_info['err_code'] = self.my_err_code
 
-            x = self.x
-            y = self.y
-            z = self.z
-            my_probes = self.my_probes
-            my_probes_rst = self.my_probes_rst
-            my_err_code = self.my_err_code
-            sampled_field_at_probe = np.empty((my_probes.shape[0]))
-            
-            i = 0 #Counter for the number of probes
-            if self.progress_bar: pbar= tqdm(total=my_probes.shape[0])
-            for e in self.my_el_owner:
-                if my_err_code[i] != 0 :
-                    #self.ei.project_element_into_basis(x[e,:,:,:], y[e,:,:,:], z[e,:,:,:])
-                    tmp = self.ei.interpolate_field_at_rst(my_probes_rst[i,0], my_probes_rst[i,1], my_probes_rst[i,2], sampled_field[e,:,:,:])
-                    sampled_field_at_probe[i] = tmp
-                else:
-                    sampled_field_at_probe[i] = 0
-                i = i+1
-                if self.progress_bar: pbar.update(1)
-            if self.progress_bar: pbar.close()
+        # Settings
+        settings = {}
+        settings['progress_bar'] = self.progress_bar
 
-        elif self.use_tensor == True or self.use_torch == True:
- 
-            max_pts = self.max_pts
-            pts_n = self.my_probes.shape[0]
-            iterations = np.ceil((pts_n / max_pts))
-            
-            sampled_field_at_probe = np.empty((self.my_probes.shape[0]))
-            probe_interpolated = np.zeros((self.my_probes.shape[0]))
-            
-            for i in range(0, int(iterations)):
-
-                # Check the probes to interpolate this iteration
-                probes_to_interpolate = np.where((self.my_err_code != 0) & (probe_interpolated == 0))[0]
-                probes_to_interpolate = probes_to_interpolate[:max_pts]
-
-                # Check the number of probes
-                npoints = len(probes_to_interpolate)
-                nelems = 1
-
-                if npoints == 0:
-                    break
-                
-                # Inmediately update the points that will be interpolated
-                probe_interpolated[probes_to_interpolate] = 1
-
-                rst_new_shape = (npoints, nelems, 1, 1)
-                field_new_shape = (npoints, nelems, self.x.shape[1], self.x.shape[2], self.x.shape[3])
-
-                self.test_interp[:npoints, :nelems] = self.ei.interpolate_field_at_rst(self.my_probes_rst[probes_to_interpolate, 0].reshape(rst_new_shape), self.my_probes_rst[probes_to_interpolate, 1].reshape(rst_new_shape), self.my_probes_rst[probes_to_interpolate, 2].reshape(rst_new_shape), sampled_field[self.my_el_owner[probes_to_interpolate]].reshape(field_new_shape), use_torch=self.use_torch)
-                
-                # Populate the sampled field
-                if not self.use_torch: 
-                    sampled_field_at_probe[probes_to_interpolate] = self.test_interp[:npoints, :nelems].reshape(npoints)
-                else:
-                    sampled_field_at_probe[probes_to_interpolate] = self.test_interp[:npoints, :nelems].reshape(npoints).to('cpu').numpy()
+        sampled_field_at_probe = self.ei.interpolate_field_from_rst(probes_info, interpolation_buffer = self.test_interp, sampled_field = sampled_field, settings = settings)
  
         return sampled_field_at_probe
 

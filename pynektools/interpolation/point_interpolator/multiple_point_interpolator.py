@@ -16,7 +16,7 @@ class MultiplePointInterpolator(ABC):
         # Maximun of points to interpolate at the same time
         self.max_pts = max_pts
         # Maximun number of elements to interpolate at the same time
-        self.max_elemes = max_elems
+        self.max_elems = max_elems
 
         # Attributes reference element
         self.x_gll = None
@@ -60,3 +60,14 @@ class MultiplePointInterpolator(ABC):
     def interpolate_field_at_rst(self):
         pass
 
+    @abstractmethod
+    def alloc_result_buffer(self):
+        pass
+
+    @abstractmethod
+    def find_rst(self):
+        pass
+
+    @abstractmethod
+    def interpolate_field_from_rst(self):
+        pass

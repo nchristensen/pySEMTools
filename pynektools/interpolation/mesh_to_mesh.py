@@ -1,5 +1,5 @@
 import numpy as np
-from .single_point_legendre_interpolator import LegendreInterpolator as element_interpolator_c
+from .point_interpolator.single_point_legendre_interpolator import LegendreInterpolator as element_interpolator_c
 from ..datatypes.msh import MSH as msh_c
 
 class p_refiner_c():
