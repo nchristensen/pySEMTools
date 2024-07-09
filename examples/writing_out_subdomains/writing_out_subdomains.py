@@ -15,12 +15,12 @@ import matplotlib.pyplot as plt
 # Import MPI
 from mpi4py import MPI #equivalent to the use of MPI_init() in C
 # Import IO helper functions
-from pynektools.io.utils import io_path_data
+from pynektools.io.utils import IoPathData as io_path_data
 # Import modules for reading and writing
 from pynektools.ppymech.neksuite import preadnek
 # Import the data types
-from pynektools.datatypes.msh import msh_c
-from pynektools.datatypes.field import field_c
+from pynektools.datatypes.msh import Mesh as msh_c
+from pynektools.datatypes.field import Field as field_c
 from pynektools.datatypes.utils import write_fld_subdomain_from_list
 
 # Split communicator for MPI - MPMD

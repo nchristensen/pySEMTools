@@ -1,6 +1,9 @@
-import numpy as np
+"""Utilities for I/O operations"""
 
-class io_path_data():
+
+class IoPathData:
+    """This class stores the path, casename and index of fld inputs"""
+
     def __init__(self, params_file):
         self.casename = params_file["casename"]
         self.dataPath = params_file["dataPath"]
@@ -8,6 +11,8 @@ class io_path_data():
 
 
 def get_fld_from_ndarray(array, lx, ly, lz, nelv):
+    """Reshape a 1D array obtained from fortran into a 4D array
+    compliant with pyNekTools"""
 
     fld = array.reshape((nelv, lz, ly, lx))
 

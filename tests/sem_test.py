@@ -6,12 +6,12 @@ comm = MPI.COMM_WORLD
 import numpy as np
 
 # Import relevant modules
-from pynektools.interpolation.mesh_to_mesh import p_refiner_c
-from pynektools.interpolation.sem import element_interpolator_c
+from pynektools.interpolation.mesh_to_mesh import PRefiner
+from pynektools.interpolation.point_interpolator.single_point_legendre_interpolator import LegendreInterpolator as element_interpolator_c
 from pynektools.ppymech.neksuite import preadnek
-from pynektools.datatypes.msh import msh_c
-from pynektools.datatypes.coef import coef_c
-from pynektools.datatypes.field import field_c
+from pynektools.datatypes.msh import Mesh as msh_c
+from pynektools.datatypes.coef import Coef as coef_c
+from pynektools.datatypes.field import Field as field_c
 
 # Read the original mesh data
 fname = '../examples/data/rbc0.f00001'
@@ -20,7 +20,7 @@ msh      = msh_c(comm, data = data)
 del data
 
 # Create a refined mesh
-pref = p_refiner_c(n_old = msh.lx, n_new = 10)
+pref = PRefiner(n_old = msh.lx, n_new = 10)
 msh_ref = pref.get_new_mesh(comm, msh = msh)
 
 # Create the element interpolator for both meshes
@@ -61,7 +61,7 @@ if comm.Get_rank() == 0:
     print('The s coordinates were found correctly: {}'.format(np.allclose(exact_s, found_s)))
     print('The t coordinates were found correctly: {}'.format(np.allclose(exact_t, found_t)))
     print('sem: The last point took: {} iterations'.format(ei.iterations))
-
+    
     # Interpolate back to the xyz coordinates
     for k in range(0, msh_ref.lz):
         for j in range(0, msh_ref.ly):

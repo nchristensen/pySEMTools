@@ -1,9 +1,10 @@
+'''Contains the ProbesReader class'''
 import csv
 import numpy as np
 
-__all__ = ['Probes']
+__all__ = ['ProbesReader']
 
-class Probes:
+class ProbesReader:
     """
     A class to read probed fields from a Neko simulation.
 

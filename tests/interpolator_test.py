@@ -17,13 +17,11 @@ comm = MPI.COMM_WORLD
 import numpy as np
 
 # Import relevant modules
-from pynektools.interpolation.mesh_to_mesh import p_refiner_c
-from pynektools.interpolation.interpolator import interpolator_c
-from pynektools.interpolation.sem import element_interpolator_c
+from pynektools.interpolation.mesh_to_mesh import PRefiner
+from pynektools.interpolation.interpolator import Interpolator
+from pynektools.interpolation.point_interpolator.single_point_legendre_interpolator import LegendreInterpolator as element_interpolator_c
 from pynektools.ppymech.neksuite import preadnek
-from pynektools.datatypes.msh import msh_c
-from pynektools.datatypes.coef import coef_c
-from pynektools.datatypes.field import field_c
+from pynektools.datatypes.msh import Mesh as msh_c
 
 from pynektools.interpolation.mpi_ops import gather_in_root, scatter_from_root
 
@@ -38,7 +36,7 @@ del data
 
 # Create a refined mesh
 n_new = 3
-pref = p_refiner_c(n_old = msh.lx, n_new = n_new)
+pref = PRefiner(n_old = msh.lx, n_new = n_new)
 msh_ref = pref.get_new_mesh(comm, msh = msh)
 
 # Instance an interpolator for the refined mesh to know the exact rst coordinates
@@ -103,13 +101,13 @@ else:
         probes = 1
 
 # Instance the interpolator
-itp = interpolator_c(msh.x, msh.y, msh.z, probes, comm, progress_bar = True, modal_search = True)
+itp = Interpolator(msh.x, msh.y, msh.z, probes, comm, progress_bar = True, point_interpolator_type='single_point_legendre')
 
 # Scatter the probes to all ranks
 itp.scatter_probes_from_io_rank(0, comm)
 
 # Find the points
-itp.find_points_comm_pairs(comm, communicate_candidate_pairs = True, elem_percent_expansion = 0.01)
+itp.find_points(comm, find_points_comm_pattern='point_to_point', elem_percent_expansion = 0.01)
 
 # Peform needed redistributions
 itp.gather_probes_to_io_rank(0, comm)
@@ -144,22 +142,25 @@ if not passed:
 else:
     print('interpolator.py: find_points_comm_pairs, interpolate_field_from_rst: passed')
 
+
 #========================================================
 
 use_torch = False
 if not use_torch:
     max_pts = 128
+    interpolator_type = 'multiple_point_legendre_numpy' 
 else:
     max_pts = itp.probe_partition.shape[0]
+    interpolator_type = 'multiple_point_legendre_torch' 
 
 # Instance new interpolator to mimic what would happend with the tensor one
-t_itp = interpolator_c(msh.x, msh.y, msh.z, probes, comm, progress_bar = True, modal_search = True, use_tensor = True, use_torch = use_torch,  max_pts = max_pts, max_elems = 1)  
+t_itp = Interpolator(msh.x, msh.y, msh.z, probes, comm, progress_bar = True, point_interpolator_type=interpolator_type,  max_pts = max_pts, max_elems = 1)  
 
 # Scatter the probes to all ranks
 t_itp.scatter_probes_from_io_rank(0, comm)
 
 # Find the points
-t_itp.find_points_comm_pairs(comm, communicate_candidate_pairs = True, elem_percent_expansion = 0.01)
+t_itp.find_points(comm, find_points_comm_pattern='point_to_point', elem_percent_expansion = 0.01)
 
 if interpolate_sem_mesh:
     print(np.allclose(t_itp.probe_rst_partition, itp.probe_rst_partition))
@@ -190,7 +191,8 @@ recvbuf, _ = gather_in_root(sendbuf, root, np.double,  comm)
 if type(recvbuf) != NoneType:
     tmp = recvbuf.reshape((int(recvbuf.size/(3)), 3))
     interpolated_fields[t_itp.sort_by_rank] = tmp
-        
+
+
 t1 = np.allclose(interpolated_fields, probes)
 
 passed = np.all([t1])
