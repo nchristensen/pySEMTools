@@ -4,7 +4,7 @@ import json
 import csv
 import numpy as np
 from ..ppymech.neksuite import preadnek
-from .interpolator import interpolator_c
+from .interpolator import Interpolator as interpolator_c
 from .mpi_ops import gather_in_root
 
 NoneType = type(None)
