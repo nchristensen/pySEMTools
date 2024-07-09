@@ -5,7 +5,7 @@ import numpy as np
 NoneType = type(None)
 
 
-class FLD:
+class Field:
     """Class that contains information associated to fields"""
 
     def __init__(self, comm, data=None):

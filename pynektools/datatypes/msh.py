@@ -6,7 +6,7 @@ from scipy.spatial import KDTree
 NoneType = type(None)
 
 
-class MSH:
+class Mesh:
     """Class that contains relevant data on the domain"""
 
     def __init__(self, comm, data=None, x=None, y=None, z=None):

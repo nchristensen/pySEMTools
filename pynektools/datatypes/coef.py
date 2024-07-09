@@ -4,7 +4,7 @@ from math import pi
 import numpy as np
 
 
-class COEF:
+class Coef:
     """Class that contains the relevant information of the SEM"""
 
     def __init__(self, msh, comm):

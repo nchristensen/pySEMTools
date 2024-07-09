@@ -4,10 +4,10 @@ import numpy as np
 from .point_interpolator.single_point_legendre_interpolator import (
     LegendreInterpolator as element_interpolator_c,
 )
-from ..datatypes.msh import MSH as msh_c
+from ..datatypes.msh import Mesh as msh_c
 
 
-class Prefiner:
+class PRefiner:
     """Class to perform p-refinement on a sem mesh"""
 
     def __init__(self, n_old=8, n_new=8):

@@ -52,7 +52,8 @@ class Interpolator:
         self.test_interp = self.ei.alloc_result_buffer(dtype="double")
 
         # Print what you are using
-        if comm.Get_rank() == 0 and not isinstance(self.r, NoneType):
+        if comm.Get_rank() == 0 and not isinstance(self.r, int):
+
             print(f"Using device: {self.r.device}")
 
         self.progress_bar = progress_bar

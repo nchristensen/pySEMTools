@@ -4,14 +4,14 @@ import sys
 import numpy as np
 from pymech.core import HexaData
 from pymech.neksuite.field import Header
-from .msh import MSH as msh_c
-from .field import FLD as field_c
+from .msh import Mesh as msh_c
+from .field import Field as field_c
 from ..ppymech.neksuite import pwritenek
 from ..interpolation.interpolator import (
     get_bbox_from_coordinates,
     get_bbox_centroids_and_max_dist,
 )
-from ..interpolation.mesh_to_mesh import p_refiner_c
+from ..interpolation.mesh_to_mesh import PRefiner
 
 
 NoneType = type(None)
@@ -263,7 +263,7 @@ def write_fld_subdomain_from_list(
 
         # Refine the order of the mesh if needed:
         if not isinstance(p, NoneType):
-            pref = p_refiner_c(n_old=msh_sub.lx, n_new=p)
+            pref = PRefiner(n_old=msh_sub.lx, n_new=p)
 
             # Get the new mesh
             msh_sub = pref.get_new_mesh(write_comm, msh=msh_sub)

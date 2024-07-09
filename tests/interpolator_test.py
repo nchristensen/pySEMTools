@@ -17,11 +17,11 @@ comm = MPI.COMM_WORLD
 import numpy as np
 
 # Import relevant modules
-from pynektools.interpolation.mesh_to_mesh import p_refiner_c
-from pynektools.interpolation.interpolator import interpolator_c
+from pynektools.interpolation.mesh_to_mesh import PRefiner
+from pynektools.interpolation.interpolator import Interpolator
 from pynektools.interpolation.point_interpolator.single_point_legendre_interpolator import LegendreInterpolator as element_interpolator_c
 from pynektools.ppymech.neksuite import preadnek
-from pynektools.datatypes.msh import MSH as msh_c
+from pynektools.datatypes.msh import Mesh as msh_c
 
 from pynektools.interpolation.mpi_ops import gather_in_root, scatter_from_root
 
@@ -36,7 +36,7 @@ del data
 
 # Create a refined mesh
 n_new = 3
-pref = p_refiner_c(n_old = msh.lx, n_new = n_new)
+pref = PRefiner(n_old = msh.lx, n_new = n_new)
 msh_ref = pref.get_new_mesh(comm, msh = msh)
 
 # Instance an interpolator for the refined mesh to know the exact rst coordinates
@@ -101,7 +101,7 @@ else:
         probes = 1
 
 # Instance the interpolator
-itp = interpolator_c(msh.x, msh.y, msh.z, probes, comm, progress_bar = True, point_interpolator_type='single_point_legendre')
+itp = Interpolator(msh.x, msh.y, msh.z, probes, comm, progress_bar = True, point_interpolator_type='single_point_legendre')
 
 # Scatter the probes to all ranks
 itp.scatter_probes_from_io_rank(0, comm)
@@ -154,7 +154,7 @@ else:
     interpolator_type = 'multiple_point_legendre_torch' 
 
 # Instance new interpolator to mimic what would happend with the tensor one
-t_itp = interpolator_c(msh.x, msh.y, msh.z, probes, comm, progress_bar = True, point_interpolator_type=interpolator_type,  max_pts = max_pts, max_elems = 1)  
+t_itp = Interpolator(msh.x, msh.y, msh.z, probes, comm, progress_bar = True, point_interpolator_type=interpolator_type,  max_pts = max_pts, max_elems = 1)  
 
 # Scatter the probes to all ranks
 t_itp.scatter_probes_from_io_rank(0, comm)

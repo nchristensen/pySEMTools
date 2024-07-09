@@ -20,8 +20,8 @@ from pynektools.io.utils import IoPathData as io_path_data
 # Import modules for reading and writing
 from pynektools.ppymech.neksuite import preadnek
 # Import the data types
-from pynektools.datatypes.msh import MSH as msh_c
-from pynektools.datatypes.field import FLD as field_c
+from pynektools.datatypes.msh import Mesh as msh_c
+from pynektools.datatypes.field import Field as field_c
 from pynektools.datatypes.utils import write_fld_file_from_list
 # Import types asociated with interpolation
 from pynektools.interpolation.interpolator import get_bbox_from_coordinates, get_bbox_centroids_and_max_dist

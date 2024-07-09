@@ -4,7 +4,7 @@ import json
 import csv
 import numpy as np
 from ..ppymech.neksuite import preadnek
-from .interpolator import Interpolator as interpolator_c
+from .interpolator import Interpolator
 from .mpi_ops import gather_in_root
 
 NoneType = type(None)
@@ -89,7 +89,7 @@ class Probes:
             self.z = msh.z
 
         # Initialize the interpolator
-        self.itp = interpolator_c(
+        self.itp = Interpolator(
             self.x,
             self.y,
             self.z,
