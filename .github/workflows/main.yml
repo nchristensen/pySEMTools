@@ -22,14 +22,34 @@ jobs:
     uses: ./.github/workflows/check_unit_test.yml
 
   check_complete:
-    name: Main PR Ready
+    name: PR Ready
     needs:
       - linting
       - UnitTesting
 
     runs-on: ubuntu-latest
+    env:
+      lint_status: ${{ needs.linting.result }}
+      unittest_status: ${{ needs.UnitTesting.result }}
     steps:
       - name: All checks passed
         run: |
-          echo "All checks passed"
+          success=true
+          fail=()
+          if [ "$lint_status" != "success" ]; then
+            fail+=("\t- lint check: $lint_status")
+            success=false
+          fi
+          if [ "$unittest_status" != "success" ]; then
+            fail+=("\t- unit test check: $unittest_status")
+            success=false
+          fi
           
+          if [ "$success" = false ]; then
+            >&2 echo "The following checks failed:"
+            for i in "${fail[@]}"; do
+              >&2 printf "$i\n"
+            done
+            exit 1
+          fi
+          echo "All checks passed"          
