@@ -20,3 +20,16 @@ jobs:
 
   UnitTesting:
     uses: ./.github/workflows/check_unit_test.yml
+
+  check_complete:
+    name: Main PR Ready
+    needs:
+      - linting
+      - UnitTesting
+
+    runs-on: ubuntu-latest
+    steps:
+      - name: All checks passed
+        run: |
+          echo "All checks passed"
+          
