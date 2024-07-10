@@ -3,7 +3,11 @@ A package for post-processing SEM data.
 
 # Installation
 
-To install in your pip enviroment, clone this repository and execute `pip install  --editable .`.
+To install in your pip enviroment, clone this repository and execute:
+```
+pip install  --editable .
+```
+
 The `--editable` flag is optional, and will allow changes in the code of the package to be used
 directly without reinstalling.
 
@@ -20,7 +24,10 @@ pip install pymech
 pip install tdqm
 ```
 #### mpi4py
-`mpi4py` is needed even when running in serial, as the library is built with communication in mind. It can typically be installed with `pip install mpi4py`.
+`mpi4py` is needed even when running in serial, as the library is built with communication in mind. It can typically be installed with: 
+```
+pip install mpi4py
+```
 
 In some instances, such as in supercomputers, it is typically necesary that the mpi of the system is used. If `mpi4py` is not available as a module, we have found (so far) that installing it as follows works:
 ```
