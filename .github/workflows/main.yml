@@ -17,3 +17,6 @@ jobs:
 
   linting:
     uses: ./.github/workflows/check_lint.yml
+
+  UnitTesting:
+    uses: ./.github/workflows/check_unit_test.yml
