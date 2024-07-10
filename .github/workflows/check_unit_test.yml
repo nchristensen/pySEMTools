@@ -50,7 +50,7 @@ jobs:
       
       - name: Check results
         run: |
-          python3 test/interpret_results.py
+          python3 tests/interpret_results.py
 
       - name: Archive test report
         uses: actions/upload-artifact@v4
