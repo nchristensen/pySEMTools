@@ -3,8 +3,8 @@ compress data in parallel"""
 
 import json
 import numpy as np
-from ..datatypes.msh import Mesh
-from ..datatypes.field import Field
+from ...datatypes.msh import Mesh
+from ...datatypes.field import Field
 
 # Adios2 is assumed to be available
 try:

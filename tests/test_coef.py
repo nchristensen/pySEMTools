@@ -12,7 +12,7 @@ comm = MPI.COMM_WORLD
 # Import general modules
 import numpy as np
 # Import relevant modules
-from pynektools.ppymech.neksuite import preadnek
+from pynektools.io.ppymech.neksuite import preadnek
 from pynektools.datatypes.msh import Mesh
 from pynektools.datatypes.coef import Coef
 

@@ -18,7 +18,7 @@ from mpi4py import MPI #equivalent to the use of MPI_init() in C
 # Import IO helper functions
 from pynektools.io.utils import IoPathData as io_path_data
 # Import modules for reading and writing
-from pynektools.ppymech.neksuite import preadnek
+from pynektools.io.ppymech.neksuite import preadnek
 # Import the data types
 from pynektools.datatypes.msh import Mesh as msh_c
 from pynektools.datatypes.field import Field as field_c

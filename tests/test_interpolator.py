@@ -23,7 +23,7 @@ import numpy as np
 from pynektools.interpolation.mesh_to_mesh import PRefiner
 from pynektools.interpolation.interpolator import Interpolator
 from pynektools.interpolation.point_interpolator.single_point_legendre_interpolator import LegendreInterpolator as element_interpolator_c
-from pynektools.ppymech.neksuite import preadnek
+from pynektools.io.ppymech.neksuite import preadnek
 from pynektools.datatypes.msh import Mesh as msh_c
 
 from pynektools.interpolation.mpi_ops import gather_in_root, scatter_from_root

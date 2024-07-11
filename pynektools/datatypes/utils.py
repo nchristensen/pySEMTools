@@ -6,7 +6,7 @@ from pymech.core import HexaData
 from pymech.neksuite.field import Header
 from .msh import Mesh as msh_c
 from .field import Field as field_c
-from ..ppymech.neksuite import pwritenek
+from ..io.ppymech.neksuite import pwritenek
 from ..interpolation.interpolator import (
     get_bbox_from_coordinates,
     get_bbox_centroids_and_max_dist,
