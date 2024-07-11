@@ -5,7 +5,8 @@ import numpy as np
 
 # Adios2 is assumed to be available
 try:
-    import adios2
+    # This import for ver >= adios2.10, otherwise just import adios2
+    import adios2.bindings as adios2
 except ImportError:
     print("Error: adios2 is not available. This is needed to stream data. Exiting.")
     raise
