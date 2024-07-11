@@ -1,8 +1,8 @@
 from mpi4py import MPI
-from pynektools.io.compress import write_field, read_field
+from pynektools.io.adios2.compress import write_field, read_field
 from pynektools.datatypes.msh import Mesh
 from pynektools.datatypes.field import Field
-from pynektools.ppymech.neksuite import preadnek
+from pynektools.io.ppymech.neksuite import preadnek
 import numpy as np
 
 comm = MPI.COMM_WORLD

@@ -3,7 +3,7 @@
 import json
 import csv
 import numpy as np
-from ..ppymech.neksuite import preadnek
+from ..io.ppymech.neksuite import preadnek
 from .interpolator import Interpolator
 from .mpi_ops import gather_in_root
 

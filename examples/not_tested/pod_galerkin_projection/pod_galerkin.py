@@ -89,7 +89,7 @@ M = projection_project_on
 from pynektools.io.utils import get_fld_from_ndarray, io_path_data
 
 # Import modules for reading and writing
-from pynektools.ppymech.neksuite import preadnek, pwritenek
+from pynektools.io.ppymech.neksuite import preadnek, pwritenek
 # Import the data types
 from pynektools.datatypes.msh import msh_c
 from pynektools.datatypes.coef import coef_c
