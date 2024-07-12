@@ -495,14 +495,20 @@ class LegendreInterpolator(MultiplePointInterpolator):
                     break
 
                 # Get the index of points that have not been found
-                pt_not_found_indices = get_points_not_found_index(err_code, checked_elements, element_candidates, max_pts)
+                pt_not_found_indices = get_points_not_found_index(
+                    err_code, checked_elements, element_candidates, max_pts
+                )
 
                 # See which element should be checked in this iteration
-                elem_to_check_per_point = get_element_to_check(pt_not_found_indices, element_candidates, checked_elements)
+                elem_to_check_per_point = get_element_to_check(
+                    pt_not_found_indices, element_candidates, checked_elements
+                )
 
-                # Update the checked elements 
-                checked_elements = update_checked_elements(checked_elements, pt_not_found_indices, elem_to_check_per_point)
-                
+                # Update the checked elements
+                checked_elements = update_checked_elements(
+                    checked_elements, pt_not_found_indices, elem_to_check_per_point
+                )
+
                 npoints = len(pt_not_found_indices)
 
                 if npoints == 0:
@@ -780,6 +786,7 @@ def pt_in_bbox(pt, bbox, rel_tol=0.01):
 
     return state
 
+
 def get_points_not_found_index(err_code, checked_elements, element_candidates, max_pts):
     # Get the index of points that have not been found
     pt_not_found_indices = np.where(err_code != 1)[0]
@@ -796,8 +803,9 @@ def get_points_not_found_index(err_code, checked_elements, element_candidates, m
     pt_not_found_indices = pt_not_found_indices[:max_pts]
     return pt_not_found_indices
 
+
 def get_element_to_check(pt_not_found_indices, element_candidates, checked_elements):
-    
+
     # See which element should be checked in this iteration
     temp_candidates = [element_candidates[i] for i in pt_not_found_indices]
     temp_checked = [checked_elements[i] for i in pt_not_found_indices]
@@ -815,9 +823,10 @@ def get_element_to_check(pt_not_found_indices, element_candidates, checked_eleme
 
     return elem_to_check_per_point
 
-def update_checked_elements(checked_elements, pt_not_found_indices, elem_to_check_per_point):
+
+def update_checked_elements(
+    checked_elements, pt_not_found_indices, elem_to_check_per_point
+):
     for i in range(0, len(pt_not_found_indices)):
-        checked_elements[pt_not_found_indices[i]].append(
-            elem_to_check_per_point[i]
-        )
+        checked_elements[pt_not_found_indices[i]].append(elem_to_check_per_point[i])
     return checked_elements
