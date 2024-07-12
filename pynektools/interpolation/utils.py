@@ -53,7 +53,7 @@ def transform_from_list_to_array(nx, ny, nz, xyz_coords):
         array.append(np.zeros((nx, ny, nz)))
 
     for linear_index_ in range(0, num_points):
-        index = nonlinear_index(linear_index, ny, nx, nz)
+        index = nonlinear_index(linear_index_, ny, nx, nz)
         j = index[0]
         i = index[1]
         k = index[2]

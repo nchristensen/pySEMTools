@@ -495,38 +495,19 @@ class LegendreInterpolator(MultiplePointInterpolator):
                     break
 
                 # Get the index of points that have not been found
-                pt_not_found_indices = np.where(err_code != 1)[0]
-                # Get the indices of these points that still have elements remaining to check
-                pt_not_found_indices = pt_not_found_indices[
-                    np.where(
-                        [
-                            len(checked_elements[i]) < len(element_candidates[i])
-                            for i in pt_not_found_indices
-                        ]
-                    )[0]
-                ]
-                # Select only the maximum number of points
-                pt_not_found_indices = pt_not_found_indices[:max_pts]
+                pt_not_found_indices = get_points_not_found_index(
+                    err_code, checked_elements, element_candidates, max_pts
+                )
 
                 # See which element should be checked in this iteration
-                temp_candidates = [element_candidates[i] for i in pt_not_found_indices]
-                temp_checked = [checked_elements[i] for i in pt_not_found_indices]
-                temp_to_check_ = [
-                    list(set(temp_candidates[i]) - set(temp_checked[i]))
-                    for i in range(len(temp_candidates))
-                ]
-                # Sort them by order of closeness
-                temp_to_check = [
-                    sorted(temp_to_check_[i], key=temp_candidates[i].index)
-                    for i in range(len(temp_candidates))
-                ]
+                elem_to_check_per_point = get_element_to_check(
+                    pt_not_found_indices, element_candidates, checked_elements
+                )
 
-                elem_to_check_per_point = [elist[0] for elist in temp_to_check]
                 # Update the checked elements
-                for i in range(0, len(pt_not_found_indices)):
-                    checked_elements[pt_not_found_indices[i]].append(
-                        elem_to_check_per_point[i]
-                    )
+                checked_elements = update_checked_elements(
+                    checked_elements, pt_not_found_indices, elem_to_check_per_point
+                )
 
                 npoints = len(pt_not_found_indices)
 
@@ -563,12 +544,14 @@ class LegendreInterpolator(MultiplePointInterpolator):
                 result_code_bool = self.point_inside_element[
                     :npoints, :nelems, :, :
                 ].reshape((len(pt_not_found_indices)))
+                # Assign the error codes
 
                 result_code_bool = result_code_bool.cpu().numpy()
                 result_r = result_r.cpu().numpy()
                 result_s = result_s.cpu().numpy()
                 result_t = result_t.cpu().numpy()
 
+                # Update indices of points that were found and those that were not
                 pt_found_this_it = np.where(result_code_bool)[0]
                 pt_not_found_this_it = np.where(~result_code_bool)[0]
 
@@ -802,3 +785,48 @@ def pt_in_bbox(pt, bbox, rel_tol=0.01):
         state = False
 
     return state
+
+
+def get_points_not_found_index(err_code, checked_elements, element_candidates, max_pts):
+    # Get the index of points that have not been found
+    pt_not_found_indices = np.where(err_code != 1)[0]
+    # Get the indices of these points that still have elements remaining to check
+    pt_not_found_indices = pt_not_found_indices[
+        np.where(
+            [
+                len(checked_elements[i]) < len(element_candidates[i])
+                for i in pt_not_found_indices
+            ]
+        )[0]
+    ]
+    # Select only the maximum number of points
+    pt_not_found_indices = pt_not_found_indices[:max_pts]
+    return pt_not_found_indices
+
+
+def get_element_to_check(pt_not_found_indices, element_candidates, checked_elements):
+
+    # See which element should be checked in this iteration
+    temp_candidates = [element_candidates[i] for i in pt_not_found_indices]
+    temp_checked = [checked_elements[i] for i in pt_not_found_indices]
+    temp_to_check_ = [
+        list(set(temp_candidates[i]) - set(temp_checked[i]))
+        for i in range(len(temp_candidates))
+    ]
+    # Sort them by order of closeness
+    temp_to_check = [
+        sorted(temp_to_check_[i], key=temp_candidates[i].index)
+        for i in range(len(temp_candidates))
+    ]
+
+    elem_to_check_per_point = [elist[0] for elist in temp_to_check]
+
+    return elem_to_check_per_point
+
+
+def update_checked_elements(
+    checked_elements, pt_not_found_indices, elem_to_check_per_point
+):
+    for i in range(0, len(pt_not_found_indices)):
+        checked_elements[pt_not_found_indices[i]].append(elem_to_check_per_point[i])
+    return checked_elements
