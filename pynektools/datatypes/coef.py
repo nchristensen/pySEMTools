@@ -5,10 +5,29 @@ import numpy as np
 
 
 class Coef:
-    """Class that contains the relevant information of the SEM"""
+    """
+    Class that contains arrays like mass matrix, jacobian, jacobian inverse, etc.
+
+    Parameters
+    ----------
+    msh : Mesh
+        Mesh object.
+
+    comm : Comm
+        MPI comminicator object.
+
+    Returns
+    -------
+
+    Examples
+    --------
+    Assuming you have a mesh object and MPI communicator object, you can initialize the Coef object as follows:
+
+    >>> from pynektools import Coef
+    >>> coef = Coef(msh, comm)
+    """
 
     def __init__(self, msh, comm):
-
         self.gdim = msh.gdim
 
         self.v, self.vinv, self.w3, self.x, self.w = get_transform_matrix(
@@ -232,7 +251,27 @@ class Coef:
                         self.nz[e, 5, j, i] = cross[2] / norm
 
     def dudrst(self, field, dr):
-        """Perform derivative with respect to reference coordinate r"""
+        """
+        Perform derivative with respect to reference coordinate r.
+
+        Parameters
+        ----------
+        field : ndarray
+            Field to take derivative of. Shape should be (nelv, lz, ly, lx).
+        dr : ndarray
+            Derivative matrix in the r/s/t direction to apply to each element. Shape should be (lx*ly*lz, lx*ly*lz).
+
+        Returns
+        -------
+        ndarray
+            Derivative of the field with respect to r/s/t. Shape is the same as the input field.
+
+        Examples
+        --------
+        Assuming you have a Coef object
+
+        >>> dxdr = coef.dudrst(x, coef.dr)
+        """
         nelv = field.shape[0]
         lx = field.shape[3]  # This is not a mistake. This is how the data is read
         ly = field.shape[2]
@@ -248,9 +287,42 @@ class Coef:
         return dudrst
 
     def dudxyz(self, field, drdx, dsdx, dtdx=None):
-        """Perform derivative with respect to physical coordinate x,y,z
-        this uses the chain rule, first evaluating derivatives with respect to
-        rst, then multiplying by the inverse of the jacobian to map to xyz"""
+        """
+        Perform derivative with respect to physical coordinate x,y,z.
+
+        This method uses the chain rule, first evaluating derivatives with respect to
+        rst, then multiplying by the inverse of the jacobian to map to xyz.
+
+        Parameters
+        ----------
+        field : ndarray
+            Field to take derivative of. Shape should be (nelv, lz, ly, lx).
+        drdx : ndarray
+            Derivative of the reference coordinates with respect to x, i.e.,
+            first entry in the appropiate row of the jacobian inverse.
+            Shape should be the same as the field.
+        dsdx : ndarray
+            Derivative of the reference coordinates with respect to y, i.e.,
+            second entry in the appropiate row of the jacobian inverse.
+            Shape should be the same as the field.
+        dtdx : ndarray
+            Derivative of the reference coordinates with respect to z, i.e.,
+            third entry in the appropiate row of the jacobian inverse.
+            Shape should be the same as the field.
+            (Default value = None)
+            Only valid for 3D fields.
+
+        Returns
+        -------
+        ndarray
+            Derivative of the field with respect to x,y,z. Shape is the same as the input field.
+
+        Examples
+        --------
+        Assuming you have a Coef object and are working on a 3d field:
+
+        >>> dudx = coef.dudxyz(u, coef.drdx, coef.dsdx, coef.dtdx)
+        """
 
         nelv = field.shape[0]
         lx = field.shape[3]  # This is not a mistake. This is how the data is read
@@ -296,7 +368,29 @@ class Coef:
         return dudxyz
 
     def glsum(self, a, comm, datype=np.double):
-        """Peform global summatin of given qunaitity a using MPI"""
+        """
+        Peform global summatin of given qunaitity a using MPI.
+
+        Parameters
+        ----------
+        a : ndarray
+            Quantity to sum over all mpiranks.
+        comm : Comm
+            MPI communicator object.
+        datype : numpy.dtype
+             (Default value = np.double).
+
+        Returns
+        -------
+        float
+            Sum of the quantity a over all MPI ranks.
+
+        Examples
+        --------
+        Assuming you have a Coef object and are working on a 3d field:
+
+        >>> volume = coef.glsum(coef.B, comm)
+        """
 
         sendbuf = np.ones((1), datype)
         sendbuf[0] = np.sum(a)
@@ -306,9 +400,28 @@ class Coef:
         return recvbuf[0]
 
     def dssum(self, field, msh):
-        """Peform average of given field over shared points in each rank.
-        This does not support communication across ranks yest."""
-        
+        """
+        Peform average of given field over shared points in each rank.
+
+        Parameters
+        ----------
+        field : ndarray
+            Field to average over shared points.
+        msh : Mesh
+            Pynektools Mesh object.
+
+        Returns
+        -------
+        ndarray
+            Input field with shared points averaged with shared points in the SAME rank.
+
+        Examples
+        --------
+        Assuming you have a Coef object and are working on a 3d field:
+
+        >>> dudx = coef.dssum(dudx, msh)
+        """
+
         if msh.create_connectivity:
             tmp = np.copy(field)
             for ind in range(0, len(msh.nonlinear_shared_points)):
@@ -326,51 +439,41 @@ class Coef:
 # -----------------------------------------------------------------------
 
 
-def dr_cross_ds(dxdr, dydr, dzdr, dxds, dyds, dzds, msh):
-    """Calculate the cross product of the dr and ds vectors for each point in the mesh"""
-    dr = np.zeros((3), dtype=np.double)
-    ds = np.zeros((3), dtype=np.double)
-
-    a = np.zeros_like(dxdr, dtype=np.double)
-    b = np.zeros_like(dxdr, dtype=np.double)
-    c = np.zeros_like(dxdr, dtype=np.double)
-    dot = np.zeros_like(dxdr, dtype=np.double)
-
-    for e in range(0, msh.nelv):
-        for k in range(0, msh.lz):
-            for j in range(0, msh.ly):
-                for i in range(0, msh.lx):
-
-                    dr[0] = dxdr[e, k, j, i]
-                    dr[1] = dydr[e, k, j, i]
-                    dr[2] = dzdr[e, k, j, i]
-
-                    ds[0] = dxds[e, k, j, i]
-                    ds[1] = dyds[e, k, j, i]
-                    ds[2] = dzds[e, k, j, i]
-
-                    tmp = np.cross(dr, ds)
-
-                    a[e, k, j, i] = tmp[0]
-                    b[e, k, j, i] = tmp[1]
-                    c[e, k, j, i] = tmp[2]
-                    dot[e, k, j, i] = np.dot(tmp, tmp)
-
-    return a, b, c, dot
-
-
 ## Define functions for the calculation of the quadrature points (Taken from the lecture notes)
 def GLC_pwts(n):
-    """
-    Gauss-Lobatto-Chebyshev (GLC) points and weights over [-1,1]
-    Args:
-      `n`: int, number of nodes
+    """Gauss-Lobatto-Chebyshev (GLC) points and weights over [-1,1]
+
+    Parameters
+    ----------
+    `n` :
+        int, number of nodes
+        Returns
+        `x`: 1D numpy array of size `n`, nodes
+        `w`: 1D numpy array of size `n`, weights
+    n :
+
+
     Returns
-       `x`: 1D numpy array of size `n`, nodes
-       `w`: 1D numpy array of size `n`, weights
+    -------
+
+
     """
 
     def delt(i, n):
+        """Helper function
+
+        Parameters
+        ----------
+        i : int
+
+        n : int
+
+
+        Returns
+        -------
+
+
+        """
         del_ = 1.0
         if i == 0 or i == n - 1:
             del_ = 0.5
@@ -387,25 +490,42 @@ def GLC_pwts(n):
 
 
 def GLL_pwts(n, eps=10**-8, max_iter=1000):
-    """
-    Generating `n `Gauss-Lobatto-Legendre (GLL) nodes and weights using the
+    """Generating `n` Gauss-Lobatto-Legendre (GLL) nodes and weights using the
     Newton-Raphson iteration.
-    Args:
-      `n`: int
-         Number of GLL nodes
-      `eps`: float (optional)
-         Min error to keep the iteration running
-      `maxIter`: float (optional)
-         Max number of iterations
-    Outputs:
-      `xi`: 1D numpy array of size `n`
-         GLL nodes
-      `w`: 1D numpy array of size `n`
-         GLL weights
-    Reference:
-       Canuto C., Hussaini M. Y., Quarteroni A., Tang T. A.,
-       "Spectral Methods in Fluid Dynamics," Section 2.3. Springer-Verlag 1987.
-       https://link.springer.com/book/10.1007/978-3-642-84108-8
+
+    Parameters
+    ----------
+    `n` :
+        int
+        Number of GLL nodes
+    `eps` :
+        float (optional)
+        Min error to keep the iteration running
+    `maxIter` :
+        float (optional)
+        Max number of iterations
+        Outputs:
+    `xi` :
+        1D numpy array of size `n`
+        GLL nodes
+    `w` :
+        1D numpy array of size `n`
+        GLL weights
+        Reference:
+        Canuto C., Hussaini M. Y., Quarteroni A., Tang T. A.,
+        "Spectral Methods in Fluid Dynamics," Section 2.3. Springer-Verlag 1987.
+        https://link.springer.com/book/10.1007/978-3-642-84108-8
+    n :
+
+    eps :
+        (Default value = 10**-8)
+    max_iter :
+        (Default value = 1000)
+
+    Returns
+    -------
+
+
     """
     V = np.zeros((n, n))  # Legendre Vandermonde Matrix
     # Initial guess for the nodes: GLC points
@@ -434,7 +554,20 @@ def GLL_pwts(n, eps=10**-8, max_iter=1000):
 
 
 def get_transform_matrix(n, dim):
-    """get transformation matrix to Legendre space of given order and dimension"""
+    """get transformation matrix to Legendre space of given order and dimension
+
+    Parameters
+    ----------
+    n :
+
+    dim :
+
+
+    Returns
+    -------
+
+
+    """
     # Get the quadrature nodes
     x, w_ = GLL_pwts(
         n
@@ -528,7 +661,20 @@ def get_transform_matrix(n, dim):
 
 
 def get_derivative_matrix(n, dim):
-    """get derivative matrix to Lagrange polynomials at GLL points"""
+    """get derivative matrix to Lagrange polynomials at GLL points
+
+    Parameters
+    ----------
+    n :
+
+    dim :
+
+
+    Returns
+    -------
+
+
+    """
     # Get the quadrature nodes
     x, w_ = GLL_pwts(
         n
