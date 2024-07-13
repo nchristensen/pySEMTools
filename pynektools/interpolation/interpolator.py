@@ -53,8 +53,11 @@ class Interpolator:
 
         # Print what you are using
         if comm.Get_rank() == 0 and not isinstance(self.r, int):
-
-            print(f"Using device: {self.r.device}")
+        
+            try:
+                print(f"Using device: {self.r.device}")
+            except AttributeError:
+                print(f"Using device: cpu")
 
         self.progress_bar = progress_bar
 

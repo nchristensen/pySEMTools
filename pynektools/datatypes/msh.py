@@ -9,7 +9,7 @@ NoneType = type(None)
 class Mesh:
     """Class that contains relevant data on the domain"""
 
-    def __init__(self, comm, data=None, x=None, y=None, z=None):
+    def __init__(self, comm, data=None, x=None, y=None, z=None, create_connectivity = True):
 
         if not isinstance(data, NoneType):
             self.x, self.y, self.z = get_coordinates_from_hexadata(data)
@@ -48,91 +48,94 @@ class Mesh:
         else:
             self.gdim = 2
 
-        # Create a list with the points in the domain in a 2d array format.
-        # This is used for search trees
-        self.msh_list = np.zeros((self.nelv * self.lxyz, 3))
-        self.linear_indices = []
-        self.nonlinear_indices = []
-        counter = 0
-        for e in range(0, self.nelv):
-            for k in range(0, self.lz):
-                for j in range(0, self.ly):
-                    for i in range(0, self.lx):
-                        self.msh_list[
-                            linear_index(i, j, k, e, self.lx, self.ly, self.lz), 0
-                        ] = self.x[e, k, j, i]
-                        self.msh_list[
-                            linear_index(i, j, k, e, self.lx, self.ly, self.lz), 1
-                        ] = self.y[e, k, j, i]
-                        self.msh_list[
-                            linear_index(i, j, k, e, self.lx, self.ly, self.lz), 2
-                        ] = self.z[e, k, j, i]
-                        self.linear_indices.append([])
-                        self.nonlinear_indices.append([])
+        self.create_connectivity = create_connectivity
 
-                        self.linear_indices[counter].append(
-                            linear_index(i, j, k, e, self.lx, self.ly, self.lz)
-                        )
-                        self.nonlinear_indices[counter] = nonlinear_index(
-                            self.linear_indices[counter], self.lx, self.ly, self.lz
-                        )
-                        counter += 1
+        if create_connectivity:
+            # Create a list with the points in the domain in a 2d array format.
+            # This is used for search trees
+            self.msh_list = np.zeros((self.nelv * self.lxyz, 3))
+            self.linear_indices = []
+            self.nonlinear_indices = []
+            counter = 0
+            for e in range(0, self.nelv):
+                for k in range(0, self.lz):
+                    for j in range(0, self.ly):
+                        for i in range(0, self.lx):
+                            self.msh_list[
+                                linear_index(i, j, k, e, self.lx, self.ly, self.lz), 0
+                            ] = self.x[e, k, j, i]
+                            self.msh_list[
+                                linear_index(i, j, k, e, self.lx, self.ly, self.lz), 1
+                            ] = self.y[e, k, j, i]
+                            self.msh_list[
+                                linear_index(i, j, k, e, self.lx, self.ly, self.lz), 2
+                            ] = self.z[e, k, j, i]
+                            self.linear_indices.append([])
+                            self.nonlinear_indices.append([])
 
-        # List that the index where the points in the domain are shared
-        self.my_tree = KDTree(self.msh_list)
-        self.linear_shared_points = self.my_tree.query_ball_point(
-            x=self.msh_list,
-            r=1e-14,
-            p=2.0,
-            eps=0,
-            workers=1,
-            return_sorted=False,
-            return_length=False,
-        )
+                            self.linear_indices[counter].append(
+                                linear_index(i, j, k, e, self.lx, self.ly, self.lz)
+                            )
+                            self.nonlinear_indices[counter] = nonlinear_index(
+                                self.linear_indices[counter], self.lx, self.ly, self.lz
+                            )
+                            counter += 1
 
-        # List that show the index where the points in the domain are shared,
-        # here the "index" is a tuple (e, k, j, i)
-        self.nonlinear_shared_points = []
-        for i in range(0, len(self.linear_shared_points)):
-            self.nonlinear_shared_points.append(
-                nonlinear_index(self.linear_shared_points[i], self.lx, self.ly, self.lz)
+            # List that the index where the points in the domain are shared
+            self.my_tree = KDTree(self.msh_list)
+            self.linear_shared_points = self.my_tree.query_ball_point(
+                x=self.msh_list,
+                r=1e-14,
+                p=2.0,
+                eps=0,
+                workers=1,
+                return_sorted=False,
+                return_length=False,
             )
 
-        # Find which are the points that are on the boundary
-        self.boundary_points_in_rank = []
-        for shared_points in self.nonlinear_shared_points:
-            ## Check if the point only appears one time
-            ##(Points at element interfaces will appear more than once)
-            if len(shared_points) == 1:
-                ## If only appearing once, continue
-                for point_non_linear_index in shared_points:
-                    # ee = point_non_linear_index[0]
-                    kk = point_non_linear_index[1]
-                    jj = point_non_linear_index[2]
-                    ii = point_non_linear_index[3]
+            # List that show the index where the points in the domain are shared,
+            # here the "index" is a tuple (e, k, j, i)
+            self.nonlinear_shared_points = []
+            for i in range(0, len(self.linear_shared_points)):
+                self.nonlinear_shared_points.append(
+                    nonlinear_index(self.linear_shared_points[i], self.lx, self.ly, self.lz)
+                )
 
-                    if self.gdim == 2:
-                        if (
-                            ii == 0
-                            or ii == (self.lx - 1)
-                            or jj == 0
-                            or jj == (self.ly - 1)
-                        ):
-                            # If any of these conditions is true, the point is in a facet
-                            # and it is not shared, then it should be in a boundrary
-                            self.boundary_points_in_rank.append(point_non_linear_index)
-                    else:
-                        if (
-                            ii == 0
-                            or ii == (self.lx - 1)
-                            or jj == 0
-                            or jj == (self.ly - 1)
-                            or kk == 0
-                            or kk == (self.lz - 1)
-                        ):
-                            # If any of these conditions is true, the point is in a facet
-                            # and it is not shared, then it should be in a boundrary
-                            self.boundary_points_in_rank.append(point_non_linear_index)
+            # Find which are the points that are on the boundary
+            self.boundary_points_in_rank = []
+            for shared_points in self.nonlinear_shared_points:
+                ## Check if the point only appears one time
+                ##(Points at element interfaces will appear more than once)
+                if len(shared_points) == 1:
+                    ## If only appearing once, continue
+                    for point_non_linear_index in shared_points:
+                        # ee = point_non_linear_index[0]
+                        kk = point_non_linear_index[1]
+                        jj = point_non_linear_index[2]
+                        ii = point_non_linear_index[3]
+
+                        if self.gdim == 2:
+                            if (
+                                ii == 0
+                                or ii == (self.lx - 1)
+                                or jj == 0
+                                or jj == (self.ly - 1)
+                            ):
+                                # If any of these conditions is true, the point is in a facet
+                                # and it is not shared, then it should be in a boundrary
+                                self.boundary_points_in_rank.append(point_non_linear_index)
+                        else:
+                            if (
+                                ii == 0
+                                or ii == (self.lx - 1)
+                                or jj == 0
+                                or jj == (self.ly - 1)
+                                or kk == 0
+                                or kk == (self.lz - 1)
+                            ):
+                                # If any of these conditions is true, the point is in a facet
+                                # and it is not shared, then it should be in a boundrary
+                                self.boundary_points_in_rank.append(point_non_linear_index)
 
 
 def linear_index(i, j, k, l, lx, ly, lz):

@@ -308,13 +308,17 @@ class Coef:
     def dssum(self, field, msh):
         """Peform average of given field over shared points in each rank.
         This does not support communication across ranks yest."""
-        tmp = np.copy(field)
-        for ind in range(0, len(msh.nonlinear_shared_points)):
-            ind1 = np.array(msh.nonlinear_indices[ind])
-            ind2 = np.array(msh.nonlinear_shared_points[ind])
-            field[ind1[:, 0], ind1[:, 1], ind1[:, 2], ind1[:, 3]] = np.mean(
-                tmp[ind2[:, 0], ind2[:, 1], ind2[:, 2], ind2[:, 3]]
-            )
+        
+        if msh.create_connectivity:
+            tmp = np.copy(field)
+            for ind in range(0, len(msh.nonlinear_shared_points)):
+                ind1 = np.array(msh.nonlinear_indices[ind])
+                ind2 = np.array(msh.nonlinear_shared_points[ind])
+                field[ind1[:, 0], ind1[:, 1], ind1[:, 2], ind1[:, 3]] = np.mean(
+                    tmp[ind2[:, 0], ind2[:, 1], ind2[:, 2], ind2[:, 3]]
+                )
+        else:
+            print("Mesh does not have connectivity data. Returning unmodified array")
 
         return field
 
