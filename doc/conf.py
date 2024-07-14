@@ -14,7 +14,7 @@ release = 'develop'
 # -- General configuration ---------------------------------------------------
 # https://www.sphinx-doc.org/en/master/usage/configuration.html#general-configuration
 
-extensions = ['numpydoc', 'sphinx.ext.autodoc', 'sphinx.ext.autosummary']
+extensions = ['numpydoc', 'sphinx.ext.autodoc', 'sphinx.ext.autosummary', 'sphinx.ext.githubpages']
 
 templates_path = ['_templates']
 exclude_patterns = []
