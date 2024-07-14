@@ -21,7 +21,7 @@ exclude_patterns = []
 
 # Extension configuration
 numpydoc_class_members_toctree = False
-numpydoc_validation_checks = {"all"}
+numpydoc_validation_checks = {"all", "SA01"}
 
 
 

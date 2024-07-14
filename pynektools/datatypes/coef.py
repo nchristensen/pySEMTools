@@ -8,6 +8,8 @@ class Coef:
     """
     Class that contains arrays like mass matrix, jacobian, jacobian inverse, etc.
 
+    This class can be used when mathematical operations such as derivation and integration is needed on the sem mesh.
+
     Parameters
     ----------
     msh : Mesh
@@ -15,6 +17,37 @@ class Coef:
 
     comm : Comm
         MPI comminicator object.
+
+    Attributes
+    ----------
+    drdx : ndarray
+        component [0,0] of the jacobian inverse tensor for each point. shape is (nelv, lz, ly, lx).
+    drdy : ndarray
+        component [0,1] of the jacobian inverse tensor for each point. shape is (nelv, lz, ly, lx).
+    drdz : ndarray
+        component [0,2] of the jacobian inverse tensor for each point. shape is (nelv, lz, ly, lx).
+    dsdx : ndarray
+        component [1,0] of the jacobian inverse tensor for each point. shape is (nelv, lz, ly, lx).
+    dsdy : ndarray
+        component [1,1] of the jacobian inverse tensor for each point. shape is (nelv, lz, ly, lx).
+    dsdz : ndarray
+        component [1,2] of the jacobian inverse tensor for each point. shape is (nelv, lz, ly, lx).
+    dtdx : ndarray
+        component [2,0] of the jacobian inverse tensor for each point. shape is (nelv, lz, ly, lx).
+    dtdy : ndarray
+        component [2,1] of the jacobian inverse tensor for each point. shape is (nelv, lz, ly, lx).
+    dtdz : ndarray
+        component [2,2] of the jacobian inverse tensor for each point. shape is (nelv, lz, ly, lx).
+    B : ndarray
+        Mass matrix for each point. shape is (nelv, lz, ly, lx).
+    area : ndarray
+        Area integration weight for each point in the facets. shape is (nelv, 6, ly, lx).
+    nx : ndarray
+        x component of the normal vector for each point in the facets. shape is (nelv, 6, ly, lx).
+    ny : ndarray
+        y component of the normal vector for each point in the facets. shape is (nelv, 6, ly, lx).
+    nz : ndarray
+        z component of the normal vector for each point in the facets. shape is (nelv, 6, ly, lx).
 
     Returns
     -------
@@ -254,6 +287,8 @@ class Coef:
         """
         Perform derivative with respect to reference coordinate r.
 
+        This method uses derivation matrices from the lagrange polynomials at the GLL points.
+
         Parameters
         ----------
         field : ndarray
@@ -371,6 +406,8 @@ class Coef:
         """
         Peform global summatin of given qunaitity a using MPI.
 
+        This method uses MPI to sum over all MPI ranks. It works with any numpy array shape and returns one value.
+
         Parameters
         ----------
         a : ndarray
@@ -402,6 +439,9 @@ class Coef:
     def dssum(self, field, msh):
         """
         Peform average of given field over shared points in each rank.
+
+        This method averages the field over shared points in the same rank. It uses the connectivity data in the mesh object.
+        dssum might be a missleading name.
 
         Parameters
         ----------
@@ -554,19 +594,29 @@ def GLL_pwts(n, eps=10**-8, max_iter=1000):
 
 
 def get_transform_matrix(n, dim):
-    """get transformation matrix to Legendre space of given order and dimension
+    """
+    get transformation matrix to Legendre space of given order and dimension
 
     Parameters
     ----------
-    n :
+    n : int
+        Polynomial degree (order - 1).
 
-    dim :
-
+    dim : int
+        Dimension of the problem.
 
     Returns
     -------
-
-
+    vv : ndarray
+        Transformation matrix to Legendre space.
+    vvinv : ndarray
+        Inverse of the transformation matrix.
+    w3 : ndarray
+        3D weights.
+    x : ndarray
+        Quadrature nodes.
+    w : ndarray
+        Quadrature weights.
     """
     # Get the quadrature nodes
     x, w_ = GLL_pwts(
@@ -661,19 +711,27 @@ def get_transform_matrix(n, dim):
 
 
 def get_derivative_matrix(n, dim):
-    """get derivative matrix to Lagrange polynomials at GLL points
+    """
+    Derivative matrix of Lagrange polynomials a GLL points.
 
     Parameters
     ----------
-    n :
+    n : int
+        Polynomial degree (order - 1).
 
-    dim :
-
+    dim : int
+        Dimension of the problem.
 
     Returns
     -------
-
-
+    dx : ndarray
+        Derivation matrix wrt r direction.
+    dy : ndarray
+        Derivation matrix wrt s direction.
+    dz : ndarray
+        Derivation matrix wrt t direction.
+    d_n : ndarray
+        Derivation matrix in 1D.
     """
     # Get the quadrature nodes
     x, w_ = GLL_pwts(
