@@ -11,10 +11,101 @@ NoneType = type(None)
 
 
 class Probes:
-    """Class to interpolate fields at probes from a SEM mesh"""
+    """
+    Class to interpolate fields at probes from a SEM mesh.
+    
+    Main interpolation class. This works in parallel, however, the probes are held at rank 0.
+    therefore if initializing from file, the probes file should be read at rank 0 and then
+    scattered to all ranks. 
+
+    If the probes are passed as an argument, they should be passed to all ranks, however only the
+    data in rank 0 will be relevant (an scatter to all other ranks). See example below to observe
+    how to avoid unnecessary replication of data in all ranks when passing probes as argument.
+
+    Parameters
+    ----------
+    comm : MPI communicator
+        MPI communicator.
+    filename : str, optional
+        Path to JSON file containing paths for probes, mesh and output data. Default is None.
+        If probes are passed as agrument, the JSON part containing this is ignored.
+        If msh is passed as argument, the JSON part containing this is ignored.
+        If this file is not passed, the output data is written to the current directory.
+        If this file is not passed, the msh and probes must be arguments.
+    probes : ndarray, optional
+        2D array of probe coordinates. shape = (n_probes, 3). Default is None.
+        If this is passed, the probes are scattered to all ranks from rank 0.
+        any probe object that was not passed in rank 0 will be ignored.
+    msh : Mesh, optional
+        If this is passed, the mesh is assigned from this object.
+        The mesh object is by default a distributed data type and it is treated as so.
+        In other words, the mesh is not scattered to all ranks.
+    write_coords : bool
+        If True, the probe coordinates are written to a csv file. Default is True.
+    progress_bar : bool
+        If True, a progress bar is displayed. Default is False.
+    point_interpolator_type : str
+        Type of point interpolator. Default is single_point_legendre.
+        options are: single_point_legendre, single_point_lagrange, 
+        multiple_point_legendre_numpy, multiple_point_legendre_torch.
+    max_pts : int, optional
+        Maximum number of points to interpolate. Default is 128. Used if multiple point interpolator is selected.
+    find_points_comm_pattern : str
+        Communication pattern for finding points. Default is point_to_point.
+        options are: point_to_point, collective.
+    elem_percent_expansion : float
+        Percentage expansion of the element bounding box. Default is 0.01.
+        
+    Attributes
+    ----------
+    probes : ndarray
+        2D array of probe coordinates. shape = (n_probes, 3). Held at Rank 0.
+    interpolated_fields : ndarray
+        2D array of interpolated fields at probes. shape = (n_probes, n_fields + 1). Held at Rank 0.
+        The first column is always time, the rest are the interpolated fields.
+    
+    Notes
+    -----
+    A sample input file can be found in the examples folder of the main repository,
+    However, the file is not used in said example.
+
+    Examples
+    --------
+    1. Initialize from file:
+
+    >>> from mpi4py import MPI
+    >>> from pynektools.interpolation.probes import Probes
+    >>> comm = MPI.COMM_WORLD
+    >>> probes = Probes(comm, filename="path/to/params.json")
+
+    2. Initialize from code, passing everything as arguments.
+    Assume msh is created. One must then create the probe data in
+    rank 0. A dummy probe_data must be created in all other ranks
+
+    >>> from mpi4py import MPI
+    >>> from pynektools.interpolation.probes import Probes
+    >>> comm = MPI.COMM_WORLD
+    >>> if comm.Get_rank() == 0:
+    >>>     probes_data = np.array([[0.0, 0.0, 0.0], [1.0, 1.0, 1.0], [2.0, 2.0, 2.0]])
+    >>> else:
+    >>>    probes_data = 1
+    >>> probes = Probes(comm, probes=probes_data, msh=msh)
+
+    Note that probes is initialized in all ranks, but the probe_data containing
+    the coordinates are only relevant in rank 0. They are scattered internally.
+    """
 
     class IoData:
-        """Class to store the input/output data"""
+        """
+        Class to store the input/output data.
+        
+        Support class to hold paths to probe, msh, and output data.
+
+        Parameters
+        ----------
+        params_file : dict
+            Dictionary containing the paths to the data. Extracted from JSON input.
+        """
 
         def __init__(self, params_file):
             self.casename = params_file["casename"]
@@ -180,7 +271,26 @@ class Probes:
         self.interpolated_fields = None
 
     def read_fld_file(self, file_number, comm):
-        """Method to read an fld file and return a hexadata object"""
+        """
+        Method to read an fld file and return a hexadata object.
+
+        This method wraps the preadnek function from the io.neksuite module.
+        Here we use the same file name as specified in the input json.
+
+        Parameters
+        ----------
+        file_number : int
+            The file number to read. 
+            This is the number that is appended to the file name given at init.
+            
+        comm : Comm
+            MPI communicator.
+            
+        Returns
+        -------
+        hexadata
+            Hexadata object containing the field data.
+        """
         self.fld_data = self.IoData(self.params_file["case"]["IO"]["fld_data"])
         self.list_of_fields = self.params_file["case"]["interpolate_fields"][
             "field_type"
@@ -206,7 +316,31 @@ class Probes:
         return fld_data
 
     def interpolate_from_hexadata_and_writecsv(self, fld_data, comm, mode="rst"):
-        """Method to interpolate fields from a hexadata object and write to a csv file"""
+        """
+        Method to interpolate fields from a hexadata object and write to a csv file.
+
+        This method interpolates the fields with key and index specified in the input json file.
+
+        The result of the interpolation results are both held in rank 0 and also written to a csv file.
+
+        Parameters
+        ----------
+        fld_data : hexadata
+            Hexadata object containing the field data.
+            
+        comm : Comm
+            MPI communicator.
+            
+        mode : str
+            Mode of interpolation. only rst. This should be removed as an option.
+
+        Examples
+        --------
+        This method can be used in conjuction to the read_fld_file method to interpolate and write to a csv file.
+
+        >>> fld_data = probes.read_fld_file(0, comm)
+        >>> probes.interpolate_from_hexadata_and_writecsv(fld_data, comm)
+        """
         self.fld_data = self.IoData(self.params_file["case"]["IO"]["fld_data"])
         self.list_of_fields = self.params_file["case"]["interpolate_fields"][
             "field_type"
@@ -272,7 +406,35 @@ class Probes:
             write_csv(self.output_fname, self.interpolated_fields, "a")
 
     def interpolate_from_field_list(self, t, field_list, comm, write_data=True):
-        """Interpolate the probes from a list of fields"""
+        """
+        Interpolate the probes from a list of fields.
+
+        This method interpolates from a list of fields (ndarrays of shape (nelv, lz, ly, lx)).
+
+        Parameters
+        ----------
+        t : float
+            Time of the field data.
+            
+        field_list : list
+            List of fields to interpolate. Each field is an ndarray of shape (nelv, lz, ly, lx).
+            
+        comm : Comm
+            MPI communicator.
+            
+        write_data : bool
+            If True, the interpolated data is written to a csv file. Default is True.
+
+        Examples
+        --------
+        This method can be used to interpolate fields from a list of fields. If you have 
+        previosly obtained a set of fields u,v,w as ndarrays of shape (nelv, lz, ly, lx), you can:
+
+        >>> probes.interpolate_from_field_list(t, [u,v,w], comm)
+        
+        The results are stored in probes.interpolated_fields attribute.
+        Remember: the first column of this attribute is always the time t given.
+        """
 
         self.number_of_fields = len(field_list)
 
@@ -329,7 +491,17 @@ class Probes:
 
 
 def get_coordinates_from_hexadata(data):
-    """Get the coordinates from a hexadata object"""
+    """Get the coordinates from a hexadata object
+
+    Parameters
+    ----------
+    data :
+        
+
+    Returns
+    -------
+
+    """
 
     nelv = data.nel
     lx = data.lr1[0]
@@ -349,7 +521,21 @@ def get_coordinates_from_hexadata(data):
 
 
 def write_csv(fname, data, mode):
-    """write point positions to the file"""
+    """write point positions to the file
+
+    Parameters
+    ----------
+    fname :
+        
+    data :
+        
+    mode :
+        
+
+    Returns
+    -------
+
+    """
 
     string = "writing .csv file as " + fname
     print(string)
@@ -365,7 +551,21 @@ def write_csv(fname, data, mode):
 
 
 def get_field_from_hexadata(data, prefix, qoi):
-    """Get field-like array from hexadata"""
+    """Get field-like array from hexadata
+
+    Parameters
+    ----------
+    data :
+        
+    prefix :
+        
+    qoi :
+        
+
+    Returns
+    -------
+
+    """
     nelv = data.nel
     lx = data.lr1[0]
     ly = data.lr1[1]
