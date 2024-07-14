@@ -1,4 +1,4 @@
-name: documentation
+name: Documentation
 
 # Controls when the action will run.
 on:
@@ -60,5 +60,5 @@ jobs:
           keep_files: false
           force_orphan: false
           publish_branch: gh-pages
-          destination_dir: docs/main
+          destination_dir: docs/
           enable_jekyll: true
