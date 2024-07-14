@@ -388,11 +388,6 @@ def write_fld_file_from_list(fname, comm, msh, field_list=None):
         A list of the fields to be written to the file.
          (Default value = None).
 
-    Returns
-    -------
-    None
-        Nothing is returned.
-
     Examples
     --------
     Having defined ndarrays u, v, w of shape (nelv, lz, ly, lx). To write them as scalars in the file:
@@ -458,11 +453,6 @@ def write_fld_subdomain_from_list(
     p : int, optional
         Polynomial degree of the new mesh. If None, the mesh is not refined/coarsened.
         (Default value = None).
-
-    Returns
-    -------
-    None
-        Nothing is returned.
     """
     number_of_fields = len(field_list)
     # Decide if my rank should write data

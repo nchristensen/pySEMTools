@@ -156,11 +156,6 @@ class DataStreamer:
         ----------
         fld : ndarray
             Field to be sent. Must be a 1d array.
-
-        Returns
-        -------
-        None
-            Returns nothing.
         """
         # Begin a step
         step_status = self.writer_st.BeginStep()
@@ -222,10 +217,6 @@ def element_mapping_load_balanced_linear(self, comm):
     comm : Comm
         MPI communicator.
 
-    Returns
-    -------
-    None
-        Returns nothing.
     :meta private:
     """
 

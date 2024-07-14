@@ -106,11 +106,6 @@ class DataCompressor:
             List of numpy arrays with the data to write. Corresponding in index to variable_names.
             The arrays must be 1d.
 
-        Returns
-        -------
-        None
-            Returns nothing.
-
         Examples
         --------
         This function is used to write data to disk. The data is compressed using bzip2.
@@ -293,11 +288,6 @@ def write_field(
     write_mesh : bool
         Flag to write the mesh. (Default value = True).
 
-    Returns
-    -------
-    None
-        Returns nothing.
-
     Examples
     --------
     This function is used to write data to disk. The data is compressed using bzip2.
@@ -417,10 +407,6 @@ def element_mapping_load_balanced_linear(self, comm):
     comm : Comm
         MPI communicator.
 
-    Returns
-    -------
-    None
-        Returns nothing.
     :meta private:
     """
 

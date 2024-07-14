@@ -1,7 +1,7 @@
 :orphan:
 
-Ppymech
-------
+ppymech
+-------
 
 Descriptions of the contents of the Probes class.
 
