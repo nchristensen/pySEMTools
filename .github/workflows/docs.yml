@@ -19,6 +19,7 @@ jobs:
       - name: Setup enviroment
         run: |
           sudo apt-get update
+          sudo apt install pandoc -y
           
       - name: Setup MPI
         uses: mpi4py/setup-mpi@v1
@@ -45,10 +46,15 @@ jobs:
           pip install pytest-json-report
           pip install -U sphinx
           pip install numpydoc
+          pip install sphinx_rtd_theme
+          pip install jupyter
+          pip install pandoc
+          pip install nbsphinx
           pip install .
 
       - name: Build docs
         run: |
+          cp examples/*/*ipynb doc/_notebooks/
           sphinx-build doc/ docs/
       
       - name: GH Pages Deployment

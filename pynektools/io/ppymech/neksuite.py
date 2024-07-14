@@ -17,7 +17,13 @@ from .parallel_io import (
 
 
 class IoHelper:
-    """Class to contain general information of the file and some buffers"""
+    """
+    Class to contain general information of the file and some buffers
+    
+    This is used primarly to pass data around in writing routines/reading routines.
+
+    :meta private:
+    """
 
     def __init__(self, h):
 
@@ -56,8 +62,20 @@ class IoHelper:
         self.tmp_dp_field = None
 
     def element_mapping(self, comm):
-        """Maps the number of elements each processor has
-        in equally"""
+        """
+        Maps the number of elements each processor has equally.
+
+        Not used anymore.
+
+        Parameters
+        ----------
+        comm : Comm
+            MPI communicator
+            
+        Returns
+        -------
+
+        """
         rank = comm.Get_rank()
         size = comm.Get_size()
 
@@ -68,7 +86,17 @@ class IoHelper:
 
     def element_mapping_load_balanced_linear(self, comm):
         """Maps the number of elements each processor has
-        in a linearly load balanced manner"""
+        in a linearly load balanced manner
+
+        Parameters
+        ----------
+        comm :
+            
+
+        Returns
+        -------
+
+        """
         self.m = self.glb_nelv
         self.pe_rank = comm.Get_rank()
         self.pe_size = comm.Get_size()
@@ -89,7 +117,17 @@ class IoHelper:
         self.n = self.lxyz * self.nelv
 
     def element_mapping_from_parallel_hexadata(self, comm):
-        """Find the element mapping when the input data was already parallel and divided equally"""
+        """Find the element mapping when the input data was already parallel and divided equally
+
+        Parameters
+        ----------
+        comm :
+            
+
+        Returns
+        -------
+
+        """
         rank = comm.Get_rank()
         size = comm.Get_size()
 
@@ -107,7 +145,17 @@ class IoHelper:
 
     def element_mapping_from_parallel_hexadata_mpi(self, comm):
         """Find the element mapping when the input data was already parallel and divided
-        in a linearly load balanced manner"""
+        in a linearly load balanced manner
+
+        Parameters
+        ----------
+        comm :
+            
+
+        Returns
+        -------
+
+        """
 
         # io helper assume that the nel in header is the global one
         # So we have to correct if the header is initialized from a parallel hexadata object
@@ -135,7 +183,34 @@ class IoHelper:
 
 
 def preadnek(filename, comm, data_dtype="float64"):
-    """Read and fld file and return a pymech hexadata object (Parallel)"""
+    """
+    Read and fld file and return a pymech hexadata object (Parallel).
+
+    Main function for readinf nek type fld filed.
+
+    Parameters
+    ----------
+    filename : str
+        The filename of the fld file.
+        
+    comm : Comm
+        MPI communicator.
+        
+    data_dtype : str
+        The data type of the data in the file. (Default value = "float64").
+
+    Returns
+    -------
+    HexaData
+        The data read from the file in a pymech hexadata object.
+    
+    Examples
+    --------
+    >>> from mpi4py import MPI
+    >>> from pynektools.io.ppymech.neksuite import preadnek
+    >>> comm = MPI.COMM_WORLD
+    >>> data = preadnek('field00001.fld', comm)
+    """
 
     mpi_int_size = MPI.INT.Get_size()
     mpi_real_size = MPI.REAL.Get_size()
@@ -234,7 +309,29 @@ def preadnek(filename, comm, data_dtype="float64"):
 
 
 def pwritenek(filename, data, comm):
-    """write and fld file and from a pymech hexadata object (Parallel)"""
+    """
+    Write and fld file and from a pymech hexadata object (Parallel).
+
+    Main function to write fld files.
+
+    Parameters
+    ----------
+    filename : str
+        The filename of the fld file.
+        
+    data : HexaData
+        The data to write to the file.
+        
+    comm : Comm
+        MPI communicator.
+        
+    Examples
+    --------
+    Assuming you have a hexadata object already:
+
+    >>> from pynektools.io.ppymech.neksuite import pwritenek
+    >>> pwritenek('field00001.fld', data, comm)
+    """
 
     mpi_int_size = MPI.INT.Get_size()
     mpi_real_size = MPI.REAL.Get_size()

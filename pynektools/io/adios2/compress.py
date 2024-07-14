@@ -20,8 +20,28 @@ NoneType = type(None)
 
 class DataCompressor:
     """
-    Class used to write compressed data to disk
-    Assumes that the input data has a msh object available
+    Class used to write compressed data to disk.
+
+    This Assumes that the input data has a msh object available.
+
+    Parameters
+    ----------
+    comm : Comm
+        MPI communicator.
+    mesh_info : dict
+        Dictionary with mesh information.
+    wrd_size : int
+        Word size to write data. (Default value = 4). Single precsiion is 4, double is 8.
+
+    Returns
+    -------
+
+    Examples
+    --------
+    This class is used to write data to disk. The data is compressed using bzip2.
+
+    >>> mesh_info = {"glb_nelv": msh.glb_nelv, "lxyz": msh.lxyz, "gdim": msh.gdim}
+    >>> dc = DataCompressor(comm, mesh_info = mesh_info, wrd_size = 4)
     """
 
     def __init__(self, comm, mesh_info=None, wrd_size=4):
@@ -68,7 +88,32 @@ class DataCompressor:
         self.read_bp = None
 
     def write(self, comm, fname="compress.bp", variable_names=None, data=None):
-        """write data to disk using adios2"""
+        """
+        Write data to disk using adios2.
+
+        Lossless compression with bzip2.
+
+        Parameters
+        ----------
+        comm : Comm
+            MPI communicator.
+        fname : str
+            File name to write. (Default value = "compress.bp").
+        variable_names : list
+            List of string with the names of the variables to write.
+            This is very important, as adios2 will use these names to process the data.
+        data : list
+            List of numpy arrays with the data to write. Corresponding in index to variable_names.
+            The arrays must be 1d.
+
+        Examples
+        --------
+        This function is used to write data to disk. The data is compressed using bzip2.
+
+        >>> variable_names = ["x", "y", "z"]
+        >>> data = [msh.x, msh.y, msh.z]
+        >>> dc.write(comm, fname = "compress.bp", variable_names = variable_names, data = data)
+        """
 
         # Check if the saved dtype is the same as input file, if not, perform a cast
         if self.dtype != data[0].dtype:
@@ -122,7 +167,34 @@ class DataCompressor:
         self.io.RemoveAllAttributes()
 
     def read(self, comm, fname="compress.bp", variable_names=None):
-        """read data from disk using adios2"""
+        """
+        Read data from disk using adios2.
+
+        Read compressed data and internally decompress it.
+
+        Parameters
+        ----------
+        comm : Comm
+            MPI communicator.
+        fname : str
+            File name to read. (Default value = "compress.bp").
+        variable_names : list
+            List of string with the names of the variables to read.
+            These names NEED to match the names adios2 used to write the data.
+
+        Returns
+        -------
+        list
+            List of numpy arrays with the data read.
+            the ndarrays in the list are 1d.
+
+        Examples
+        --------
+        This function is used to read data from disk. The data is compressed using bzip2.
+
+        >>> variable_names = ["x", "y", "z"]
+        >>> data = dc.read(comm, fname = "compress.bp", variable_names = variable_names)
+        """
 
         # Opean the file and read the header
         self.read_bp = self.io.Open(fname, adios2.Mode.Read, comm)
@@ -195,7 +267,33 @@ def write_field(
     wrd_size=4,
     write_mesh=True,
 ):
-    """Helper function to write compressed data to disk"""
+    """
+    Wrapper to data compressor writer.
+
+    Writes nek like data compressed.
+
+    Parameters
+    ----------
+    comm : Comm
+        MPI communicator.
+
+    msh : Mesh
+        Mesh object to write. (Default value = None).
+    fld : Field
+        Field object to write. (Default value = None).
+    fname : str
+        File name to write. (Default value = "compressed_field0.f00001").
+    wrd_size : int
+        Word size to write data. (Default value = 4). Single precsiion is 4, double is 8.
+    write_mesh : bool
+        Flag to write the mesh. (Default value = True).
+
+    Examples
+    --------
+    This function is used to write data to disk. The data is compressed using bzip2.
+
+    >>> write_field(comm, msh = msh, fld = fld, fname = "compressed_field0.f00001", wrd_size = 4, write_mesh = True)
+    """
 
     # Inputs to write operation
     mesh_info = {"glb_nelv": msh.glb_nelv, "lxyz": msh.lxyz, "gdim": msh.gdim}
@@ -225,7 +323,32 @@ def write_field(
 
 
 def read_field(comm, fname="compressed_field0.f00001"):
-    """Helper function to read compressed data from disk"""
+    """
+    Wrapper to data compressor reader.
+
+    Reads nek like data compressed.
+
+    Parameters
+    ----------
+    comm : Comm
+        MPI communicator.
+    fname : str
+        File name to read. (Default value = "compressed_field0.f00001").
+
+    Returns
+    -------
+    msh: Mesh
+        Mesh object read.
+    fld : Field
+        Field object read.
+
+    Examples
+    --------
+
+    This function is used to read data from disk. The data is compressed using bzip2.
+
+    >>> msh, fld = read_field(comm, fname = "compressed_field0.f00001")
+    """
 
     # Read variable names
     with open(fname + "/variable_names.json", "r") as f:
@@ -274,8 +397,19 @@ def read_field(comm, fname="compressed_field0.f00001"):
 
 
 def element_mapping_load_balanced_linear(self, comm):
-    """Assing the number of elements that each ranks has in a
-    linear load balanced manner"""
+    """
+    Assing the number of elements that each ranks has.
+
+    The distribution is done in a lonear load balanced manner.
+
+    Parameters
+    ----------
+    comm : Comm
+        MPI communicator.
+
+    :meta private:
+    """
+
     self.M = self.glb_nelv
     self.pe_rank = comm.Get_rank()
     self.pe_size = comm.Get_size()

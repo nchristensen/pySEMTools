@@ -14,19 +14,19 @@ release = 'develop'
 # -- General configuration ---------------------------------------------------
 # https://www.sphinx-doc.org/en/master/usage/configuration.html#general-configuration
 
-extensions = ['numpydoc', 'sphinx.ext.autodoc', 'sphinx.ext.autosummary', 'sphinx.ext.githubpages']
+extensions = ['numpydoc', 'sphinx.ext.autodoc', 'sphinx.ext.autosummary', 'sphinx.ext.githubpages', 'sphinx_rtd_theme', 'nbsphinx']
 
 templates_path = ['_templates']
 exclude_patterns = []
 
 # Extension configuration
 numpydoc_class_members_toctree = False
-numpydoc_validation_checks = {"all", "SA01"}
+numpydoc_validation_checks = {"all", "SA01", "EX01"}
 
 
 
 # -- Options for HTML output -------------------------------------------------
 # https://www.sphinx-doc.org/en/master/usage/configuration.html#options-for-html-output
 
-html_theme = 'classic'
+html_theme = 'sphinx_rtd_theme'
 html_static_path = ['_static']
