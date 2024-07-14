@@ -9,7 +9,9 @@ PyNekTools
 PyNekTools is a Python package for post-processing Spectral Element Method data for fluid simulations.
 
 .. toctree::
-   :maxdepth: 2
+   :maxdepth: 1
    :caption: User Guide:
 
    ./pages/datatypes
+   ./pages/interpolation
+   ./pages/io

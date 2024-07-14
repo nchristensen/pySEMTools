@@ -20,7 +20,48 @@ NoneType = type(None)
 def create_hexadata_from_msh_fld(
     msh=None, fld=None, wdsz=4, istep=0, time=0, data_dtype="float64", write_mesh=True
 ):
-    """Create a HexaData object from a msh and fld object"""
+    """
+    Create a HexaData object from a msh and fld object. Used to write fld files.
+
+    This function is used as a preprocessing step before writing fld files.
+
+    Parameters
+    ----------
+    msh : Mesh
+        A mesh object.
+         (Default value = None).
+    fld : Field
+        A field object.
+         (Default value = None).
+    wdsz : int
+        Word size of data in number of bytes. 4 for single precision, 8 for double precision.
+         (Default value = 4).
+    istep : int
+        Used for writing multistep files. Not really used in practice.
+         (Default value = 0).
+    time : float
+        Time to use in the header of the file and HexaData object.
+         (Default value = 0).
+    data_dtype : str
+        Data type to be used. "float32" or "float64". Many things are currently hardcoded for float64.
+         (Default value = "float64")
+    write_mesh : bool
+        If true, the mesh will be written to the HexaData object and posterior fld files.
+         (Default value = True)
+
+    Returns
+    -------
+    HexaData
+        A HexaData object with the mesh and fields from the msh and fld objects.
+
+    Examples
+    --------
+    From a Mesh and Field object.
+
+    >>> data = create_hexadata_from_msh_fld(msh=msh, fld=fld)
+
+    :meta private:
+    """
 
     msh_fields = msh.gdim
     vel_fields = fld.vel_fields
@@ -82,7 +123,25 @@ def create_hexadata_from_msh_fld(
 
 
 def put_coordinates_in_hexadata_from_msh(data, msh):
-    """Populate a hexadata object with coordinates from a msh object"""
+    """
+    Populate a hexadata object with coordinates from a msh object.
+
+    This function is used as a preprocessing step before writing fld files.
+
+    Parameters
+    ----------
+    data : HexaData
+        A HexaData object.
+    msh : Mesh
+        A mesh object.
+
+    Returns
+    -------
+    HexaData
+        A HexaData object with the coordinates from the msh object.
+
+    :meta private:
+    """
     nelv = data.nel
     # lx = data.lr1[0]
     # ly = data.lr1[1]
@@ -97,7 +156,29 @@ def put_coordinates_in_hexadata_from_msh(data, msh):
 
 
 def put_field_in_hexadata(data, field, prefix, qoi):
-    """Populate a hexadata object with a field from a field object"""
+    """
+    Populate a hexadata object with a field from a field object.
+
+    Used as preprocessing step before writing fld files.
+
+    Parameters
+    ----------
+    data : HexaData
+        A HexaData object.
+    field : ndarray
+        A field to be written to the HexaData object.
+    prefix : str
+        Prefix of the field. vel, pres, temp, scal.
+    qoi :
+        Quantity of interest. Index of the field.
+
+    Returns
+    -------
+    HexaData
+        A HexaData object with the field populated.
+
+    :meta private:
+    """
     nelv = data.nel
     # lx = data.lr1[0]
     # ly = data.lr1[1]
@@ -123,7 +204,51 @@ def put_field_in_hexadata(data, field, prefix, qoi):
 
 
 def get_gradient(msh, coef, field_list=None):
-    """Get gradient from a 3D field vector field wrt x, y, z directions"""
+    """
+    Get gradient from a 3D field vector field wrt x, y, z directions.
+
+    The gradient of a vector field is a tensor. The gradient of a scalar field is a vector field.
+
+    For each point in a vector field :math:`u_i = [u_1, u_2, u_3]` in space with coordinates
+    :math:`x_j = [x, y, z]`, the gradient is a 3x3 tensor :math:`G(u)_{i,j}` with:
+
+    .. math::
+
+        G(u)_{i,j} = \partial{u_i}/\partial{x_j}.
+
+    whith :math:`i` and :math:`j` being the rows and columns of the matrix, respectively.
+
+    Parameters
+    ----------
+    msh : Mesh
+        A mesh object.
+    coef : Coef
+        A coef object.
+    field_list : list
+        A list of the vector/scalar fields to calcule the 3D gradient to.
+        Each entry in the list should be a 4D ndarray with the shape (nelv, lz, ly, lx).
+        (Default value = None).
+
+    Returns
+    -------
+    ndarray
+        A 6D ndarray with the shape (nelv, lz, ly, lx, number_of_fields, 3).
+
+    Notes
+    -----
+
+    Each point in a vector field u(x,y,z), v(x,y,z), w(x,y,z) has a gradient (jacobian) that is a 3x3 tensor.
+
+    Each point in a scalar field s(x,y,z) has a gradient (jacobian) that is a 1x3 tensor.
+
+    The resulting gradient is a 6D tensor with the shape (nelv, lz, ly, lx, number_of_fields, 3).
+
+    Examples
+    --------
+    For fields grad_u
+
+    >>> grad = get_gradient(msh, coef, [u, v, w])
+    """
     number_of_fields = len(field_list)
 
     if msh.lz == 1:
@@ -150,10 +275,40 @@ def get_gradient(msh, coef, field_list=None):
 
 
 def get_strain_tensor(grad_u, msh):
-    """Calculate the symetric part of the gradient
-    This calculates 1/2(grad_u + grad_u^T), which is the stress tensor
-    Another form of this is simply 1/2(du_i/dx_j + du_j/dx_i)
     """
+    Calculate the symetric part of the gradient.
+
+    Calculate the symetric part of the gradient tensor, defined as:
+
+    .. math::
+
+        1/2 (G(u) + G(u)^T).
+
+    Typically known in fluids as the strain tensor.
+
+    Another notation is: :math:`1/2 (\partial{u_i}/\partial{x}_j + \partial{u}_j/\partial{x}_i)`.
+
+    Parameters
+    ----------
+    grad_u : ndarray
+        Gradient of a field. A 6D ndarray with the shape (nelv, lz, ly, lx, 3, 3) for 3d data.
+    msh : Mesh
+        A mesh object.
+
+    Returns
+    -------
+    ndarray
+        A 6D ndarrays with the shape (nelv, lz, ly, lx, 3, 3).
+
+    Examples
+    --------
+    For grad
+
+    >>> sij = get_strain_tensor(grad, msh)
+
+    Useful for postprocessing
+    """
+
     sij = np.zeros((msh.nelv, msh.lz, msh.ly, msh.lx, 3, 3))
 
     for e in range(0, msh.nelv):
@@ -168,9 +323,39 @@ def get_strain_tensor(grad_u, msh):
 
 
 def get_angular_rotation_tensor(grad_u, msh):
-    """Calculate the asymetric part of the gradient
-    This calculates 1/2(grad_u - grad_u^T), which is the stress tensor
-    Another form of this is simply 1/2(du_i/dx_j + du_j/dx_i)
+    """
+    Calculate the antisymetric part of the gradient.
+
+    Calculate the antisymetric part of the gradient tensor, defined as:
+
+    .. math::
+
+        1/2 (G(u) - G(u)^T).
+
+    Typically known in fluids as the angular rotation tensor.
+
+    Another notation is: :math:`1/2 (\partial{u_i}/\partial{x}_j - \partial{u}_j/\partial{x}_i)`.
+
+    Parameters
+    ----------
+    grad_u : ndarray
+        Gradient of a field. A 6D ndarray with the shape (nelv, lz, ly, lx, 3, 3) for 3d data.
+
+    msh : Mesh
+        A mesh object.
+
+    Returns
+    -------
+    ndarray
+        A 6D ndarrays with the shape (nelv, lz, ly, lx, 3, 3).
+
+    Examples
+    --------
+    For grad
+
+    >>> aij = get_angular_rotation_tensor(grad, msh)
+
+    Useful for postprocessing
     """
     aij = np.zeros((msh.nelv, msh.lz, msh.ly, msh.lx, 3, 3))
 
@@ -186,8 +371,47 @@ def get_angular_rotation_tensor(grad_u, msh):
 
 
 def write_fld_file_from_list(fname, comm, msh, field_list=None):
-    """Write fld file from a field list. They are written as scalars
-    in the order that they are given in the list"""
+    """
+    Write fld file from a field list, each field written as a scalar.
+
+    This function writes a fld from a field list in the scalar positions.
+
+    Parameters
+    ----------
+    fname : str
+        Name of the file to be written.
+    comm : Comm
+        A communicator object.
+    msh : Mesh
+        A mesh object.
+    field_list : list
+        A list of the fields to be written to the file.
+         (Default value = None).
+
+    Returns
+    -------
+    None
+        Nothing is returned.
+
+    Examples
+    --------
+    Having defined ndarrays u, v, w of shape (nelv, lz, ly, lx). To write them as scalars in the file:
+
+    >>> write_fld_file_from_list("field0.f00001", comm, msh, [u, v, w])
+
+    To write them in positions 0, 1, 2 of the vel keyword in the file, you should not use this function, and instead
+    create a empty field object and update its metadata with the correct positions.
+
+    >>> out_fld = field_c(comm)
+    >>> out_fld.fields["vel"].append(u)
+    >>> out_fld.fields["vel"].append(v)
+    >>> out_fld.fields["vel"].append(w)
+    >>> out_fld.update_vars()
+    >>> out_data = create_hexadata_from_msh_fld(msh=msh, fld=out_fld)
+    >>> pwritenek("field0.f00001", out_data, comm)
+
+    This function just wraps these commands and assumes they will be in the scalar keyword.
+    """
     number_of_fields = len(field_list)
 
     ## Create an empty field and update its metadata
@@ -208,9 +432,38 @@ def write_fld_file_from_list(fname, comm, msh, field_list=None):
 def write_fld_subdomain_from_list(
     fname, comm, msh, field_list=None, subdomain=[], p=None
 ):
-    """Write a subdomain of the sem mesh into an fld file from a field list.
-    the subdomain should be a list of lists with the following format:
-    subdomain = [[x_min, x_max],[y_min, y_max],[z_min, z_max]]."""
+    """
+    Write a subdomain and p-refine of the sem mesh into an fld file from a field list.
+
+    This function writes a fld from a field list in the scalar positions.
+    In a subdomain specified by the list of list subdomain.
+
+    If p is not None, the mesh is refined/coarsened.
+
+    Parameters
+    ----------
+    fname : str
+        Name of the file to be written.
+    comm : Comm
+        A communicator object.
+    msh : Mesh
+        A mesh object.
+    field_list : list
+        A list of the fields to be written to the file.
+        (Default value = None).
+    subdomain : list
+        A list of lists with the subdomain to be written.
+        the format is: subdomain = [[x_min, x_max],[y_min, y_max],[z_min, z_max]].
+        (Default value = []).
+    p : int, optional
+        Polynomial degree of the new mesh. If None, the mesh is not refined/coarsened.
+        (Default value = None).
+
+    Returns
+    -------
+    None
+        Nothing is returned.
+    """
     number_of_fields = len(field_list)
     # Decide if my rank should write data
     my_rank_writes = 1

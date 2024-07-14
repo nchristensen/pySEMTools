@@ -16,7 +16,52 @@ NoneType = type(None)
 
 
 class DataStreamer:
-    """Class used to communicate data between codes using adios2"""
+    """
+    Class used to communicate data between codes using adios2.
+
+    Use this to send and recieve data.
+
+    The data is always transported as a 1d array, so it is necessary to reshape.
+
+    Parameters
+    ----------
+    comm : Comm
+        MPI communicator.
+    from_nek : bool
+        Define if the data that is being stream comes from a nek-like code.
+        (Default value = True).
+
+    Attributes
+    ----------
+    glb_nelv : int
+        Total number of elements in the global domain.
+    lxyz : int
+        Number of points per element.
+    gdim : int
+        Problem dimension.
+    nelv : int
+        Number of elements that this rank has.
+
+    Examples
+    --------
+    This type must be paired with another streaming in the other executable/code.
+    The codes will not start if the streams are not paired.
+
+    A full of example of recieving data is shown below. It is possible to pair
+    with other classes to, for example, write data to disk.
+
+    >>> ds = data_streamer_c(comm)
+    >>> x = get_fld_from_ndarray(ds.recieve(), ds.lx, ds.ly, ds.lz, ds.nelv) # Recieve and reshape x
+    >>> y = get_fld_from_ndarray(ds.recieve(), ds.lx, ds.ly, ds.lz, ds.nelv) # Recieve and reshape y
+    >>> z = get_fld_from_ndarray(ds.recieve(), ds.lx, ds.ly, ds.lz, ds.nelv) # Recieve and reshape z
+    >>> ds.finalize()
+    >>> msh = msh_c(comm, x = x, y = y, z = z)
+    >>> write_fld_file_from_list("field0.f00001", comm, msh, [x, y, z])
+
+    To send data to the other code, use the stream method.
+
+    >>> ds.stream(x.reshape(x.size))
+    """
 
     def __init__(self, comm, from_nek=True):
 
@@ -93,12 +138,30 @@ class DataStreamer:
         )
 
     def finalize(self):
-        """Finalize the execution of the module"""
+        """
+        Finalize the execution of the module.
+
+        Used to close reader and writer. The stream will end and the code will not be coupled.
+        """
         self.reader_st.Close()
         self.writer_st.Close()
 
     def stream(self, fld):
-        """Stream data from this code to another using adios2"""
+        """
+        Send data to another code using adios2.
+
+        Couple 2 code or executables.
+
+        Parameters
+        ----------
+        fld : ndarray
+            Field to be sent. Must be a 1d array.
+
+        Returns
+        -------
+        None
+            Returns nothing.
+        """
         # Begin a step
         step_status = self.writer_st.BeginStep()
         self.writer_st.Put(
@@ -108,7 +171,26 @@ class DataStreamer:
         self.writer_st.EndStep()  # Data is sent here
 
     def recieve(self, fld=None, variable="f2py_field"):
-        """Recieve data from another code using adios2"""
+        """
+        Recieve data from another code using adios2.
+
+        The data is always transported as a 1d array, so it is necessary to reshape to deinred shape.
+
+        Parameters
+        ----------
+        fld : ndarray
+            Buffer to contain the data. If None, it will be created.
+            (Default value = None).
+        variable : str
+            Name of the adios2 variable to be read. Neko used default name. Change as needed.
+            This name can remain the same during the execution even if different quantities are being transported.
+            (Default value = "f2py_field").
+
+        Returns
+        -------
+        ndarray
+            Returns the field that was recieved.
+        """
 
         if isinstance(fld, NoneType):
             fld = np.zeros((self.py2f_field_my_count), dtype=np.double)
@@ -130,8 +212,23 @@ class DataStreamer:
 
 
 def element_mapping_load_balanced_linear(self, comm):
-    """Assing the number of elements that each ranks has in a
-    linear load balanced manner"""
+    """
+    Assing the number of elements that each ranks has.
+
+    The distribution is done in a lonear load balanced manner.
+
+    Parameters
+    ----------
+    comm : Comm
+        MPI communicator.
+
+    Returns
+    -------
+    None
+        Returns nothing.
+    :meta private:
+    """
+
     self.M = self.glb_nelv
     self.pe_rank = comm.Get_rank()
     self.pe_size = comm.Get_size()

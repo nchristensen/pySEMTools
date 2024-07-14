@@ -45,6 +45,7 @@ jobs:
           pip install pytest-json-report
           pip install -U sphinx
           pip install numpydoc
+          pip install sphinx_rtd_theme
           pip install .
 
       - name: Build docs
