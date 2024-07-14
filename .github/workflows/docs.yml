@@ -61,4 +61,4 @@ jobs:
           force_orphan: false
           publish_branch: gh-pages
           destination_dir: docs/
-          enable_jekyll: true
+          enable_jekyll: false
