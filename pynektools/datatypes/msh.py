@@ -7,9 +7,71 @@ NoneType = type(None)
 
 
 class Mesh:
-    """Class that contains relevant data on the domain"""
+    """
+    Class that contains coordinate and partitioning data of the domain.
 
-    def __init__(self, comm, data=None, x=None, y=None, z=None, create_connectivity = True):
+    This class needs to be used generaly as it contains the coordinates of the domain and
+    some information about the partitioning of the domain.
+
+    Parameters
+    ----------
+    comm : Comm
+        MPI comminicator object.
+    data : HexaData, optional
+        HexaData object that contains the coordinates of the domain.
+    x : ndarray, optional
+        X coordinates of the domain. shape is (nelv, lz, ly, lx).
+    y : ndarray, optional
+        Y coordinates of the domain. shape is (nelv, lz, ly, lx).
+    z : ndarray, optional
+        Z coordinates of the domain. shape is (nelv, lz, ly, lx).
+    create_connectivity : bool, optional
+        If True, the connectivity of the domain will be created. (Memory intensive).
+
+    Attributes
+    ----------
+    x : ndarray
+        X coordinates of the domain. shape is (nelv, lz, ly, lx).
+    y : ndarray
+        Y coordinates of the domain. shape is (nelv, lz, ly, lx).
+    z : ndarray
+        Z coordinates of the domain. shape is (nelv, lz, ly, lx).
+    lx : int
+        Polynomial degree in x direction.
+    ly : int
+        Polynomial degree in y direction.
+    lz : int
+        Polynomial degree in z direction.
+    nelv : int
+        Number of elements in the domain in current rank.
+    glb_nelv : int
+        Total number of elements in the domain.
+    gdim : int
+        Dimension of the domain.
+    non_linear_shared_points : list, optional
+        List that show the index where the points in the domain are shared, used by coef in dssum.
+
+    Returns
+    -------
+
+    Examples
+    --------
+    If a hexadata object: data is read from disk, the mesh object can be created directly from it.
+
+    >>> from pynektools import Mesh
+    >>> msh = Mesh(comm, data = data)
+
+    If the coordinates are already available, the mesh object can be created from them.
+
+    >>> from pynektools import Mesh
+    >>> msh = Mesh(comm, x = x, y = y, z = z)
+
+    This is useful in situations where the coordinates are generated in the code or streamed into python from another source.
+    """
+
+    def __init__(
+        self, comm, data=None, x=None, y=None, z=None, create_connectivity=True
+    ):
 
         if not isinstance(data, NoneType):
             self.x, self.y, self.z = get_coordinates_from_hexadata(data)
@@ -98,7 +160,9 @@ class Mesh:
             self.nonlinear_shared_points = []
             for i in range(0, len(self.linear_shared_points)):
                 self.nonlinear_shared_points.append(
-                    nonlinear_index(self.linear_shared_points[i], self.lx, self.ly, self.lz)
+                    nonlinear_index(
+                        self.linear_shared_points[i], self.lx, self.ly, self.lz
+                    )
                 )
 
             # Find which are the points that are on the boundary
@@ -123,7 +187,9 @@ class Mesh:
                             ):
                                 # If any of these conditions is true, the point is in a facet
                                 # and it is not shared, then it should be in a boundrary
-                                self.boundary_points_in_rank.append(point_non_linear_index)
+                                self.boundary_points_in_rank.append(
+                                    point_non_linear_index
+                                )
                         else:
                             if (
                                 ii == 0
@@ -135,16 +201,63 @@ class Mesh:
                             ):
                                 # If any of these conditions is true, the point is in a facet
                                 # and it is not shared, then it should be in a boundrary
-                                self.boundary_points_in_rank.append(point_non_linear_index)
+                                self.boundary_points_in_rank.append(
+                                    point_non_linear_index
+                                )
 
 
 def linear_index(i, j, k, l, lx, ly, lz):
-    """Map 4d index to 1d"""
+    """
+    Map 4d index to 1d.
+
+    This is used to represent the domain as a list that can be used in search trees.
+
+    Parameters
+    ----------
+    i : int
+        Index in x direction.
+    j : int
+        Index in y direction.
+    k : int
+        Index in z direction.
+    l : int
+        Index of the element.
+    lx : int
+        Polynomial degree in x direction.
+    ly : int
+        Polynomial degree in y direction.
+    lz : int
+        Polynomial degree in z direction.
+
+    Returns
+    -------
+    int
+        1d index of the 4d index.
+    """
     return i + lx * ((j - 0) + ly * ((k - 0) + lz * ((l - 0))))
 
 
 def nonlinear_index(linear_index_, lx, ly, lz):
-    """Map 1d index to 4d"""
+    """
+    Map 1d index to 4d
+
+    This is an inverse of linear index.
+
+    Parameters
+    ----------
+    linear_index_ : list
+        List of 1d linear indices.
+    lx : int
+        Polynomial degree in x direction.
+    ly : int
+        Polynomial degree in y direction.
+    lz : int
+        Polynomial degree in z direction.
+    Returns
+    -------
+    list
+        List of 4d non linear indices correspoinf to the linear indices.
+    """
     indices = []
     for list_ in linear_index_:
         index = np.zeros(4, dtype=int)
@@ -162,8 +275,25 @@ def nonlinear_index(linear_index_, lx, ly, lz):
 
 
 def get_coordinates_from_hexadata(data):
-    """Get the coordinates from a hexadata object
-    in mesh format"""
+    """
+    Get the coordinates from a hexadata object in mesh format.
+
+    Used to go from a hexadata object to a ndarray that can be used for operations.
+
+    Parameters
+    ----------
+    data : HexaData
+        HexaData object that contains the coordinates of the domain.
+
+    Returns
+    -------
+    x : ndarray
+        X coordinates of the domain. shape is (nelv, lz, ly, lx).
+    y : ndarray
+        Y coordinates of the domain. shape is (nelv, lz, ly, lx).
+    z : ndarray
+        Z coordinates of the domain. shape is (nelv, lz, ly, lx).
+    """
 
     nelv = data.nel
     lx = data.lr1[0]
