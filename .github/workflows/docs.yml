@@ -50,6 +50,7 @@ jobs:
           pip install jupyter
           pip install pandoc
           pip install nbsphinx
+          pip install adios2
           pip install .
 
       - name: Build docs
