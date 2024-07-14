@@ -58,12 +58,12 @@ class Mesh:
     --------
     If a hexadata object: data is read from disk, the mesh object can be created directly from it.
 
-    >>> from pynektools import Mesh
+    >>> from pynektools.datatypes.msh import Mesh
     >>> msh = Mesh(comm, data = data)
 
     If the coordinates are already available, the mesh object can be created from them.
 
-    >>> from pynektools import Mesh
+    >>> from pynektools.datatypes.msh import Mesh
     >>> msh = Mesh(comm, x = x, y = y, z = z)
 
     This is useful in situations where the coordinates are generated in the code or streamed into python from another source.
