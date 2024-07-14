@@ -1,12 +1,13 @@
-name: UnitTesting
+name: CI
 
 # Controls when the action will run.
 on:
-  workflow_call:
+  workflow_dispatch:
 
 jobs:
-  unit_testing:
-    name: "Unit testing"
+
+  Build docs:
+    name: Documentation
     runs-on: ubuntu-latest
 
     steps:
@@ -42,19 +43,22 @@ jobs:
           pip3 install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu
           pip install pytest
           pip install pytest-json-report
+          pip install -U sphinx
+          pip install numpydoc
           pip install .
-          
-      - name: Run unit tests
-        run: |
-          pytest --json-report -v tests/ | tee unit_tests.txt
-      
-      - name: Check results
-        run: |
-          python3 tests/interpret_results.py
 
-      - name: Archive test report
-        uses: actions/upload-artifact@v4
+      - name: Build docs
+        run: |
+          sphinx-build doc/ docs/
+      
+      - name: GH Pages Deployment
+        uses: peaceiris/actions-gh-pages@v4
         with:
-          name: test-report
-          path: unit_tests.txt
-          retention-days: 5
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ./docs/
+          allow_empty_commit: false
+          keep_files: false
+          force_orphan: false
+          publish_branch: gh-pages
+          destination_dir: docs/main
+          enable_jekyll: true
