@@ -1261,7 +1261,7 @@ def get_communication_pairs(self, global_rank_candidate_dict, comm):
     return my_pairs, my_source_dest
 
 
-def get_candidate_ranks(self, comm):
+def get_candidate_ranks_(self, comm):
     """Get candiate ranks for each rank separately"""
 
     # ==================
@@ -1328,7 +1328,7 @@ def get_candidate_ranks(self, comm):
 
     return candidate_ranks
 
-def get_candidate_ranks_(self, comm):
+def get_candidate_ranks(self, comm):
     """
     Get candiate ranks for each rank separately.
 
@@ -1352,6 +1352,8 @@ def get_candidate_ranks_(self, comm):
         coarse_size = 8192
     else:
         coarse_size = size
+    
+    if comm.Get_rank() == 0: print(f'Using global coarse mesh of size {coarse_size}')
 
     # Find the values that delimit a cubic boundin box 
     # for the whole domain
@@ -1419,7 +1421,7 @@ def get_candidate_ranks_(self, comm):
     # coarse mesh cell
     mesh_to_coarse = self.global_tree.query_ball_point(
         x=np.array([self.x.flatten(), self.y.flatten(), self.z.flatten()]).T,
-        r=np.max(search_radious),
+        r=np.max(search_radious) * (1 + 1e-6),
         p=2.0,
         eps=1e-8,
         workers=1,
