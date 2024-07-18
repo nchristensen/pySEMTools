@@ -1453,7 +1453,7 @@ def get_candidate_ranks(self, comm):
     # this rank resides
     probe_to_coarse_map = self.global_tree.query_ball_point(
         x=self.probe_partition,
-        r=search_radious,
+        r=search_radious * (1 + 1e-6),
         p=2.0,
         eps=1e-8,
         workers=1,
