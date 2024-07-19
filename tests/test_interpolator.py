@@ -109,6 +109,9 @@ def test_single_point_interpolator():
     # Instance the interpolator
     itp = Interpolator(msh.x, msh.y, msh.z, probes, comm, progress_bar = False, point_interpolator_type='single_point_legendre')
 
+    # Set up the global tree
+    itp.set_up_global_tree(comm, find_points_comm_pattern="point_to_point", global_tree_type="rank_bbox")
+
     # Scatter the probes to all ranks
     itp.scatter_probes_from_io_rank(0, comm)
 
@@ -230,6 +233,9 @@ def test_multiple_point_interpolator_numpy():
         interpolator_type = 'multiple_point_legendre_torch' 
 
     t_itp = Interpolator(msh.x, msh.y, msh.z, probes, comm, progress_bar = False, point_interpolator_type=interpolator_type,  max_pts = max_pts, max_elems = 1)  
+
+    # Set up the global tree
+    t_itp.set_up_global_tree(comm, find_points_comm_pattern="point_to_point", global_tree_type="rank_bbox")
 
     # Scatter the probes to all ranks
     t_itp.scatter_probes_from_io_rank(0, comm)
@@ -355,6 +361,9 @@ def test_multiple_point_interpolator_torch():
         interpolator_type = 'multiple_point_legendre_torch' 
 
     t_itp = Interpolator(msh.x, msh.y, msh.z, probes, comm, progress_bar = False, point_interpolator_type=interpolator_type,  max_pts = max_pts, max_elems = 1)  
+
+    # Set up the global tree
+    t_itp.set_up_global_tree(comm, find_points_comm_pattern="point_to_point", global_tree_type="rank_bbox")
 
     # Scatter the probes to all ranks
     t_itp.scatter_probes_from_io_rank(0, comm)

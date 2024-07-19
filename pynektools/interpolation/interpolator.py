@@ -1409,18 +1409,18 @@ def domain_binning_map_bin_to_rank(mesh_to_bin, nx, ny, nz, comm):
     # Create a bin to mesh map by checking if any point
     # in the SEM mesh resides in bin mesh cell
     mesh_to_bin = [item for sublist in mesh_to_bin for item in sublist]
+    mesh_to_bin = np.unique(mesh_to_bin)
     mesh_to_bin_map = np.zeros((1, nx*ny*nz), dtype=np.intc)
-    mesh_to_bin_map[0, mesh_to_bin] = 1
+    mesh_to_bin_map[0, mesh_to_bin] = np.intc(1)
     # mesh_to_bin_map indicates that this rank has points in the cells of
     # the bin mesh that have been marked with a 1.
-    
     # Now gather the mesh to bin map of all ranks
-    global_mesh_to_bin_map = np.zeros((size, nx*ny*nz), dtype=np.intc)
-    comm.Allgather(mesh_to_bin_map, global_mesh_to_bin_map)
+    global_mesh_to_bin_map = np.zeros((size*nx*ny*nz), dtype=np.intc)
+    comm.Allgather([mesh_to_bin_map.flatten(), MPI.INT], [global_mesh_to_bin_map, MPI.INT])
+    global_mesh_to_bin_map = global_mesh_to_bin_map.reshape((size, nx*ny*nz))
 
     # Create a dictionary that has the bin to the associated rank list
-    bin_to_rank_map = {'bin_subdivision': 'associated rank list'}
-    
+    bin_to_rank_map = {'bin_subdivision': 'associated rank list'} 
     for i in range(nx*ny*nz):
         incidences = global_mesh_to_bin_map[:, i]
         bin_to_rank_map[i] = np.where(incidences == 1)[0]
