@@ -50,6 +50,43 @@ class Router:
         # Specifies a buffer to see how many points I recieve from each rank
         self.source_count = np.zeros((comm.Get_size()), dtype=np.ulong)
 
+    def route_data(self, keyword, **kwargs):
+        """
+        Moves data between ranks in the specified patthern.
+
+        This method wraps others in this class.
+
+        Parameters
+        ----------
+        keyword : str
+            The keyword that specifies the pattern of the data movement.
+            current options are:
+                - distribute: sends data to specified destinations. 
+                  and recieves data from whoever sent.
+                - gather: gathers data from all processes to the root process.
+                - scatter: scatters data from the root process to all other processes.
+        kwargs : dict
+            The arguments that are passed to the specified pattern.
+            One needs to check the pattern documentation for the required arguments.
+            For each scenario
+
+        Returns
+        -------
+        tuple
+            The output of the specified pattern.
+        """
+
+        router_factory = {
+            "distribute": self.send_recv,
+            "gather": self.gather_in_root,
+            "scatter": self.scatter_from_root,
+        }
+
+        if keyword not in router_factory:
+            raise ValueError(f"Method '{method_keyword}' not recognized.")
+
+        return router_factory[keyword](**kwargs)
+
     def send_recv(self, destination=None, data=None, dtype=None, tag=None):
         """
         Sends data to specified destinations and recieves data from whoever sent.
