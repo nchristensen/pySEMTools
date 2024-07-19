@@ -1,6 +1,7 @@
 "This module contains the class router"
 
 import numpy as np
+NoneType = type(None)
 
 class Router():
     def __init__(self, comm):
@@ -64,3 +65,42 @@ class Router():
             req.wait()
 
         return sources, recvbuff
+    
+    def gather_in_root(self, data = None, root = 0, dtype = None):
+        """Gathers data from all processes to the root process."""
+
+        rank = self.comm.Get_rank()
+
+        # Collect local array sizes using the high-level mpi4py gather
+        sendcounts = np.array(self.comm.allgather(data.size), dtype=np.ulong)
+
+        if rank == root:
+            # print("sendcounts: {}, total: {}".format(sendcounts, sum(sendcounts)))
+            recvbuf = np.empty(sum(sendcounts), dtype=dtype)
+        else:
+            recvbuf = None
+
+        self.comm.Gatherv(sendbuf=data, recvbuf=(recvbuf, sendcounts), root=root)
+
+        return recvbuf, sendcounts
+
+    def scatter_from_root(self, data = None, sendcounts = None, root = 0, dtype = None):
+        """Scatters data from the root process to all other processes."""
+
+        if self.comm.Get_rank() == root:
+            if isinstance(sendcounts, NoneType):
+                # Divide the data equally among all processes
+                sendcounts = np.zeros((self.comm.Get_size()), dtype=np.ulong)
+                sendcounts[:] = data.size // self.comm.Get_size()
+            
+            sendbuf = data.flatten()
+        else:
+            sendbuf = None
+
+        rank = self.comm.Get_rank()
+        
+        recvbuf = np.ones(sendcounts[rank], dtype=dtype) * -100
+
+        self.comm.Scatterv(sendbuf=(sendbuf, sendcounts), recvbuf=recvbuf, root=root)
+
+        return recvbuf

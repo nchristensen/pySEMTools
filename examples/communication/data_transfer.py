@@ -46,6 +46,38 @@ for j in range(len(sources)):
     for j in range(len(destination)):
         if sources[i] == destination[j]:
             x = (np.allclose(recvbf[i], testbuff[j]))
-            print(x)
             if x == False:
                 print(f"Process failed in rank: {rank}")
+
+# ==========================================================================
+# Example on gathering data from all ranks
+# ==========================================================================
+
+local_data = np.ones(((rank+1)*10, 3), dtype=np.double)*rank
+
+recvbf, sendcounts = rt.gather_in_root(data = local_data, root = 0, dtype = np.double)
+
+if rank == 0:
+    recvbf = recvbf.reshape((-1, 3))
+
+    testbuff = np.zeros(int(np.sum(sendcounts)), dtype=np.double) 
+    counts = 0
+    for i in range(size):
+        testbuff[counts:counts + sendcounts[i]] = i
+        counts += sendcounts[i]
+    
+    testbuff = testbuff.reshape((-1, 3))
+
+    if not np.allclose(recvbf, testbuff):
+        print(f"Process failed in rank: {rank}")
+
+
+# ==========================================================================
+# Example on scattering data to all ranks
+# ==========================================================================
+
+recvbf = rt.scatter_from_root(data = recvbf, sendcounts=sendcounts, root = 0, dtype = np.double)
+recvbf = recvbf.reshape((-1, 3))
+    
+if not np.allclose(recvbf, local_data):
+    print(f"Process failed in rank: {rank}")
