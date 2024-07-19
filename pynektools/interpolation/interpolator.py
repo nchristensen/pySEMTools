@@ -99,6 +99,147 @@ class Interpolator:
         self.nelv = None
         self.sendcounts = None
         self.sort_by_rank = None
+    
+    def set_up_global_tree(
+        self,
+        comm,
+        find_points_comm_pattern="point_to_point",
+        global_tree_type = "rank_bbox",
+        global_tree_nbins = None,
+    ):
+        
+        if find_points_comm_pattern == "collective":
+            print(f"Communication pattern selected does not need global tree") 
+        
+        elif find_points_comm_pattern == "point_to_point":
+            self.global_tree_type = global_tree_type
+            if comm.Get_rank() == 0:
+                print(f"Using global_tree of type: {global_tree_type}")
+            if global_tree_type == "rank_bbox":
+                self.set_up_global_tree_rank_bbox_(comm, global_tree_nbins=global_tree_nbins)
+            elif global_tree_type == "domain_binning":
+                self.set_up_global_tree_domain_binning_(comm, global_tree_nbins=global_tree_nbins)
+
+    def set_up_global_tree_rank_bbox_(self, comm, global_tree_nbins=None):
+
+        size = comm.Get_size()
+
+        # Find the bounding box of the rank to create a global but "sparse" kdtree
+        rank_bbox = np.zeros((1, 6), dtype=np.double)
+        rank_bbox[0, 0] = np.min(self.x)
+        rank_bbox[0, 1] = np.max(self.x)
+        rank_bbox[0, 2] = np.min(self.y)
+        rank_bbox[0, 3] = np.max(self.y)
+        rank_bbox[0, 4] = np.min(self.z)
+        rank_bbox[0, 5] = np.max(self.z)
+
+        rank_bbox_dist = np.zeros((1, 3), dtype=np.double)
+        rank_bbox_dist[0, 0] = rank_bbox[0, 1] - rank_bbox[0, 0]
+        rank_bbox_dist[0, 1] = rank_bbox[0, 3] - rank_bbox[0, 2]
+        rank_bbox_dist[0, 2] = rank_bbox[0, 5] - rank_bbox[0, 4]
+        rank_bbox_max_dist = np.max(
+            np.sqrt(
+                rank_bbox_dist[:, 0] ** 2
+                + rank_bbox_dist[:, 1] ** 2
+                + rank_bbox_dist[:, 2] ** 2
+            )
+            / 2
+        )
+
+        rank_bbox_centroid = np.zeros((1, 3))
+        rank_bbox_centroid[:, 0] = rank_bbox[:, 0] + rank_bbox_dist[:, 0] / 2
+        rank_bbox_centroid[:, 1] = rank_bbox[:, 2] + rank_bbox_dist[:, 1] / 2
+        rank_bbox_centroid[:, 2] = rank_bbox[:, 4] + rank_bbox_dist[:, 2] / 2
+
+        global_centroids = np.zeros((size * 3), dtype=np.double)
+        global_max_dist = np.zeros((size), dtype=np.double)
+
+        # Gather in all ranks
+        comm.Allgather(
+            [rank_bbox_centroid.flatten(), MPI.DOUBLE], [global_centroids, MPI.DOUBLE]
+        )
+        comm.Allgather([rank_bbox_max_dist, MPI.DOUBLE], [global_max_dist, MPI.DOUBLE])
+        global_centroids = global_centroids.reshape((size, 3))
+        # Create a tree with the rank centroids
+        self.global_tree = KDTree(global_centroids)
+        self.search_radious = np.max(global_max_dist)
+
+    def set_up_global_tree_domain_binning_(self, comm, global_tree_nbins=None):
+
+        if isinstance(global_tree_nbins, NoneType):
+            global_tree_nbins = comm.Get_size()
+            if comm.Get_rank() == 0: print(f'nbins not provided, using {global_tree_nbins} as default')
+
+        bin_size = global_tree_nbins
+        
+        if comm.Get_rank() == 0: print(f'Using global bin mesh of size {bin_size}')
+
+        # Find the values that delimit a cubic boundin box 
+        # for the whole domain
+        rank_bbox = np.zeros((1, 6), dtype=np.double)
+        rank_bbox[0, 0] = np.min(self.x)
+        rank_bbox[0, 1] = np.max(self.x)
+        rank_bbox[0, 2] = np.min(self.y)
+        rank_bbox[0, 3] = np.max(self.y)
+        rank_bbox[0, 4] = np.min(self.z)
+        rank_bbox[0, 5] = np.max(self.z)
+        domain_min_x = comm.allreduce(rank_bbox[0, 0], op=MPI.MIN)
+        domain_min_y = comm.allreduce(rank_bbox[0, 2], op=MPI.MIN)
+        domain_min_z = comm.allreduce(rank_bbox[0, 4], op=MPI.MIN)
+        domain_max_x = comm.allreduce(rank_bbox[0, 1], op=MPI.MAX)
+        domain_max_y = comm.allreduce(rank_bbox[0, 3], op=MPI.MAX)
+        domain_max_z = comm.allreduce(rank_bbox[0, 5], op=MPI.MAX) 
+
+        ## Find the ratio between ditances for domains that are 
+        ## not well distributed
+        per_ =  domain_max_x - domain_min_x + domain_max_y - domain_min_y + domain_max_z - domain_min_z
+        ratiox = (domain_max_x - domain_min_x) / per_
+        ratioy = (domain_max_y - domain_min_y) / per_
+        ratioz = (domain_max_z - domain_min_z) / per_
+
+        ## Select the number of points trying to respect the
+        ## ratio constraints
+        nz = int(np.round(np.cbrt(bin_size * ratioz)))
+        remaining = bin_size / nz  # This is the product of nx and ny we aim for
+        sum_ratios = ratiox + ratioy
+        nx = int(np.round(np.sqrt((ratiox / sum_ratios) * remaining)))
+        ny = int(np.round(np.sqrt((ratioy / sum_ratios) * remaining)))
+        nz = int(bin_size / (nx * ny))
+
+        # create bin linear mesh
+        bin_x = np.linspace(domain_min_x, domain_max_x, nx + 1)
+        bin_y = np.linspace(domain_min_y, domain_max_y, ny + 1)
+        bin_z = np.linspace(domain_min_z, domain_max_z, nz + 1)
+        # bin mesh spacing
+        dx = (domain_max_x - domain_min_x) / nx
+        dy = (domain_max_y - domain_min_y) / ny
+        dz = (domain_max_z - domain_min_z) / nz
+        search_radious = np.sqrt(dx**2 + dy**2 + dz**2)/2
+        # Replace the bin mesh vertices with the centroids
+        bin_x = bin_x[:-1] + dx / 2
+        bin_y = bin_y[:-1] + dy / 2
+        bin_z = bin_z[:-1] + dz / 2    
+        # create 3d bin 'mesh'. Using the centroids
+        xx, yy, zz = np.meshgrid(bin_x, bin_y, bin_z, indexing="ij")
+        bin_mesh_centroids = np.array([xx.flatten(), yy.flatten(), zz.flatten()]).T
+
+        # Create the global tree to make searches in the bin mesh
+        self.global_tree = KDTree(bin_mesh_centroids)
+
+        # For this rank, determine which points are in which
+        # bin mesh cell
+        mesh_to_bin = self.global_tree.query_ball_point(
+            x=np.array([self.x.flatten(), self.y.flatten(), self.z.flatten()]).T,
+            r=(search_radious) * (1 + 1e-6),
+            p=2.0,
+            eps=1e-8,
+            workers=1,
+            return_sorted=False,
+            return_length=False,
+        )
+
+        self.bin_to_rank_map = domain_binning_map_bin_to_rank(mesh_to_bin, nx, ny, nz, comm)
+        self.search_radious = search_radious * (1 + 1e-6)
 
     def scatter_probes_from_io_rank(self, io_rank, comm):
         """Scatter the probes from the rank that is used to read them - rank0 by default"""
@@ -1260,221 +1401,83 @@ def get_communication_pairs(self, global_rank_candidate_dict, comm):
 
     return my_pairs, my_source_dest
 
+def domain_binning_map_bin_to_rank(mesh_to_bin, nx, ny, nz, comm):
 
-def get_candidate_ranks_(self, comm):
-    """Get candiate ranks for each rank separately"""
-
-    # ==================
-    # Set up global tree
-    # ==================
-
+    rank = comm.Get_rank()
     size = comm.Get_size()
 
-    # Find the bounding box of the rank to create a global but "sparse" kdtree
-    rank_bbox = np.zeros((1, 6), dtype=np.double)
-    rank_bbox[0, 0] = np.min(self.x)
-    rank_bbox[0, 1] = np.max(self.x)
-    rank_bbox[0, 2] = np.min(self.y)
-    rank_bbox[0, 3] = np.max(self.y)
-    rank_bbox[0, 4] = np.min(self.z)
-    rank_bbox[0, 5] = np.max(self.z)
-
-    rank_bbox_dist = np.zeros((1, 3), dtype=np.double)
-    rank_bbox_dist[0, 0] = rank_bbox[0, 1] - rank_bbox[0, 0]
-    rank_bbox_dist[0, 1] = rank_bbox[0, 3] - rank_bbox[0, 2]
-    rank_bbox_dist[0, 2] = rank_bbox[0, 5] - rank_bbox[0, 4]
-    rank_bbox_max_dist = np.max(
-        np.sqrt(
-            rank_bbox_dist[:, 0] ** 2
-            + rank_bbox_dist[:, 1] ** 2
-            + rank_bbox_dist[:, 2] ** 2
-        )
-        / 2
-    )
-
-    rank_bbox_centroid = np.zeros((1, 3))
-    rank_bbox_centroid[:, 0] = rank_bbox[:, 0] + rank_bbox_dist[:, 0] / 2
-    rank_bbox_centroid[:, 1] = rank_bbox[:, 2] + rank_bbox_dist[:, 1] / 2
-    rank_bbox_centroid[:, 2] = rank_bbox[:, 4] + rank_bbox_dist[:, 2] / 2
-
-    global_centroids = np.zeros((size * 3), dtype=np.double)
-    global_max_dist = np.zeros((size), dtype=np.double)
-
-    # Gather in all ranks
-    comm.Allgather(
-        [rank_bbox_centroid.flatten(), MPI.DOUBLE], [global_centroids, MPI.DOUBLE]
-    )
-    comm.Allgather([rank_bbox_max_dist, MPI.DOUBLE], [global_max_dist, MPI.DOUBLE])
-    global_centroids = global_centroids.reshape((size, 3))
-    # Create a tree with the rank centroids
-    self.global_tree = KDTree(global_centroids)
+    # Create a bin to mesh map by checking if any point
+    # in the SEM mesh resides in bin mesh cell
+    mesh_to_bin = [item for sublist in mesh_to_bin for item in sublist]
+    mesh_to_bin_map = np.zeros((1, nx*ny*nz), dtype=np.intc)
+    mesh_to_bin_map[0, mesh_to_bin] = 1
+    # mesh_to_bin_map indicates that this rank has points in the cells of
+    # the bin mesh that have been marked with a 1.
     
-    # =====================
-    # Candidate rank search
-    # =====================
+    # Now gather the mesh to bin map of all ranks
+    global_mesh_to_bin_map = np.zeros((size, nx*ny*nz), dtype=np.intc)
+    comm.Allgather(mesh_to_bin_map, global_mesh_to_bin_map)
+
+    # Create a dictionary that has the bin to the associated rank list
+    bin_to_rank_map = {'bin_subdivision': 'associated rank list'}
     
-    candidate_ranks_per_point = self.global_tree.query_ball_point(
-        x=self.probe_partition,
-        r=np.max(global_max_dist),
-        p=2.0,
-        eps=1e-8,
-        workers=1,
-        return_sorted=False,
-        return_length=False,
-    )
+    for i in range(nx*ny*nz):
+        incidences = global_mesh_to_bin_map[:, i]
+        bin_to_rank_map[i] = np.where(incidences == 1)[0]
 
-    flattened_list = [item for sublist in candidate_ranks_per_point for item in sublist]
-    candidate_ranks = list(set(flattened_list))
-
-    return candidate_ranks
+    return bin_to_rank_map
 
 def get_candidate_ranks(self, comm):
-    """
-    Get candiate ranks for each rank separately.
 
-    In this instance, build a global tree with a well defined
-    mesh structure, not with max and min from rank bounding box.
-    """
+    if self.global_tree_type == "rank_bbox":
 
-    # =================================
-    # Global coarse mesh to rank set up
-    # =================================
+        candidate_ranks_per_point = self.global_tree.query_ball_point(
+            x=self.probe_partition,
+            r=self.search_radious,
+            p=2.0,
+            eps=1e-8,
+            workers=1,
+            return_sorted=False,
+            return_length=False,
+        )
 
-    # Select the amount of subdomains in the coarse mesh
-    size = comm.Get_size()    
-    if size <= 1024:
-        coarse_size = 1024
-    elif size <= 2048:
-        coarse_size = 2048
-    elif size <= 4096:
-        coarse_size = 4096
-    elif size <= 8192:
-        coarse_size = 8192
-    else:
-        coarse_size = size
-    
-    if comm.Get_rank() == 0: print(f'Using global coarse mesh of size {coarse_size}')
+        flattened_list = [item for sublist in candidate_ranks_per_point for item in sublist]
+        candidate_ranks = list(set(flattened_list))
 
-    # Find the values that delimit a cubic boundin box 
-    # for the whole domain
-    rank_bbox = np.zeros((1, 6), dtype=np.double)
-    rank_bbox[0, 0] = np.min(self.x)
-    rank_bbox[0, 1] = np.max(self.x)
-    rank_bbox[0, 2] = np.min(self.y)
-    rank_bbox[0, 3] = np.max(self.y)
-    rank_bbox[0, 4] = np.min(self.z)
-    rank_bbox[0, 5] = np.max(self.z)
-    domain_min_x = comm.allreduce(rank_bbox[0, 0], op=MPI.MIN)
-    domain_min_y = comm.allreduce(rank_bbox[0, 2], op=MPI.MIN)
-    domain_min_z = comm.allreduce(rank_bbox[0, 4], op=MPI.MIN)
-    domain_max_x = comm.allreduce(rank_bbox[0, 1], op=MPI.MAX)
-    domain_max_y = comm.allreduce(rank_bbox[0, 3], op=MPI.MAX)
-    domain_max_z = comm.allreduce(rank_bbox[0, 5], op=MPI.MAX) 
+    elif self.global_tree_type == "domain_binning":
+        
+        # Search in which global coarse mesh cell each probe in 
+        # this rank resides
+        probe_to_bin_map = self.global_tree.query_ball_point(
+            x=self.probe_partition,
+            r=self.search_radious,
+            p=2.0,
+            eps=1e-8,
+            workers=1,
+            return_sorted=False,
+            return_length=False,
+        )
 
-    # Choose the resolution in reach direction for the coarse mesh
-    if 1 == 0:
-        # Device the points equally in all directions
-        percent_increase = 1
-        nx = int(np.cbrt(coarse_size)*percent_increase)
-        ny = int(np.cbrt(coarse_size)*percent_increase)
-        nz = int(np.cbrt(coarse_size)*percent_increase)
-    else:        
-        # Favor coarse mesh resolution in some direction
+        # Now map from bins to ranks
+        candidate_ranks_per_point = domain_binning_map_probe_to_rank(self, probe_to_bin_map)
 
-        ## Find the ratio between ditances for domains that are 
-        ## not well distributed
-        per_ =  domain_max_x - domain_min_x + domain_max_y - domain_min_y + domain_max_z - domain_min_z
-        ratiox = (domain_max_x - domain_min_x) / per_
-        ratioy = (domain_max_y - domain_min_y) / per_
-        ratioz = (domain_max_z - domain_min_z) / per_
-
-        ## Select the number of points trying to respect the
-        ## ratio constraints
-        nz = int(np.round(np.cbrt(coarse_size * ratioz)))
-        remaining = coarse_size / nz  # This is the product of nx and ny we aim for
-        sum_ratios = ratiox + ratioy
-        nx = int(np.round(np.sqrt((ratiox / sum_ratios) * remaining)))
-        ny = int(np.round(np.sqrt((ratioy / sum_ratios) * remaining)))
-        nz = int(coarse_size / (nx * ny))
-
-    # create coarse linear mesh
-    coarse_x = np.linspace(domain_min_x, domain_max_x, nx + 1)
-    coarse_y = np.linspace(domain_min_y, domain_max_y, ny + 1)
-    coarse_z = np.linspace(domain_min_z, domain_max_z, nz + 1)
-    # coarse mesh spacing
-    dx = (domain_max_x - domain_min_x) / nx
-    dy = (domain_max_y - domain_min_y) / ny
-    dz = (domain_max_z - domain_min_z) / nz
-    search_radious = np.sqrt(dx**2 + dy**2 + dz**2)/2
-    # Replace the coarse mesh vertices with the centroids
-    coarse_x = coarse_x[:-1] + dx / 2
-    coarse_y = coarse_y[:-1] + dy / 2
-    coarse_z = coarse_z[:-1] + dz / 2    
-    # create 3d coarse 'mesh'. Using the centroids
-    xx, yy, zz = np.meshgrid(coarse_x, coarse_y, coarse_z, indexing="ij")
-    coarse_mesh_centroids = np.array([xx.flatten(), yy.flatten(), zz.flatten()]).T
-
-    # Create the global tree to make searches in the coarse mesh
-    self.global_tree = KDTree(coarse_mesh_centroids)
-
-    # For this rank, determine which points are in which
-    # coarse mesh cell
-    mesh_to_coarse = self.global_tree.query_ball_point(
-        x=np.array([self.x.flatten(), self.y.flatten(), self.z.flatten()]).T,
-        r=np.max(search_radious) * (1 + 1e-6),
-        p=2.0,
-        eps=1e-8,
-        workers=1,
-        return_sorted=False,
-        return_length=False,
-    )
-
-    # Create a coarse to mesh map by checking if any point
-    # in the SEM mesh resides in coarse mesh cell
-    mesh_to_coarse = [item for sublist in mesh_to_coarse for item in sublist]
-    mesh_to_coarse_map = np.zeros((1, nx*ny*nz), dtype=np.intc)
-    mesh_to_coarse_map[0, mesh_to_coarse] = 1
-    # mesh_to_coarse_map indicates that this rank has points in the cells of
-    # the coarse mesh that have been marked with a 1.
-
-    # Now create a map that tells which ranks have points in each of the 
-    # coarse mesh cells.
-    coarse_to_rank_map = {}
-    coarse_to_rank_map['coarse_subdivision'] = 'asociated rank list'
-    for i in range(0, nx*ny*nz):
-        incidences = np.array(comm.allgather(mesh_to_coarse_map[0,i]))
-        coarse_to_rank_map[i] = np.where(incidences == 1)[0]
-    
-    # =====================
-    # Candidate rank search
-    # =====================
-
-    # Search in which global coarse mesh cell each probe in 
-    # this rank resides
-    probe_to_coarse_map = self.global_tree.query_ball_point(
-        x=self.probe_partition,
-        r=search_radious * (1 + 1e-6),
-        p=2.0,
-        eps=1e-8,
-        workers=1,
-        return_sorted=False,
-        return_length=False,
-    )
-
-    # Now for each probe use the coarse cell to rank map
-    # to find the candidate ranks for each probe
-    probe_to_rank_map = [[coarse_to_rank_map[coarse] for coarse in probe_to_coarse_map[i]] for i in range(len(probe_to_coarse_map))]
-    # In the previous map every point gets a set of lists, now make it
-    # just one list with the unique ranks.
-    candidate_ranks_per_point = [np.unique([item for sublist in probe_to_rank_map[i] for item in sublist]) for i in range(len(probe_to_rank_map))]
-
-    # Now, from the candidates per point, get the candidates 
-    # that this rank has.
-    flattened_list = [item for sublist in candidate_ranks_per_point for item in sublist]
-    candidate_ranks = np.unique(flattened_list)
+        # Now, from the candidates per point, get the candidates 
+        # that this rank has.
+        flattened_list = [item for sublist in candidate_ranks_per_point for item in sublist]
+        candidate_ranks = np.unique(flattened_list)
  
     return candidate_ranks
 
+def domain_binning_map_probe_to_rank(self, probe_to_bin_map):
+
+    # Now for each probe use the bin to rank map
+    # to find the candidate ranks for each probe
+    probe_to_rank = [[self.bin_to_rank_map[bin] for bin in probe_to_bin_map[i]] for i in range(len(probe_to_bin_map))]
+    # In the previous map every point gets a set of lists, now make it
+    # just one list with the unique ranks.
+    probe_to_rank_map = [np.unique([item for sublist in probe_to_rank[i] for item in sublist]) for i in range(len(probe_to_rank))]
+
+    return probe_to_rank_map
 
 def get_global_candidate_ranks(self, comm, candidate_ranks):
     """Get an array with the candidate ranks of all ranks"""
@@ -1498,15 +1501,5 @@ def get_global_candidate_ranks(self, comm, candidate_ranks):
     comm.Allgather(
         [rank_candidates_in_this_rank, MPI.INT], [rank_candidates_in_all_ranks, MPI.INT]
     )  # This all gather can be changed for gather and broadcast
-
-    ## Filter out the -1 entries for ranks
-    # that had less candidates than the maximun determined before
-    # global_rank_candidate_dict = {i: [] for i in range(size)}
-    # for i in range(0, size):
-    #    for j in range(0, nc):
-    #        if rank_candidates_in_all_ranks[i,j] != -1:
-    #            global_rank_candidate_dict[i].append(rank_candidates_in_all_ranks[i,j])
-    ## Delete the big array
-    # del rank_candidates_in_all_ranks
 
     return rank_candidates_in_all_ranks

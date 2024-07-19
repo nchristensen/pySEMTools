@@ -55,6 +55,13 @@ class Probes:
         options are: point_to_point, collective.
     elem_percent_expansion : float
         Percentage expansion of the element bounding box. Default is 0.01.
+    global_tree_type : str
+        How is the global tree constructed to determine rank candidates for the probes.
+        Only really used if using tree structures to determine candidates. Default is rank_bbox.
+        options are: rank_bbox, domain_binning.
+    global_tree_nbins : int
+        Number of bins in the global tree. Only used if the global tree is domain_binning.
+        Default is 1024.
         
     Attributes
     ----------
@@ -124,6 +131,8 @@ class Probes:
         max_pts=128,
         find_points_comm_pattern="point_to_point",
         elem_percent_expansion=0.01,
+        global_tree_type="rank_bbox",
+        global_tree_nbins=1024,
     ):
 
         rank = comm.Get_rank()
@@ -190,6 +199,9 @@ class Probes:
             point_interpolator_type=point_interpolator_type,
             max_pts=max_pts,
         )
+
+        # Set up the global tree
+        self.itp.set_up_global_tree(comm, find_points_comm_pattern=find_points_comm_pattern,global_tree_type=global_tree_type, global_tree_nbins=global_tree_nbins)
 
         # Scatter the probes to all ranks
         self.itp.scatter_probes_from_io_rank(0, comm)
