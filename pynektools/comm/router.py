@@ -49,6 +49,9 @@ class Router:
         self.destination_count = np.zeros((comm.Get_size()), dtype=np.ulong)
         # Specifies a buffer to see how many points I recieve from each rank
         self.source_count = np.zeros((comm.Get_size()), dtype=np.ulong)
+        # Displacements for all to all communication
+        self.destination_displacement = np.zeros((comm.Get_size()), dtype=np.ulong)
+        self.source_displacement = np.zeros((comm.Get_size()), dtype=np.ulong)
 
     def route_data(self, keyword, **kwargs):
         """
@@ -61,8 +64,10 @@ class Router:
         keyword : str
             The keyword that specifies the pattern of the data movement.
             current options are:
-                - distribute: sends data to specified destinations. 
-                  and recieves data from whoever sent.
+                - distribute_p2p: sends data to specified destinations.
+                  and recieves data from whoever sent. point to point comm
+                - distribute_a2a: sends data to specified destinations.
+                  and recieves data from whoever sent. all to all comm
                 - gather: gathers data from all processes to the root process.
                 - scatter: scatters data from the root process to all other processes.
         kwargs : dict
@@ -77,13 +82,14 @@ class Router:
         """
 
         router_factory = {
-            "distribute": self.send_recv,
+            "distribute_p2p": self.send_recv,
+            "distribute_a2a": self.all_to_all,
             "gather": self.gather_in_root,
             "scatter": self.scatter_from_root,
         }
 
         if keyword not in router_factory:
-            raise ValueError(f"Method '{method_keyword}' not recognized.")
+            raise ValueError(f"Method '{keyword}' not recognized.")
 
         return router_factory[keyword](**kwargs)
 
@@ -100,7 +106,7 @@ class Router:
         destination : list
             A list with the rank ids that the data should be sent to.
         data : list or ndarray
-            The data that will be sent. If it is a list, 
+            The data that will be sent. If it is a list,
             the data will be sent to the corresponding destination.
             if the data is an ndarray, the same data will be sent to all destinations.
         dtype : dtype
@@ -126,7 +132,7 @@ class Router:
         >>> for i, dest in enumerate(destination):
         >>>     if dest >= size:
         >>>         destination[i] = dest - size
-        >>> sources, recvbf = rt.send_recv(destination = destination, 
+        >>> sources, recvbf = rt.send_recv(destination = destination,
         >>>                   data = local_data, dtype=np.double, tag = 0)
         >>> for i in range(0, len(recvbf)):
         >>>     recvbf[i] = recvbf[i].reshape((-1, 3))
@@ -188,6 +194,145 @@ class Router:
 
         return sources, recvbuff
 
+    def all_to_all(self, destination=None, data=None, dtype=None):
+        """
+        Sends data to specified destinations and recieves data from whoever sent.
+
+        In this instance we use all to all collective.
+
+        Parameters
+        ----------
+        destination : list
+            A list with the rank ids that the data should be sent to.
+        data : list or ndarray
+            The data that will be sent. If it is a list,
+            the data will be sent to the corresponding destination.
+            if the data is an ndarray, the same data will be sent to all destinations.
+        dtype : dtype
+            The data type of the data that is sent.
+
+        Returns
+        -------
+        sources : list
+            A list with the rank ids that the data was recieved from.
+        recvbuff : list
+            A list with the recieved data. The data is stored in the same order as the sources.
+
+        Examples
+        --------
+        To send and recieve data between ranks, do the following:
+
+        local_data = np.zeros(((rank+1)*10, 3), dtype=np.double)
+
+        >>> rt = Router(comm)
+        >>> destination = [rank + 1, rank + 2]
+        >>> for i, dest in enumerate(destination):
+        >>>     if dest >= size:
+        >>>         destination[i] = dest - size
+        >>> sources, recvbf = rt.all_to_all(destination = destination,
+        >>>                   data = local_data, dtype=np.double)
+        >>> for i in range(0, len(recvbf)):
+        >>>     recvbf[i] = recvbf[i].reshape((-1, 3))
+        """
+
+        # ===========================
+        # Fill the destination count
+        # ===========================
+
+        self.destination_count[:] = 0
+        # Check if the data to send is a list
+        if isinstance(data, list):
+            # If it is a list, match each destination with its data
+            for dest_ind, dest in enumerate(destination):
+                self.destination_count[dest] = data[dest_ind].size
+        else:
+            # If it is not a list, send the same data to all destinations
+            self.destination_count[destination] = data.size
+
+        # =====================
+        # Fill the source count
+        # =====================
+        self.source_count[:] = 0
+        self.comm.Alltoall(sendbuf=self.destination_count, recvbuf=self.source_count)
+        sources = np.where(self.source_count != 0)[0]
+
+        # ==============================
+        # Allocate send and recv buffers
+        # as flattened arrays
+        # ==============================
+        if isinstance(data, list):
+            # Create a send buffer that globally holds all
+            # the send counts for each destination
+            sendbuff = np.zeros((np.sum(self.destination_count)), dtype=dtype)
+        else:
+            # If we are sending the same data everywhere, then no need to
+            # duplicate the data. We will just set the dispalcements to 0
+            # later.
+            sendbuff = np.zeros((data.size), dtype=dtype)
+        recvbuff = np.zeros((np.sum(self.source_count)), dtype=dtype)
+
+        # ===========================
+        # Calculate the dispaclements
+        # ===========================
+        if isinstance(data, list):
+            # Check where the data for each rank starts in the global buffer
+            self.destination_displacement[:] = 0
+            for i in range(1, len(self.destination_displacement)):
+                self.destination_displacement[i] = (
+                    self.destination_displacement[i - 1] + self.destination_count[i - 1]
+                )
+        else:
+            # The same data goes everywhere, so the displacement for all
+            # destinations is 0
+            self.destination_displacement[:] = 0
+
+        self.source_displacement[:] = 0
+        for i in range(1, len(self.source_displacement)):
+            self.source_displacement[i] = (
+                self.source_displacement[i - 1] + self.source_count[i - 1]
+            )
+
+        # ========================
+        # Populate the send buffer
+        # ========================
+
+        if isinstance(data, list):
+            # If it is a list, send matching position to destination
+            for dest_ind, dest in enumerate(destination):
+                sendbuff[
+                    self.destination_displacement[dest] : self.destination_displacement[
+                        dest
+                    ]
+                    + data[dest_ind].size
+                ] = data[dest_ind].flatten()
+        else:
+            # If it is not a list, send the same data to all destinations.
+            # This one works like this since we set the displacement to 0.
+            sendbuff[:] = data.flatten()
+
+        # =========================
+        # Send and recieve the data
+        # =========================
+
+        self.comm.Alltoallv(
+            sendbuf=(sendbuff, (self.destination_count, self.destination_displacement)),
+            recvbuf=(recvbuff, (self.source_count, self.source_displacement)),
+        )
+
+        # =========================
+        # Reshape the data
+        # =========================
+
+        recvbuff = [
+            recvbuff[
+                self.source_displacement[source] : self.source_displacement[source]
+                + self.source_count[source]
+            ]
+            for source in sources
+        ]
+
+        return sources, recvbuff
+
     def gather_in_root(self, data=None, root=0, dtype=None):
         """
         Gathers data from all processes to the root process.
@@ -217,7 +362,7 @@ class Router:
 
         >>> rt = Router(comm)
         >>> local_data = np.ones(((rank+1)*10, 3), dtype=np.double)*rank
-        >>> recvbf, sendcounts = rt.gather_in_root(data = local_data, 
+        >>> recvbf, sendcounts = rt.gather_in_root(data = local_data,
         >>>                      root = 0, dtype = np.double)
         """
 
@@ -247,7 +392,7 @@ class Router:
         data : ndarray
             The data that is scattered to all processes.
         sendcounts : ndarray, optional
-            The number of data that is sent to each process. 
+            The number of data that is sent to each process.
             If not specified, the data is divided equally among all processes.
         root : int
             The rank that will scatter
@@ -257,7 +402,7 @@ class Router:
         Returns
         -------
         recvbuf : ndarray
-            The scattered data in the current process. 
+            The scattered data in the current process.
             The data is always recieved flattened. User must reshape it.
 
         Examples
@@ -265,11 +410,11 @@ class Router:
         To scatter data from the root rank, do the following:
 
         >>> rt = Router(comm)
-        >>> recvbf = rt.scatter_from_root(data = recvbf, 
+        >>> recvbf = rt.scatter_from_root(data = recvbf,
                         sendcounts=sendcounts, root = 0, dtype = np.double)
         >>> recvbf = recvbf.reshape((-1, 3))
 
-        Note tha the sendcounts are just a ndarray of size comm.Get_size() 
+        Note tha the sendcounts are just a ndarray of size comm.Get_size()
         with the number of data that is sent to each rank.
         """
 
