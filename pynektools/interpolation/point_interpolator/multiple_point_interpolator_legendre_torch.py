@@ -49,9 +49,9 @@ class LegendreInterpolator(MultiplePointInterpolator):
         self.xj = torch.as_tensor(self.xj, dtype=torch.float64, device=device)
         self.yj = torch.as_tensor(self.yj, dtype=torch.float64, device=device)
         self.zj = torch.as_tensor(self.zj, dtype=torch.float64, device=device)
-        self.rj = torch.as_tensor(self.rj, dtype=torch.float64, device=device)
-        self.sj = torch.as_tensor(self.sj, dtype=torch.float64, device=device)
-        self.tj = torch.as_tensor(self.tj, dtype=torch.float64, device=device)
+        self.rj = torch.as_tensor(self.rj, dtype=torch.float64, device=device).requires_grad_(use_autograd)
+        self.sj = torch.as_tensor(self.sj, dtype=torch.float64, device=device).requires_grad_(use_autograd)
+        self.tj = torch.as_tensor(self.tj, dtype=torch.float64, device=device).requires_grad_(use_autograd)
         self.rstj = torch.as_tensor(self.rstj, dtype=torch.float64, device=device)
         self.eps_rst = torch.as_tensor(self.eps_rst, dtype=torch.float64, device=device)
         self.jac = torch.as_tensor(self.jac, dtype=torch.float64, device=device)
@@ -262,20 +262,21 @@ class LegendreInterpolator(MultiplePointInterpolator):
         nelems = self.x_e_hat.shape[1]
         n = self.n
 
-        self.rj[:npoints, :nelems, :, :] = torch.as_tensor(
-            rj[:, :, :, :], dtype=torch.float64, device=device
-        )
-        self.sj[:npoints, :nelems, :, :] = torch.as_tensor(
-            sj[:, :, :, :], dtype=torch.float64, device=device
-        )
-        self.tj[:npoints, :nelems, :, :] = torch.as_tensor(
-            tj[:, :, :, :], dtype=torch.float64, device=device
-        )
+        with torch.no_grad():
+            self.rj[:npoints, :nelems, :, :] = torch.as_tensor(
+                rj[:, :, :, :], dtype=torch.float64, device=device
+            )
+            self.sj[:npoints, :nelems, :, :] = torch.as_tensor(
+                sj[:, :, :, :], dtype=torch.float64, device=device
+            )
+            self.tj[:npoints, :nelems, :, :] = torch.as_tensor(
+                tj[:, :, :, :], dtype=torch.float64, device=device
+            )
 
         # Start recording the computational graph in the forward pass
-        self.rj.requires_grad_(True) 
-        self.sj.requires_grad_(True)
-        self.tj.requires_grad_(True) 
+        #self.rj.requires_grad_(True) 
+        #self.sj.requires_grad_(True)
+        #self.tj.requires_grad_(True) 
 
         # Evaluate the basis functions
         ortho_basis_rj = legendre_basis_at_xtest(n, self.rj[:npoints, :nelems, :, :])
@@ -336,7 +337,7 @@ class LegendreInterpolator(MultiplePointInterpolator):
             self.jac[:npoints, :nelems, 2, 2] = self.tj.grad[:npoints, :nelems, 0, 0]    
 
         # Stop recording the computational graph
-        self.rj.requires_grad_(False), self.sj.requires_grad_(False), self.tj.requires_grad_(False) 
+        #self.rj.requires_grad_(False), self.sj.requires_grad_(False), self.tj.requires_grad_(False) 
 
         return x, y, z
 
@@ -375,16 +376,17 @@ class LegendreInterpolator(MultiplePointInterpolator):
         # Use the newton method to identify the coordinates
         self.iterations = 0
         self.eps_rst[:npoints, :nelems, :, :] = 1
-
+        
         while (
             torch.any(torch.norm(self.eps_rst[:npoints, :nelems], dim=(2, 3)) > tol)
             and self.iterations < max_iterations
         ):
 
-            # Update the guess
-            self.rstj[:npoints, :nelems, 0, 0] = self.rj[:npoints, :nelems, 0, 0]
-            self.rstj[:npoints, :nelems, 1, 0] = self.sj[:npoints, :nelems, 0, 0]
-            self.rstj[:npoints, :nelems, 2, 0] = self.tj[:npoints, :nelems, 0, 0]
+            with torch.no_grad():
+                # Update the guess
+                self.rstj[:npoints, :nelems, 0, 0] = self.rj[:npoints, :nelems, 0, 0]
+                self.rstj[:npoints, :nelems, 1, 0] = self.sj[:npoints, :nelems, 0, 0]
+                self.rstj[:npoints, :nelems, 2, 0] = self.tj[:npoints, :nelems, 0, 0]
 
             # Estimate the xyz values from rst and also the jacobian
             # (it is updated inside self.jac)
@@ -397,52 +399,53 @@ class LegendreInterpolator(MultiplePointInterpolator):
                 self.tj[:npoints, :nelems, :, :],
             )
 
-            # Find the residuals and the jacobian inverse.
-            self.eps_rst[:npoints, :nelems, 0, 0] = (
-                self.xj[:npoints, :nelems, :, :] - xj_found
-            )[:, :, 0, 0]
-            self.eps_rst[:npoints, :nelems, 1, 0] = (
-                self.yj[:npoints, :nelems, :, :] - yj_found
-            )[:, :, 0, 0]
-            self.eps_rst[:npoints, :nelems, 2, 0] = (
-                self.zj[:npoints, :nelems, :, :] - zj_found
-            )[:, :, 0, 0]
-            jac_inv = torch.linalg.inv(self.jac[:npoints, :nelems])
-
-            # Find the new guess
-            self.rstj[:npoints, :nelems] = self.rstj[:npoints, :nelems] - (
-                0
-                - torch.einsum(
-                    "ijkl,ijlm->ijkm", jac_inv, self.eps_rst[:npoints, :nelems]
-                )
-            )
-
-            # Update the guess 
             with torch.no_grad():
+                # Find the residuals and the jacobian inverse.
+                self.eps_rst[:npoints, :nelems, 0, 0] = (
+                    self.xj[:npoints, :nelems, :, :] - xj_found
+                )[:, :, 0, 0]
+                self.eps_rst[:npoints, :nelems, 1, 0] = (
+                    self.yj[:npoints, :nelems, :, :] - yj_found
+                )[:, :, 0, 0]
+                self.eps_rst[:npoints, :nelems, 2, 0] = (
+                    self.zj[:npoints, :nelems, :, :] - zj_found
+                )[:, :, 0, 0]
+                jac_inv = torch.linalg.inv(self.jac[:npoints, :nelems])
+                
+                # Find the new guess
+                self.rstj[:npoints, :nelems] = self.rstj[:npoints, :nelems] - (
+                    0
+                    - torch.einsum(
+                        "ijkl,ijlm->ijkm", jac_inv, self.eps_rst[:npoints, :nelems]
+                    )
+                )
+
+                # Update the guess 
                 self.rj[:npoints, :nelems, 0, 0] = self.rstj[:npoints, :nelems, 0, 0]
                 self.sj[:npoints, :nelems, 0, 0] = self.rstj[:npoints, :nelems, 1, 0]
                 self.tj[:npoints, :nelems, 0, 0] = self.rstj[:npoints, :nelems, 2, 0]
-            self.iterations += 1
+                self.iterations += 1
 
-        # Check if points are inside the element
-        limit = 1 + np.finfo(np.single).eps
-        t1 = (abs(self.rj[:npoints, :nelems, 0, 0]) <= limit).reshape(
-            npoints, nelems, 1, 1
-        )
-        t2 = (abs(self.sj[:npoints, :nelems, 0, 0]) <= limit).reshape(
-            npoints, nelems, 1, 1
-        )
-        t3 = (abs(self.tj[:npoints, :nelems, 0, 0]) <= limit).reshape(
-            npoints, nelems, 1, 1
-        )
+        with torch.no_grad():
+            # Check if points are inside the element
+            limit = 1 + np.finfo(np.single).eps
+            t1 = (abs(self.rj[:npoints, :nelems, 0, 0]) <= limit).reshape(
+                npoints, nelems, 1, 1
+            )
+            t2 = (abs(self.sj[:npoints, :nelems, 0, 0]) <= limit).reshape(
+                npoints, nelems, 1, 1
+            )
+            t3 = (abs(self.tj[:npoints, :nelems, 0, 0]) <= limit).reshape(
+                npoints, nelems, 1, 1
+            )
 
-        # Pointwise comparison
-        self.point_inside_element[:npoints, :nelems, :, :] = t1 & t2 & t3
+            # Pointwise comparison
+            self.point_inside_element[:npoints, :nelems, :, :] = t1 & t2 & t3
 
         return (
-            self.rj[:npoints, :nelems],
-            self.sj[:npoints, :nelems],
-            self.tj[:npoints, :nelems],
+            self.rj[:npoints, :nelems].detach(),
+            self.sj[:npoints, :nelems].detach(),
+            self.tj[:npoints, :nelems].detach(),
         )
 
     def interpolate_field_at_rst(self, rj, sj, tj, field_e, apply_1d_ops=True):
@@ -452,40 +455,41 @@ class LegendreInterpolator(MultiplePointInterpolator):
 
         """
 
-        npoints = rj.shape[0]
-        nelems = rj.shape[1]
-        n = field_e.shape[2] * field_e.shape[3] * field_e.shape[4]
+        with torch.no_grad():
+            npoints = rj.shape[0]
+            nelems = rj.shape[1]
+            n = field_e.shape[2] * field_e.shape[3] * field_e.shape[4]
 
-        self.rj[:npoints, :nelems, :, :] = torch.as_tensor(
-            rj[:, :, :, :], dtype=torch.float64, device=device
-        )
-        self.sj[:npoints, :nelems, :, :] = torch.as_tensor(
-            sj[:, :, :, :], dtype=torch.float64, device=device
-        )
-        self.tj[:npoints, :nelems, :, :] = torch.as_tensor(
-            tj[:, :, :, :], dtype=torch.float64, device=device
-        )
-
-        # Assing the inputs to proper formats
-        self.field_e[:npoints, :nelems, :, :] = torch.as_tensor(
-            field_e.reshape(npoints, nelems, n, 1)[:, :, :, :],
-            dtype=torch.float64,
-            device=device,
-        )
-
-        lk_r = lag_interp_matrix_at_xtest(self.x_gll, self.rj[:npoints, :nelems, :, :])
-        lk_s = lag_interp_matrix_at_xtest(self.x_gll, self.sj[:npoints, :nelems, :, :])
-        lk_t = lag_interp_matrix_at_xtest(self.x_gll, self.tj[:npoints, :nelems, :, :])
-
-        if not apply_1d_ops:
-            raise RuntimeError("Only worrking by applying 1d operators")
-        elif apply_1d_ops:
-            field_at_rst = apply_operators_3d(
-                lk_r.permute(0, 1, 3, 2),
-                lk_s.permute(0, 1, 3, 2),
-                lk_t.permute(0, 1, 3, 2),
-                self.field_e[:npoints, :nelems, :, :],
+            self.rj[:npoints, :nelems, :, :] = torch.as_tensor(
+                rj[:, :, :, :], dtype=torch.float64, device=device
             )
+            self.sj[:npoints, :nelems, :, :] = torch.as_tensor(
+                sj[:, :, :, :], dtype=torch.float64, device=device
+            )
+            self.tj[:npoints, :nelems, :, :] = torch.as_tensor(
+                tj[:, :, :, :], dtype=torch.float64, device=device
+            )
+
+            # Assing the inputs to proper formats
+            self.field_e[:npoints, :nelems, :, :] = torch.as_tensor(
+                field_e.reshape(npoints, nelems, n, 1)[:, :, :, :],
+                dtype=torch.float64,
+                device=device,
+            )
+
+            lk_r = lag_interp_matrix_at_xtest(self.x_gll, self.rj[:npoints, :nelems, :, :])
+            lk_s = lag_interp_matrix_at_xtest(self.x_gll, self.sj[:npoints, :nelems, :, :])
+            lk_t = lag_interp_matrix_at_xtest(self.x_gll, self.tj[:npoints, :nelems, :, :])
+
+            if not apply_1d_ops:
+                raise RuntimeError("Only worrking by applying 1d operators")
+            elif apply_1d_ops:
+                field_at_rst = apply_operators_3d(
+                    lk_r.permute(0, 1, 3, 2),
+                    lk_s.permute(0, 1, 3, 2),
+                    lk_t.permute(0, 1, 3, 2),
+                    self.field_e[:npoints, :nelems, :, :],
+                )
 
         return field_at_rst
 
@@ -646,9 +650,9 @@ class LegendreInterpolator(MultiplePointInterpolator):
                 # Assign the error codes
 
                 result_code_bool = result_code_bool.cpu().numpy()
-                result_r = result_r.cpu().numpy()
-                result_s = result_s.cpu().numpy()
-                result_t = result_t.cpu().numpy()
+                result_r = result_r.cpu().detach().numpy()
+                result_s = result_s.cpu().detach().numpy()
+                result_t = result_t.cpu().detach().numpy()
 
                 # Update indices of points that were found and those that were not
                 pt_found_this_it = np.where(result_code_bool)[0]
@@ -846,10 +850,10 @@ def determine_initial_guess(self, npoints=1, nelems=1):
     Note: Find a way to evaluate if this routine does help.
     It might be that this is not such a good way of making the guess.
     """
-
-    self.rj[:npoints, :nelems, :, :] = 0
-    self.sj[:npoints, :nelems, :, :] = 0
-    self.tj[:npoints, :nelems, :, :] = 0
+    with torch.no_grad():
+        self.rj[:npoints, :nelems, :, :] = 0
+        self.sj[:npoints, :nelems, :, :] = 0
+        self.tj[:npoints, :nelems, :, :] = 0
 
     return
 
