@@ -30,6 +30,9 @@ def get_point_interpolator(interpolator_type, *args, **kwargs):
         n = args[0]
         max_pts = kwargs.get("max_pts", 1000)
         max_elems = kwargs.get("max_elems", 1)
-        return mp_leg_torch(n, max_pts=max_pts, max_elems=max_elems)
+        use_autograd = kwargs.get("use_autograd", False)
+        return mp_leg_torch(
+            n, max_pts=max_pts, max_elems=max_elems, use_autograd=use_autograd
+        )
     else:
         raise ValueError("Invalid interpolator type")
