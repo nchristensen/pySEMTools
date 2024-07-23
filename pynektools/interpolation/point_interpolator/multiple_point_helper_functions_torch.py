@@ -77,21 +77,21 @@ def legendre_basis_at_xtest(n, xtest):
     leg = torch.zeros((m, m2, n, 1), dtype=torch.float64, device=device)
 
     # First row is filled with 1 according to recursive formula
-    leg[:, :, 0, 0] = torch.ones((m, m2, 1, 1), dtype=torch.float64, device=device)[
-        :, :, 0, 0
-    ]
+    leg[:, :, 0, 0] = 1.0
+
     # Second row is filled with x according to recursive formula
-    leg[:, :, 1, 0] = torch.multiply(
-        torch.ones((m, m2, 1, 1), dtype=torch.float64, device=device), xtest
-    )[:, :, 0, 0]
+    leg[:, :, 1, 0] = xtest[:, :, 0, 0]
 
     # Apply the recursive formula for all x_i
     # look for recursive formula here if you want to verify
     # https://en.wikipedia.org/wiki/Legendre_polynomials
+
+    ## Here we perform the extra step of cloning the tensor to not have trouble
+    ## with inplace modifications in case we want to use autograd for xtest.
     for j in range(1, n - 1):
-        leg[:, :, j + 1, 0] = (
-            (2 * j + 1) * xtest[:, :, 0, 0] * leg[:, :, j, 0] - j * leg[:, :, j - 1, 0]
-        ) / (j + 1)
+        leg_j_p1 = ((2 * j + 1) * xtest[:, :, 0, 0] * leg[:, :, j, 0] - j * leg[:, :, j - 1, 0]) / (j + 1)
+        leg = leg.clone()
+        leg[:, :, j + 1, 0] = leg_j_p1
 
     return leg
 
