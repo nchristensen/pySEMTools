@@ -307,8 +307,6 @@ class LegendreInterpolator(MultiplePointInterpolator):
                 self.z_e_hat,
             )
 
-            print('evaluated')
-
             # Make sure the gradients are zero
             if self.rj.grad is not None:
                 self.rj.grad.zero_()
@@ -317,8 +315,6 @@ class LegendreInterpolator(MultiplePointInterpolator):
             if self.tj.grad is not None:
                 self.tj.grad.zero_()
             
-            print('zeroed gradient')
-
             # Do a backward pass on x to calculate dx/drdsdt
             x.backward(torch.ones_like(x), retain_graph=True)
             self.jac[:npoints, :nelems, 0, 0] = self.rj.grad[:npoints, :nelems, 0, 0]    
@@ -338,7 +334,7 @@ class LegendreInterpolator(MultiplePointInterpolator):
             self.jac[:npoints, :nelems, 2, 0] = self.rj.grad[:npoints, :nelems, 0, 0]    
             self.jac[:npoints, :nelems, 2, 1] = self.sj.grad[:npoints, :nelems, 0, 0]    
             self.jac[:npoints, :nelems, 2, 2] = self.tj.grad[:npoints, :nelems, 0, 0]    
-        
+
         # Stop recording the computational graph
         self.rj.requires_grad_(False), self.sj.requires_grad_(False), self.tj.requires_grad_(False) 
 
@@ -421,10 +417,11 @@ class LegendreInterpolator(MultiplePointInterpolator):
                 )
             )
 
-            # Update the values
-            self.rj[:npoints, :nelems, 0, 0] = self.rstj[:npoints, :nelems, 0, 0]
-            self.sj[:npoints, :nelems, 0, 0] = self.rstj[:npoints, :nelems, 1, 0]
-            self.tj[:npoints, :nelems, 0, 0] = self.rstj[:npoints, :nelems, 2, 0]
+            # Update the guess 
+            with torch.no_grad():
+                self.rj[:npoints, :nelems, 0, 0] = self.rstj[:npoints, :nelems, 0, 0]
+                self.sj[:npoints, :nelems, 0, 0] = self.rstj[:npoints, :nelems, 1, 0]
+                self.tj[:npoints, :nelems, 0, 0] = self.rstj[:npoints, :nelems, 2, 0]
             self.iterations += 1
 
         # Check if points are inside the element
