@@ -49,9 +49,15 @@ class LegendreInterpolator(MultiplePointInterpolator):
         self.xj = torch.as_tensor(self.xj, dtype=torch.float64, device=device)
         self.yj = torch.as_tensor(self.yj, dtype=torch.float64, device=device)
         self.zj = torch.as_tensor(self.zj, dtype=torch.float64, device=device)
-        self.rj = torch.as_tensor(self.rj, dtype=torch.float64, device=device).requires_grad_(use_autograd)
-        self.sj = torch.as_tensor(self.sj, dtype=torch.float64, device=device).requires_grad_(use_autograd)
-        self.tj = torch.as_tensor(self.tj, dtype=torch.float64, device=device).requires_grad_(use_autograd)
+        self.rj = torch.as_tensor(
+            self.rj, dtype=torch.float64, device=device
+        ).requires_grad_(use_autograd)
+        self.sj = torch.as_tensor(
+            self.sj, dtype=torch.float64, device=device
+        ).requires_grad_(use_autograd)
+        self.tj = torch.as_tensor(
+            self.tj, dtype=torch.float64, device=device
+        ).requires_grad_(use_autograd)
         self.rstj = torch.as_tensor(self.rstj, dtype=torch.float64, device=device)
         self.eps_rst = torch.as_tensor(self.eps_rst, dtype=torch.float64, device=device)
         self.jac = torch.as_tensor(self.jac, dtype=torch.float64, device=device)
@@ -251,7 +257,7 @@ class LegendreInterpolator(MultiplePointInterpolator):
             )[:, :, 0, 0]
 
         return x, y, z
-    
+
     def get_xyz_from_rst_autograd_(self, rj, sj, tj, apply_1d_ops=True):
         """
         This function calculates the xyz coordinates from the given rst coordinates for points
@@ -272,11 +278,6 @@ class LegendreInterpolator(MultiplePointInterpolator):
             self.tj[:npoints, :nelems, :, :] = torch.as_tensor(
                 tj[:, :, :, :], dtype=torch.float64, device=device
             )
-
-        # Start recording the computational graph in the forward pass
-        #self.rj.requires_grad_(True) 
-        #self.sj.requires_grad_(True)
-        #self.tj.requires_grad_(True) 
 
         # Evaluate the basis functions
         ortho_basis_rj = legendre_basis_at_xtest(n, self.rj[:npoints, :nelems, :, :])
@@ -315,29 +316,26 @@ class LegendreInterpolator(MultiplePointInterpolator):
                 self.sj.grad.zero_()
             if self.tj.grad is not None:
                 self.tj.grad.zero_()
-            
+
             # Do a backward pass on x to calculate dx/drdsdt
             x.backward(torch.ones_like(x), retain_graph=True)
-            self.jac[:npoints, :nelems, 0, 0] = self.rj.grad[:npoints, :nelems, 0, 0]    
-            self.jac[:npoints, :nelems, 0, 1] = self.sj.grad[:npoints, :nelems, 0, 0]    
-            self.jac[:npoints, :nelems, 0, 2] = self.tj.grad[:npoints, :nelems, 0, 0]    
+            self.jac[:npoints, :nelems, 0, 0] = self.rj.grad[:npoints, :nelems, 0, 0]
+            self.jac[:npoints, :nelems, 0, 1] = self.sj.grad[:npoints, :nelems, 0, 0]
+            self.jac[:npoints, :nelems, 0, 2] = self.tj.grad[:npoints, :nelems, 0, 0]
 
             # Zero out the gradients and repeat with y
             self.rj.grad.zero_(), self.sj.grad.zero_(), self.tj.grad.zero_()
             y.backward(torch.ones_like(y), retain_graph=True)
-            self.jac[:npoints, :nelems, 1, 0] = self.rj.grad[:npoints, :nelems, 0, 0]    
-            self.jac[:npoints, :nelems, 1, 1] = self.sj.grad[:npoints, :nelems, 0, 0]    
-            self.jac[:npoints, :nelems, 1, 2] = self.tj.grad[:npoints, :nelems, 0, 0]    
-            
+            self.jac[:npoints, :nelems, 1, 0] = self.rj.grad[:npoints, :nelems, 0, 0]
+            self.jac[:npoints, :nelems, 1, 1] = self.sj.grad[:npoints, :nelems, 0, 0]
+            self.jac[:npoints, :nelems, 1, 2] = self.tj.grad[:npoints, :nelems, 0, 0]
+
             # Zero out the gradients and repeat with z
             self.rj.grad.zero_(), self.sj.grad.zero_(), self.tj.grad.zero_()
             z.backward(torch.ones_like(z), retain_graph=True)
-            self.jac[:npoints, :nelems, 2, 0] = self.rj.grad[:npoints, :nelems, 0, 0]    
-            self.jac[:npoints, :nelems, 2, 1] = self.sj.grad[:npoints, :nelems, 0, 0]    
-            self.jac[:npoints, :nelems, 2, 2] = self.tj.grad[:npoints, :nelems, 0, 0]    
-
-        # Stop recording the computational graph
-        #self.rj.requires_grad_(False), self.sj.requires_grad_(False), self.tj.requires_grad_(False) 
+            self.jac[:npoints, :nelems, 2, 0] = self.rj.grad[:npoints, :nelems, 0, 0]
+            self.jac[:npoints, :nelems, 2, 1] = self.sj.grad[:npoints, :nelems, 0, 0]
+            self.jac[:npoints, :nelems, 2, 2] = self.tj.grad[:npoints, :nelems, 0, 0]
 
         return x, y, z
 
@@ -376,7 +374,7 @@ class LegendreInterpolator(MultiplePointInterpolator):
         # Use the newton method to identify the coordinates
         self.iterations = 0
         self.eps_rst[:npoints, :nelems, :, :] = 1
-        
+
         while (
             torch.any(torch.norm(self.eps_rst[:npoints, :nelems], dim=(2, 3)) > tol)
             and self.iterations < max_iterations
@@ -411,7 +409,7 @@ class LegendreInterpolator(MultiplePointInterpolator):
                     self.zj[:npoints, :nelems, :, :] - zj_found
                 )[:, :, 0, 0]
                 jac_inv = torch.linalg.inv(self.jac[:npoints, :nelems])
-                
+
                 # Find the new guess
                 self.rstj[:npoints, :nelems] = self.rstj[:npoints, :nelems] - (
                     0
@@ -420,7 +418,7 @@ class LegendreInterpolator(MultiplePointInterpolator):
                     )
                 )
 
-                # Update the guess 
+                # Update the guess
                 self.rj[:npoints, :nelems, 0, 0] = self.rstj[:npoints, :nelems, 0, 0]
                 self.sj[:npoints, :nelems, 0, 0] = self.rstj[:npoints, :nelems, 1, 0]
                 self.tj[:npoints, :nelems, 0, 0] = self.rstj[:npoints, :nelems, 2, 0]
@@ -477,9 +475,15 @@ class LegendreInterpolator(MultiplePointInterpolator):
                 device=device,
             )
 
-            lk_r = lag_interp_matrix_at_xtest(self.x_gll, self.rj[:npoints, :nelems, :, :])
-            lk_s = lag_interp_matrix_at_xtest(self.x_gll, self.sj[:npoints, :nelems, :, :])
-            lk_t = lag_interp_matrix_at_xtest(self.x_gll, self.tj[:npoints, :nelems, :, :])
+            lk_r = lag_interp_matrix_at_xtest(
+                self.x_gll, self.rj[:npoints, :nelems, :, :]
+            )
+            lk_s = lag_interp_matrix_at_xtest(
+                self.x_gll, self.sj[:npoints, :nelems, :, :]
+            )
+            lk_t = lag_interp_matrix_at_xtest(
+                self.x_gll, self.tj[:npoints, :nelems, :, :]
+            )
 
             if not apply_1d_ops:
                 raise RuntimeError("Only worrking by applying 1d operators")

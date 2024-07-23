@@ -89,7 +89,9 @@ def legendre_basis_at_xtest(n, xtest):
     ## Here we perform the extra step of cloning the tensor to not have trouble
     ## with inplace modifications in case we want to use autograd for xtest.
     for j in range(1, n - 1):
-        leg_j_p1 = ((2 * j + 1) * xtest[:, :, 0, 0] * leg[:, :, j, 0] - j * leg[:, :, j - 1, 0]) / (j + 1)
+        leg_j_p1 = (
+            (2 * j + 1) * xtest[:, :, 0, 0] * leg[:, :, j, 0] - j * leg[:, :, j - 1, 0]
+        ) / (j + 1)
         leg = leg.clone()
         leg[:, :, j + 1, 0] = leg_j_p1
 

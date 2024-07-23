@@ -28,6 +28,7 @@ class Interpolator:
         point_interpolator_type="single_point_legendre",
         max_pts=128,
         max_elems=1,
+        use_autograd=False,
     ):
 
         self.x = x
@@ -41,7 +42,11 @@ class Interpolator:
 
         # Determine which point interpolator to use
         self.ei = get_point_interpolator(
-            point_interpolator_type, x.shape[1], max_pts=max_pts, max_elems=max_elems
+            point_interpolator_type,
+            x.shape[1],
+            max_pts=max_pts,
+            max_elems=max_elems,
+            use_autograd=use_autograd,
         )
 
         # Determine which buffer to use
