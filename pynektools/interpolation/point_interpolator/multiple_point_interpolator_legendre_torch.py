@@ -20,10 +20,13 @@ NoneType = type(None)
 class LegendreInterpolator(MultiplePointInterpolator):
     """Class to interpolate multiple points using Legendre polynomials in 3D."""
 
-    def __init__(self, n, max_pts=1, max_elems=1):
+    def __init__(self, n, max_pts=1, max_elems=1, use_autograd=False):
 
         # Initialize parent class
         super().__init__(n, max_pts=max_pts, max_elems=max_elems)
+
+        # Initialize the class attributes
+        self.use_autograd = use_autograd
 
         # Get reference element
         self.v1d = None
@@ -125,6 +128,13 @@ class LegendreInterpolator(MultiplePointInterpolator):
         return
 
     def get_xyz_from_rst(self, rj, sj, tj, apply_1d_ops=True):
+
+        if not self.use_autograd:
+            return self.get_xyz_from_rst_polynomial_(rj, sj, tj, apply_1d_ops)
+        else:
+            return self.get_xyz_from_rst_autograd_(rj, sj, tj, apply_1d_ops)
+
+    def get_xyz_from_rst_polynomial_(self, rj, sj, tj, apply_1d_ops=True):
         """
         This function calculates the xyz coordinates from the given rst coordinates for points
         in the elements that were projected into xhat, yhat, zhat.
@@ -239,6 +249,98 @@ class LegendreInterpolator(MultiplePointInterpolator):
                 ortho_basis_prm_tj.permute(0, 1, 3, 2),
                 self.z_e_hat,
             )[:, :, 0, 0]
+
+        return x, y, z
+    
+    def get_xyz_from_rst_autograd_(self, rj, sj, tj, apply_1d_ops=True):
+        """
+        This function calculates the xyz coordinates from the given rst coordinates for points
+        in the elements that were projected into xhat, yhat, zhat.
+        """
+
+        npoints = rj.shape[0]
+        nelems = self.x_e_hat.shape[1]
+        n = self.n
+
+        self.rj[:npoints, :nelems, :, :] = torch.as_tensor(
+            rj[:, :, :, :], dtype=torch.float64, device=device
+        )
+        self.sj[:npoints, :nelems, :, :] = torch.as_tensor(
+            sj[:, :, :, :], dtype=torch.float64, device=device
+        )
+        self.tj[:npoints, :nelems, :, :] = torch.as_tensor(
+            tj[:, :, :, :], dtype=torch.float64, device=device
+        )
+
+        # Start recording the computational graph in the forward pass
+        self.rj.requires_grad_(True) 
+        self.sj.requires_grad_(True)
+        self.tj.requires_grad_(True) 
+
+        # Evaluate the basis functions
+        ortho_basis_rj = legendre_basis_at_xtest(n, self.rj[:npoints, :nelems, :, :])
+        ortho_basis_sj = legendre_basis_at_xtest(n, self.sj[:npoints, :nelems, :, :])
+        ortho_basis_tj = legendre_basis_at_xtest(n, self.tj[:npoints, :nelems, :, :])
+
+        if not apply_1d_ops:
+            raise RuntimeError("Only worrking by applying 1d operators")
+
+        elif apply_1d_ops:
+
+            # Evaluate the forward pass
+            x = apply_operators_3d(
+                ortho_basis_rj.permute(0, 1, 3, 2),
+                ortho_basis_sj.permute(0, 1, 3, 2),
+                ortho_basis_tj.permute(0, 1, 3, 2),
+                self.x_e_hat,
+            )
+            y = apply_operators_3d(
+                ortho_basis_rj.permute(0, 1, 3, 2),
+                ortho_basis_sj.permute(0, 1, 3, 2),
+                ortho_basis_tj.permute(0, 1, 3, 2),
+                self.y_e_hat,
+            )
+            z = apply_operators_3d(
+                ortho_basis_rj.permute(0, 1, 3, 2),
+                ortho_basis_sj.permute(0, 1, 3, 2),
+                ortho_basis_tj.permute(0, 1, 3, 2),
+                self.z_e_hat,
+            )
+
+            print('evaluated')
+
+            # Make sure the gradients are zero
+            if self.rj.grad is not None:
+                self.rj.grad.zero_()
+            if self.sj.grad is not None:
+                self.sj.grad.zero_()
+            if self.tj.grad is not None:
+                self.tj.grad.zero_()
+            
+            print('zeroed gradient')
+
+            # Do a backward pass on x to calculate dx/drdsdt
+            x.backward(torch.ones_like(x), retain_graph=True)
+            self.jac[:npoints, :nelems, 0, 0] = self.rj.grad[:npoints, :nelems, 0, 0]    
+            self.jac[:npoints, :nelems, 0, 1] = self.sj.grad[:npoints, :nelems, 0, 0]    
+            self.jac[:npoints, :nelems, 0, 2] = self.tj.grad[:npoints, :nelems, 0, 0]    
+
+            # Zero out the gradients and repeat with y
+            self.rj.grad.zero_(), self.sj.grad.zero_(), self.tj.grad.zero_()
+            y.backward(torch.ones_like(y), retain_graph=True)
+            self.jac[:npoints, :nelems, 1, 0] = self.rj.grad[:npoints, :nelems, 0, 0]    
+            self.jac[:npoints, :nelems, 1, 1] = self.sj.grad[:npoints, :nelems, 0, 0]    
+            self.jac[:npoints, :nelems, 1, 2] = self.tj.grad[:npoints, :nelems, 0, 0]    
+            
+            # Zero out the gradients and repeat with z
+            self.rj.grad.zero_(), self.sj.grad.zero_(), self.tj.grad.zero_()
+            z.backward(torch.ones_like(z), retain_graph=True)
+            self.jac[:npoints, :nelems, 2, 0] = self.rj.grad[:npoints, :nelems, 0, 0]    
+            self.jac[:npoints, :nelems, 2, 1] = self.sj.grad[:npoints, :nelems, 0, 0]    
+            self.jac[:npoints, :nelems, 2, 2] = self.tj.grad[:npoints, :nelems, 0, 0]    
+        
+        # Stop recording the computational graph
+        self.rj.requires_grad_(False), self.sj.requires_grad_(False), self.tj.requires_grad_(False) 
 
         return x, y, z
 
