@@ -203,7 +203,7 @@ class SinglePointInterpolator(ABC):
             # Query the tree with the probes to reduce the bbox search
             candidate_elements = kd_tree.query_ball_point(
                 x=probes,
-                r=bbox_max_dist,
+                r=bbox_max_dist * (1 + 1e-6),
                 p=2.0,
                 eps=elem_percent_expansion,
                 workers=1,

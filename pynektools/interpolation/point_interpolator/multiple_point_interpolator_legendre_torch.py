@@ -424,7 +424,6 @@ class LegendreInterpolator(MultiplePointInterpolator):
                 self.tj[:npoints, :nelems, 0, 0] = self.rstj[:npoints, :nelems, 2, 0]
                 self.iterations += 1
 
-        print(self.iterations)
         with torch.no_grad():
             # Check if points are inside the element
             limit = 1 + np.finfo(np.single).eps
@@ -562,7 +561,7 @@ class LegendreInterpolator(MultiplePointInterpolator):
             # Query the tree with the probes to reduce the bbox search
             candidate_elements = kd_tree.query_ball_point(
                 x=probes,
-                r=bbox_max_dist,
+                r=bbox_max_dist * (1 + 1e-6),
                 p=2.0,
                 eps=elem_percent_expansion,
                 workers=1,
@@ -864,9 +863,9 @@ def determine_initial_guess(self, npoints=1, nelems=1):
     It might be that this is not such a good way of making the guess.
     """
     with torch.no_grad():
-        self.rj[:npoints, :nelems, :, :] = 0
-        self.sj[:npoints, :nelems, :, :] = 0
-        self.tj[:npoints, :nelems, :, :] = 0
+        self.rj[:npoints, :nelems, :, :] = 0 + 1e-6
+        self.sj[:npoints, :nelems, :, :] = 0 + 1e-6
+        self.tj[:npoints, :nelems, :, :] = 0 + 1e-6
 
     return
 

@@ -262,7 +262,7 @@ class Interpolator:
         self.bin_to_rank_map = domain_binning_map_bin_to_rank(
             mesh_to_bin, nx, ny, nz, comm
         )
-        self.search_radious = search_radious * (1 + 1e-6)
+        self.search_radious = search_radious
 
     def scatter_probes_from_io_rank(self, io_rank, comm):
         """Scatter the probes from the rank that is used to read them - rank0 by default"""
@@ -536,7 +536,7 @@ class Interpolator:
                         # Query the tree with the probes to reduce the bbox search
                         candidate_elements = broadcaster_tree.query_ball_point(
                             x=probe_not_found,
-                            r=bbox_maxdist,
+                            r=bbox_maxdist * (1 + 1e-6),
                             p=2.0,
                             eps=elem_percent_expansion,
                             workers=1,
@@ -1452,7 +1452,7 @@ def get_candidate_ranks(self, comm):
 
         candidate_ranks_per_point = self.global_tree.query_ball_point(
             x=self.probe_partition,
-            r=self.search_radious,
+            r=self.search_radious * (1 + 1e-6),
             p=2.0,
             eps=1e-8,
             workers=1,
@@ -1471,7 +1471,7 @@ def get_candidate_ranks(self, comm):
         # this rank resides
         probe_to_bin_map = self.global_tree.query_ball_point(
             x=self.probe_partition,
-            r=self.search_radious,
+            r=self.search_radious * (1 + 1e-6),
             p=2.0,
             eps=1e-8,
             workers=1,
