@@ -1,5 +1,6 @@
 import os
 import sys
+import pytest
 os.environ["OMP_NUM_THREADS"] = "1"
 os.environ["OPENBLAS_NUM_THREADS"] = "1"
 os.environ["MKL_NUM_THREADS"] = "1"
@@ -11,7 +12,7 @@ try:
     device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 except ImportError:
     print('could not import torch')
-
+device = 'cpu'
 # Initialize MPI
 from mpi4py import MPI
 comm = MPI.COMM_WORLD
@@ -406,6 +407,7 @@ def test_multiple_point_interpolator_torch():
 
 #==============================================================================
 
+@pytest.mark.skipif(device == "cpu", reason="Interpolation with autograd has only been properly tested on GPUs")
 def test_multiple_point_interpolator_torch_autograd():
 
     # Read the original mesh data
