@@ -201,7 +201,7 @@ class LegendreInterpolator(MultiplePointInterpolator):
         return x, y, z
 
     def find_rst_from_xyz(
-        self, xj, yj, zj, tol=np.finfo(np.double).eps * 10, max_iterations=1000
+        self, xj, yj, zj, tol=np.finfo(np.double).eps * 10, max_iterations=50
     ):
         """
 
