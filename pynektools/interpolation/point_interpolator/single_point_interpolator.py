@@ -48,7 +48,7 @@ class SinglePointInterpolator(ABC):
         self.z_e_hat = None
 
     def find_rst_from_xyz(
-        self, xj, yj, zj, tol=np.finfo(np.double).eps * 10, max_iterations=1000
+        self, xj, yj, zj, tol=np.finfo(np.double).eps * 10, max_iterations=50
     ):
         """Find the rst coordinates from the xyz coordinates using the newton method"""
         self.point_inside_element = False
@@ -203,7 +203,7 @@ class SinglePointInterpolator(ABC):
             # Query the tree with the probes to reduce the bbox search
             candidate_elements = kd_tree.query_ball_point(
                 x=probes,
-                r=bbox_max_dist,
+                r=bbox_max_dist * (1 + 1e-6),
                 p=2.0,
                 eps=elem_percent_expansion,
                 workers=1,

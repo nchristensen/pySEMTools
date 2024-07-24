@@ -142,22 +142,9 @@ class LegendreInterpolator(SinglePointInterpolator):
 
     def determine_initial_guess(self):
 
-        # Find the closest gll point to the point of interest
-        n = self.n
-        distances = np.sqrt(
-            (self.xj[0] - self.x_e.reshape((n, n, n), order="F")) ** 2
-            + (self.yj[0] - self.y_e.reshape((n, n, n), order="F")) ** 2
-            + (self.zj[0] - self.z_e.reshape((n, n, n), order="F")) ** 2
-        )
-
-        min_index_x = np.argmin(distances[:, 0, 0])
-        min_index_y = np.argmin(distances[0, :, 0])
-        min_index_z = np.argmin(distances[0, 0, :])
-
-        # Knowing the indices, see what the rst values would be in a reference element
-        self.rj[0] = self.x_gll[min_index_x]
-        self.sj[0] = self.x_gll[min_index_y]
-        self.tj[0] = self.x_gll[min_index_z]
+        self.rj[0] = 0 + 1e-6
+        self.sj[0] = 0 + 1e-6
+        self.tj[0] = 0 + 1e-6
 
         return
 

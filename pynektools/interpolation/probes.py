@@ -133,6 +133,7 @@ class Probes:
         elem_percent_expansion=0.01,
         global_tree_type="rank_bbox",
         global_tree_nbins=1024,
+        use_autograd=False,
     ):
 
         rank = comm.Get_rank()
@@ -198,6 +199,7 @@ class Probes:
             progress_bar,
             point_interpolator_type=point_interpolator_type,
             max_pts=max_pts,
+            use_autograd=use_autograd,
         )
 
         # Set up the global tree

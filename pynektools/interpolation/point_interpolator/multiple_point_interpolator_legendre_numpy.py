@@ -201,7 +201,7 @@ class LegendreInterpolator(MultiplePointInterpolator):
         return x, y, z
 
     def find_rst_from_xyz(
-        self, xj, yj, zj, tol=np.finfo(np.double).eps * 10, max_iterations=1000
+        self, xj, yj, zj, tol=np.finfo(np.double).eps * 10, max_iterations=50
     ):
         """
 
@@ -391,7 +391,7 @@ class LegendreInterpolator(MultiplePointInterpolator):
             # Query the tree with the probes to reduce the bbox search
             candidate_elements = kd_tree.query_ball_point(
                 x=probes,
-                r=bbox_max_dist,
+                r=bbox_max_dist * (1 + 1e-6),
                 p=2.0,
                 eps=elem_percent_expansion,
                 workers=1,
@@ -679,9 +679,9 @@ def determine_initial_guess(self, npoints=1, nelems=1):
     It might be that this is not such a good way of making the guess.
     """
 
-    self.rj[:npoints, :nelems, :, :] = 0
-    self.sj[:npoints, :nelems, :, :] = 0
-    self.tj[:npoints, :nelems, :, :] = 0
+    self.rj[:npoints, :nelems, :, :] = 0 + 1e-6
+    self.sj[:npoints, :nelems, :, :] = 0 + 1e-6
+    self.tj[:npoints, :nelems, :, :] = 0 + 1e-6
 
     return
 
