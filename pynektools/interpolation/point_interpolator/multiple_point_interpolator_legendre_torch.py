@@ -27,6 +27,7 @@ class LegendreInterpolator(MultiplePointInterpolator):
 
         # Initialize the class attributes
         self.use_autograd = use_autograd
+        self.optimizer = "newton"  # "gd" or "newton"
 
         # Get reference element
         self.v1d = None
@@ -339,7 +340,73 @@ class LegendreInterpolator(MultiplePointInterpolator):
 
         return x, y, z
 
+    def get_xyz_from_rst_no_jac_(self, rj, sj, tj, apply_1d_ops=True):
+        """
+        This function calculates the xyz coordinates from the given rst coordinates for points
+        in the elements that were projected into xhat, yhat, zhat.
+        """
+
+        npoints = rj.shape[0]
+        nelems = self.x_e_hat.shape[1]
+        n = self.n
+
+        with torch.no_grad():
+            self.rj[:npoints, :nelems, :, :] = torch.as_tensor(
+                rj[:, :, :, :], dtype=torch.float64, device=device
+            )
+            self.sj[:npoints, :nelems, :, :] = torch.as_tensor(
+                sj[:, :, :, :], dtype=torch.float64, device=device
+            )
+            self.tj[:npoints, :nelems, :, :] = torch.as_tensor(
+                tj[:, :, :, :], dtype=torch.float64, device=device
+            )
+
+        # Evaluate the basis functions
+        ortho_basis_rj = legendre_basis_at_xtest(n, self.rj[:npoints, :nelems, :, :])
+        ortho_basis_sj = legendre_basis_at_xtest(n, self.sj[:npoints, :nelems, :, :])
+        ortho_basis_tj = legendre_basis_at_xtest(n, self.tj[:npoints, :nelems, :, :])
+
+        if not apply_1d_ops:
+            raise RuntimeError("Only worrking by applying 1d operators")
+
+        elif apply_1d_ops:
+
+            # Evaluate the forward pass
+            x = apply_operators_3d(
+                ortho_basis_rj.permute(0, 1, 3, 2),
+                ortho_basis_sj.permute(0, 1, 3, 2),
+                ortho_basis_tj.permute(0, 1, 3, 2),
+                self.x_e_hat,
+            )
+            y = apply_operators_3d(
+                ortho_basis_rj.permute(0, 1, 3, 2),
+                ortho_basis_sj.permute(0, 1, 3, 2),
+                ortho_basis_tj.permute(0, 1, 3, 2),
+                self.y_e_hat,
+            )
+            z = apply_operators_3d(
+                ortho_basis_rj.permute(0, 1, 3, 2),
+                ortho_basis_sj.permute(0, 1, 3, 2),
+                ortho_basis_tj.permute(0, 1, 3, 2),
+                self.z_e_hat,
+            )
+
+        return (x, y, z, [ortho_basis_rj, ortho_basis_sj, ortho_basis_tj])
+
     def find_rst_from_xyz(
+        self, rj, sj, tj, tol=np.finfo(np.double).eps * 10, max_iterations=50
+    ):
+
+        if self.optimizer == "newton":
+            return self.find_rst_from_xyz_newton(
+                rj, sj, tj, tol=tol, max_iterations=max_iterations
+            )
+        if self.optimizer == "gd":
+            return self.find_rst_from_xyz_gd(
+                rj, sj, tj, tol=tol, max_iterations=max_iterations
+            )
+
+    def find_rst_from_xyz_newton(
         self, xj, yj, zj, tol=np.finfo(np.double).eps * 10, max_iterations=50
     ):
         """
@@ -426,6 +493,163 @@ class LegendreInterpolator(MultiplePointInterpolator):
 
         with torch.no_grad():
             # Check if points are inside the element
+            limit = 1 + np.finfo(np.single).eps
+            t1 = (abs(self.rj[:npoints, :nelems, 0, 0]) <= limit).reshape(
+                npoints, nelems, 1, 1
+            )
+            t2 = (abs(self.sj[:npoints, :nelems, 0, 0]) <= limit).reshape(
+                npoints, nelems, 1, 1
+            )
+            t3 = (abs(self.tj[:npoints, :nelems, 0, 0]) <= limit).reshape(
+                npoints, nelems, 1, 1
+            )
+
+            # Pointwise comparison
+            self.point_inside_element[:npoints, :nelems, :, :] = t1 & t2 & t3
+
+        return (
+            self.rj[:npoints, :nelems].detach(),
+            self.sj[:npoints, :nelems].detach(),
+            self.tj[:npoints, :nelems].detach(),
+        )
+
+    def find_rst_from_xyz_gd(
+        self, xj, yj, zj, tol=np.finfo(np.double).eps * 10, max_iterations=50
+    ):
+        """
+
+        Find rst coordinates from a given xyz group of points.
+        Note that this function needs to be called after the
+        element has been projected into the basis.
+
+        """
+
+        self.point_inside_element[:, :, :, :] = False
+
+        npoints = xj.shape[0]
+        nelems = self.x_e_hat.shape[1]
+        # n = self.n
+
+        self.xj[:npoints, :, :, :] = torch.as_tensor(
+            xj[:, :, :, :], dtype=torch.float64, device=device
+        )
+        self.yj[:npoints, :, :, :] = torch.as_tensor(
+            yj[:, :, :, :], dtype=torch.float64, device=device
+        )
+        self.zj[:npoints, :, :, :] = torch.as_tensor(
+            zj[:, :, :, :], dtype=torch.float64, device=device
+        )
+
+        # Determine the initial conditions
+        determine_initial_guess(
+            self, npoints=npoints, nelems=nelems
+        )  # This populates self.rj, self.sj, self.tj for 1st iteration
+
+        # Use the newton method to identify the coordinates
+        self.iterations = 0
+        self.eps_rst[:npoints, :nelems, :, :] = 1
+
+        loss = torch.norm(self.eps_rst[:npoints, :nelems], dim=(2, 3))
+
+        # Coordinates that will be found
+        xj_tofind = self.xj[:npoints, :nelems, :, :]
+        yj_tofind = self.yj[:npoints, :nelems, :, :]
+        zj_tofind = self.zj[:npoints, :nelems, :, :]
+
+        while torch.any(loss > tol) and self.iterations < max_iterations:
+
+            # Find current xyz
+            xj_found, yj_found, zj_found, _ = self.get_xyz_from_rst_no_jac_(
+                self.rj[:npoints, :nelems, :, :],
+                self.sj[:npoints, :nelems, :, :],
+                self.tj[:npoints, :nelems, :, :],
+            )
+
+            # Calculate the differences
+            x_diff = xj_tofind - xj_found
+            y_diff = yj_tofind - yj_found
+            z_diff = zj_tofind - zj_found
+
+            # Stack the differences into one tensor
+            diff_tensor = torch.cat((x_diff, y_diff, z_diff), dim=2)
+
+            # Mean squared error per point
+            loss = (
+                torch.norm(diff_tensor, dim=(2, 3)).reshape(npoints, nelems, 1, 1) ** 2
+                / 3
+            )
+
+            # Get the gradients
+            loss.backward(torch.ones_like(loss))
+
+            # Choose the learning rate (step size)
+            if self.iterations == 0:
+                # First iteration is the same for every point
+                lr = 1 / torch.mean(
+                    torch.mean(torch.abs(self.rj.grad[:npoints, :nelems, 0, 0]))
+                    + torch.mean(torch.abs(self.sj.grad[:npoints, :nelems, 0, 0]))
+                    + torch.mean(torch.abs(self.tj.grad[:npoints, :nelems, 0, 0]))
+                )
+            else:
+                # Second iteration forward is adapted per point
+                with torch.no_grad():
+                    rn = self.rj[:npoints, :nelems, :, :].clone()
+                    sn = self.sj[:npoints, :nelems, :, :].clone()
+                    tn = self.tj[:npoints, :nelems, :, :].clone()
+                    dldrn = self.rj.grad[:npoints, :nelems, :, :].clone()
+                    dldsn = self.sj.grad[:npoints, :nelems, :, :].clone()
+                    dldtn = self.tj.grad[:npoints, :nelems, :, :].clone()
+
+                    # Substract current and previous values
+                    rst = torch.cat((rn - rn_1, sn - sn_1, tn - tn_1), dim=2)
+                    dfdrst = torch.cat(
+                        (dldrn - dldrn_1, dldsn - dldsn_1, dldtn - dldtn_1), dim=2
+                    )
+
+                    # Perform inner products and set the step size
+                    num = torch.abs(
+                        torch.einsum(
+                            "ijkl, ijlm->ijkm", rst.permute(0, 1, 3, 2), dfdrst
+                        )
+                    )
+                    den = torch.einsum(
+                        "ijkl, ijlm->ijkm", dfdrst.permute(0, 1, 3, 2), dfdrst
+                    )
+                    lr = num / den
+
+                    # Do some checks
+                    lr[torch.isnan(lr)] = 1000
+                    lr[torch.where(loss < tol)] = 0
+
+            # Store the values for next iteration
+            with torch.no_grad():
+                rn_1 = self.rj[:npoints, :nelems, :, :].clone()
+                sn_1 = self.sj[:npoints, :nelems, :, :].clone()
+                tn_1 = self.tj[:npoints, :nelems, :, :].clone()
+                dldrn_1 = self.rj.grad[:npoints, :nelems, :, :].clone()
+                dldsn_1 = self.sj.grad[:npoints, :nelems, :, :].clone()
+                dldtn_1 = self.tj.grad[:npoints, :nelems, :, :].clone()
+
+            # Update the guess
+            with torch.no_grad():
+                self.rj[:npoints, :nelems, :, :] = (
+                    self.rj[:npoints, :nelems, :, :]
+                    - lr * self.rj.grad[:npoints, :nelems, :, :]
+                )
+                self.sj[:npoints, :nelems, :, :] = (
+                    self.sj[:npoints, :nelems, :, :]
+                    - lr * self.sj.grad[:npoints, :nelems, :, :]
+                )
+                self.tj[:npoints, :nelems, :, :] = (
+                    self.tj[:npoints, :nelems, :, :]
+                    - lr * self.tj.grad[:npoints, :nelems, :, :]
+                )
+            # Zero out the gradients for next it
+            self.rj.grad.zero_(), self.sj.grad.zero_(), self.tj.grad.zero_()
+            self.iterations += 1
+
+        # Check if points are inside the element
+        with torch.no_grad():
             limit = 1 + np.finfo(np.single).eps
             t1 = (abs(self.rj[:npoints, :nelems, 0, 0]) <= limit).reshape(
                 npoints, nelems, 1, 1
@@ -732,9 +956,7 @@ class LegendreInterpolator(MultiplePointInterpolator):
                     better_test = np.where(
                         test_error < test_pattern[real_index_pt_not_found_this_it]
                     )[0]
-                    set_as_found = np.where(
-                        test_error < test_pattern_for_found
-                    )[0]
+                    set_as_found = np.where(test_error < test_pattern_for_found)[0]
 
                     if len(better_test) > 0:
                         probes_rst[real_list[better_test], 0] = result_r[
@@ -945,6 +1167,7 @@ def update_checked_elements(
     for i in range(0, len(pt_not_found_indices)):
         checked_elements[pt_not_found_indices[i]].append(elem_to_check_per_point[i])
     return checked_elements
+
 
 def invert_jac(jac):
     """
