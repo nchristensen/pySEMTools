@@ -1380,7 +1380,7 @@ def get_bbox_centroids_and_max_dist(bbox):
     bbox_centroid[:, 1] = bbox[:, 2] + bbox_dist[:, 1] / 2
     bbox_centroid[:, 2] = bbox[:, 4] + bbox_dist[:, 2] / 2
 
-    return bbox_centroid, bbox_max_dist
+    return bbox_centroid, bbox_max_dist*(1 + 1e-2)
 
 
 def get_communication_pairs(self, global_rank_candidate_dict, comm):
