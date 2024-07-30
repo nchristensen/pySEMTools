@@ -231,8 +231,26 @@ class Probes:
         if write_coords:
 
             if rank == 0:
-                # Write the coordinates
-                write_csv(self.output_fname, self.probes, "w")
+                # Write the coordinates                
+                ## Set up the header
+                field_type_list = None
+                field_index_list = None    
+                if not isinstance(filename, NoneType):
+                    # Check if the keywords indicate that the interpolation is from file
+                    if "case" in self.params_file and "interpolate_fields" in self.params_file["case"] and "field_type" in self.params_file["case"]["interpolate_fields"]:
+                        field_type_list = self.params_file["case"]["interpolate_fields"]["field_type"]
+                        field_index_list = self.params_file["case"]["interpolate_fields"]["field"]
+                         
+                ## Create the header
+                if isinstance(field_type_list, NoneType) or isinstance(field_index_list, NoneType):
+                    header = [self.probes.shape[0], 0, 0]
+                else:
+                    header = [self.probes.shape[0], len(field_type_list)]
+                    for i in range(len(field_type_list)):
+                        header.append(f'{field_type_list[i]}{field_index_list[i]}')
+                
+                ## Write the coordinates
+                write_csv(self.output_fname, self.probes, "w", header = header)
 
                 # Write out a file with the points with warnings
                 indices = np.where(self.itp.err_code != 1)[0]
@@ -534,7 +552,7 @@ def get_coordinates_from_hexadata(data):
     return x, y, z
 
 
-def write_csv(fname, data, mode):
+def write_csv(fname, data, mode, header = None):
     """write point positions to the file
 
     Parameters
@@ -558,6 +576,9 @@ def write_csv(fname, data, mode):
     outfile = open(fname, mode)
 
     writer = csv.writer(outfile)
+
+    if not isinstance(header, NoneType):
+        writer.writerow(header)
 
     for il in range(data.shape[0]):
         data_pos = data[il, :]
