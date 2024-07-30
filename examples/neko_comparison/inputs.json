@@ -1,0 +1,32 @@
+{
+"Version": 1.0,
+"case": {
+	"IO":{
+		"mesh_data": {
+        		"dataPath"           : "./",
+			"casename"           : "field",
+			"first_index"        : 0
+		},
+		"probe_data": {
+        		"dataPath"           : "./",
+			"casename"           : "points.csv",
+			"first_index"        : 0
+		},
+		"fld_data": {
+        		"dataPath"           : "./",
+			"casename"           : "field",
+			"first_index"        : 0
+		},
+		"output_data": {
+        		"dataPath"           : "./",
+			"casename"           : "interpolated_fields_python.csv",
+			"first_index"        : 0
+		}
+		},
+	"interpolate_fields":{
+		"number_of_files" : 51,
+		"field_type": ["vel"],
+		"field"     : [2]
+		}
+	}
+}

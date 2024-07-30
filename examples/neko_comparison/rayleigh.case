@@ -1,0 +1,87 @@
+{
+    "version": 1.0,
+    "case": {
+        "mesh_file": "box.nmsh",
+        "end_time": 50,
+        "timestep": 0.005,
+        "numerics": {
+            "time_order": 3,
+            "polynomial_order": 7,
+            "dealias": "true"
+        },
+        "fluid": {
+            "scheme": "pnpn",
+            "Ra": 1000000.0,
+            "Pr": 1.0,
+            "boundary_types": [
+                "w",
+                "w",
+                "w",
+                "w",
+                "w",
+                "w"
+            ],
+            "initial_condition": {
+                "type": "uniform",
+                "value": [
+                    0,
+                    0,
+                    0
+                ]
+            },
+            "source_terms": [
+                {
+                    "type": "boussinesq",
+                    "g": [
+                        0,
+                        0,
+                        1
+                    ],
+                    "reference_value": 0,
+                    "beta": 1
+                }
+            ],
+            "velocity_solver": {
+                "type": "cg",
+                "preconditioner": "jacobi",
+                "projection_space_size": 5,
+                "absolute_tolerance": 1e-06,
+                "max_iterations": 800
+            },
+            "pressure_solver": {
+                "type": "gmres",
+                "preconditioner": "hsmg",
+                "projection_space_size": 20,
+                "absolute_tolerance": 0.0001,
+                "max_iterations": 800
+            },
+            "output_control": "simulationtime",
+            "output_value": 1
+        },
+        "scalar": {
+            "boundary_types": [
+                "",
+                "",
+                "",
+                "",
+                "d=1",
+                "d=0"
+            ],
+            "initial_condition": {
+                "type": "user"
+            }
+        },
+        "simulation_components": [
+            {
+                "type": "probes",
+                "compute_control": "simulationtime",
+                "compute_value": 1,
+                "points_file": "points.csv",
+                "output_file": "output.csv",
+                "fields": [
+                    "w"
+                ]
+            }
+        ]
+    }
+}
