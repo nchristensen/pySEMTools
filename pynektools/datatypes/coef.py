@@ -463,13 +463,45 @@ class Coef:
         """
 
         if msh.create_connectivity:
+            if msh.lz > 1:
+                z_ind = [0, msh.lz - 1]
+            else:
+                z_ind = [0]
             tmp = np.copy(field)
-            for ind in range(0, len(msh.nonlinear_shared_points)):
-                ind1 = np.array(msh.nonlinear_indices[ind])
-                ind2 = np.array(msh.nonlinear_shared_points[ind])
-                field[ind1[:, 0], ind1[:, 1], ind1[:, 2], ind1[:, 3]] = np.mean(
-                    tmp[ind2[:, 0], ind2[:, 1], ind2[:, 2], ind2[:, 3]]
-                )
+
+            for e in range(0, msh.nelv):
+                # loop through all faces (3 loops required)
+                for k in z_ind:
+                    for j in range(0, msh.ly):
+                        for i in range(0, msh.lx):
+                            point = (msh.x[e, k, j, i], msh.y[e, k, j, i], msh.z[e, k, j, i])
+                            point = hash(point)
+                            shared_points = msh.coord_hash_to_shared_map[point]
+                            shared_points = nonlinear_index(shared_points, msh.lx, msh.ly, msh.lz)
+                            field_at_shared = np.array([tmp[shared_points[l]] for l in range(len(shared_points))])
+                            field[e, k, j, i] = np.mean(field_at_shared)
+
+                for j in [0, msh.ly-1]:
+                    for k in range(msh.lz):
+                        for i in range(msh.lx):
+                            point = (msh.x[e, k, j, i], msh.y[e, k, j, i], msh.z[e, k, j, i])
+                            point = hash(point)
+                            shared_points = msh.coord_hash_to_shared_map[point]
+                            shared_points = nonlinear_index(shared_points, msh.lx, msh.ly, msh.lz)
+                            field_at_shared = np.array([tmp[shared_points[l]] for l in range(len(shared_points))])
+                            field[e, k, j, i] = np.mean(field_at_shared)
+
+                
+                for i in [0, msh.lx-1]:
+                    for k in range(msh.lz):
+                        for j in range(msh.ly):
+                            point = (msh.x[e, k, j, i], msh.y[e, k, j, i], msh.z[e, k, j, i])
+                            point = hash(point)
+                            shared_points = msh.coord_hash_to_shared_map[point]
+                            shared_points = nonlinear_index(shared_points, msh.lx, msh.ly, msh.lz)
+                            field_at_shared = np.array([tmp[shared_points[l]] for l in range(len(shared_points))])
+                            field[e, k, j, i] = np.mean(field_at_shared)
+
         else:
             print("Mesh does not have connectivity data. Returning unmodified array")
 
@@ -812,3 +844,39 @@ def get_derivative_matrix(n, dim):
         dz = dz3d
 
     return dx, dy, dz, d_n
+
+def nonlinear_index(linear_index_, lx, ly, lz):
+    """
+    Map 1d index to 4d
+
+    This is an inverse of linear index.
+
+    Parameters
+    ----------
+    linear_index_ : list
+        List of 1d linear indices.
+    lx : int
+        Polynomial degree in x direction.
+    ly : int
+        Polynomial degree in y direction.
+    lz : int
+        Polynomial degree in z direction.
+    Returns
+    -------
+    list
+        List of 4d non linear indices correspoinf to the linear indices.
+    """
+    indices = []
+    for list_ in linear_index_:
+        index = np.zeros(4, dtype=int)
+        lin_idx = list_
+        index[3] = lin_idx / (lx * ly * lz)
+        index[2] = (lin_idx - (lx * ly * lz) * index[3]) / (lx * ly)
+        index[1] = (lin_idx - (lx * ly * lz) * index[3] - (lx * ly) * index[2]) / lx
+        index[0] = (
+            lin_idx - (lx * ly * lz) * index[3] - (lx * ly) * index[2] - lx * index[1]
+        )
+        ind = (index[3], index[2], index[1], index[0])
+        indices.append(ind)
+
+    return indices

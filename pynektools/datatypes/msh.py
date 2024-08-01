@@ -113,98 +113,51 @@ class Mesh:
         self.create_connectivity = create_connectivity
 
         if create_connectivity:
-            # Create a list with the points in the domain in a 2d array format.
-            # This is used for search trees
-            self.msh_list = np.zeros((self.nelv * self.lxyz, 3))
-            self.linear_indices = []
-            self.nonlinear_indices = []
-            counter = 0
+            if self.lz > 1:
+                z_ind = [0, self.lz - 1]
+            else:
+                z_ind = [0]
+            self.coord_hash_to_shared_map = dict()
             for e in range(0, self.nelv):
-                for k in range(0, self.lz):
+
+                # loop through all faces (3 loops required)
+
+                for k in z_ind:
                     for j in range(0, self.ly):
                         for i in range(0, self.lx):
-                            self.msh_list[
-                                linear_index(i, j, k, e, self.lx, self.ly, self.lz), 0
-                            ] = self.x[e, k, j, i]
-                            self.msh_list[
-                                linear_index(i, j, k, e, self.lx, self.ly, self.lz), 1
-                            ] = self.y[e, k, j, i]
-                            self.msh_list[
-                                linear_index(i, j, k, e, self.lx, self.ly, self.lz), 2
-                            ] = self.z[e, k, j, i]
-                            self.linear_indices.append([])
-                            self.nonlinear_indices.append([])
+                            point = (self.x[e, k, j, i], self.y[e, k, j, i], self.z[e, k, j, i])
+                            point = hash(point)
+                            if point in self.coord_hash_to_shared_map:
+                                #self.coord_hash_to_shared_map[point].append((e, k, j, i))
+                                self.coord_hash_to_shared_map[point].append(linear_index(i, j, k, e, self.lx, self.ly, self.lz))
+                            else:
+                                #self.coord_hash_to_shared_map[point] = [(e, k, j, i)]
+                                self.coord_hash_to_shared_map[point] = [linear_index(i, j, k, e, self.lx, self.ly, self.lz)]
+                
+                for j in [0, self.ly-1]:
+                    for k in range(self.lz):
+                        for i in range(self.lx):
+                            point = (self.x[e, k, j, i], self.y[e, k, j, i], self.z[e, k, j, i])
+                            point = hash(point)
+                            if point in self.coord_hash_to_shared_map:
+                                #self.coord_hash_to_shared_map[point].append((e, k, j, i))
+                                self.coord_hash_to_shared_map[point].append(linear_index(i, j, k, e, self.lx, self.ly, self.lz))
+                            else:
+                                #self.coord_hash_to_shared_map[point] = [(e, k, j, i)]
+                                self.coord_hash_to_shared_map[point] = [linear_index(i, j, k, e, self.lx, self.ly, self.lz)]
 
-                            self.linear_indices[counter].append(
-                                linear_index(i, j, k, e, self.lx, self.ly, self.lz)
-                            )
-                            self.nonlinear_indices[counter] = nonlinear_index(
-                                self.linear_indices[counter], self.lx, self.ly, self.lz
-                            )
-                            counter += 1
-
-            # List that the index where the points in the domain are shared
-            self.my_tree = KDTree(self.msh_list)
-            self.linear_shared_points = self.my_tree.query_ball_point(
-                x=self.msh_list,
-                r=1e-14,
-                p=2.0,
-                eps=0,
-                workers=1,
-                return_sorted=False,
-                return_length=False,
-            )
-
-            # List that show the index where the points in the domain are shared,
-            # here the "index" is a tuple (e, k, j, i)
-            self.nonlinear_shared_points = []
-            for i in range(0, len(self.linear_shared_points)):
-                self.nonlinear_shared_points.append(
-                    nonlinear_index(
-                        self.linear_shared_points[i], self.lx, self.ly, self.lz
-                    )
-                )
-
-            # Find which are the points that are on the boundary
-            self.boundary_points_in_rank = []
-            for shared_points in self.nonlinear_shared_points:
-                ## Check if the point only appears one time
-                ##(Points at element interfaces will appear more than once)
-                if len(shared_points) == 1:
-                    ## If only appearing once, continue
-                    for point_non_linear_index in shared_points:
-                        # ee = point_non_linear_index[0]
-                        kk = point_non_linear_index[1]
-                        jj = point_non_linear_index[2]
-                        ii = point_non_linear_index[3]
-
-                        if self.gdim == 2:
-                            if (
-                                ii == 0
-                                or ii == (self.lx - 1)
-                                or jj == 0
-                                or jj == (self.ly - 1)
-                            ):
-                                # If any of these conditions is true, the point is in a facet
-                                # and it is not shared, then it should be in a boundrary
-                                self.boundary_points_in_rank.append(
-                                    point_non_linear_index
-                                )
-                        else:
-                            if (
-                                ii == 0
-                                or ii == (self.lx - 1)
-                                or jj == 0
-                                or jj == (self.ly - 1)
-                                or kk == 0
-                                or kk == (self.lz - 1)
-                            ):
-                                # If any of these conditions is true, the point is in a facet
-                                # and it is not shared, then it should be in a boundrary
-                                self.boundary_points_in_rank.append(
-                                    point_non_linear_index
-                                )
-
+                
+                for i in [0, self.lx-1]:
+                    for k in range(self.lz):
+                        for j in range(self.ly):
+                            point = (self.x[e, k, j, i], self.y[e, k, j, i], self.z[e, k, j, i])
+                            point = hash(point)
+                            if point in self.coord_hash_to_shared_map:
+                                #self.coord_hash_to_shared_map[point].append((e, k, j, i))
+                                self.coord_hash_to_shared_map[point].append(linear_index(i, j, k, e, self.lx, self.ly, self.lz))
+                            else:
+                                #self.coord_hash_to_shared_map[point] = [(e, k, j, i)]
+                                self.coord_hash_to_shared_map[point] = [linear_index(i, j, k, e, self.lx, self.ly, self.lz)]
 
 def linear_index(i, j, k, l, lx, ly, lz):
     """
