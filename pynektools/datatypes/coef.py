@@ -474,32 +474,64 @@ class Coef:
                 for k in z_ind:
                     for j in range(0, msh.ly):
                         for i in range(0, msh.lx):
-                            point = (msh.x[e, k, j, i], msh.y[e, k, j, i], msh.z[e, k, j, i])
+                            point = (
+                                msh.x[e, k, j, i],
+                                msh.y[e, k, j, i],
+                                msh.z[e, k, j, i],
+                            )
                             point = hash(point)
                             shared_points = msh.coord_hash_to_shared_map[point]
-                            shared_points = nonlinear_index(shared_points, msh.lx, msh.ly, msh.lz)
-                            field_at_shared = np.array([tmp[shared_points[l]] for l in range(len(shared_points))])
+                            shared_points = nonlinear_index(
+                                shared_points, msh.lx, msh.ly, msh.lz
+                            )
+                            field_at_shared = np.array(
+                                [
+                                    tmp[shared_points[l]]
+                                    for l in range(len(shared_points))
+                                ]
+                            )
                             field[e, k, j, i] = np.mean(field_at_shared)
 
-                for j in [0, msh.ly-1]:
+                for j in [0, msh.ly - 1]:
                     for k in range(msh.lz):
                         for i in range(msh.lx):
-                            point = (msh.x[e, k, j, i], msh.y[e, k, j, i], msh.z[e, k, j, i])
+                            point = (
+                                msh.x[e, k, j, i],
+                                msh.y[e, k, j, i],
+                                msh.z[e, k, j, i],
+                            )
                             point = hash(point)
                             shared_points = msh.coord_hash_to_shared_map[point]
-                            shared_points = nonlinear_index(shared_points, msh.lx, msh.ly, msh.lz)
-                            field_at_shared = np.array([tmp[shared_points[l]] for l in range(len(shared_points))])
+                            shared_points = nonlinear_index(
+                                shared_points, msh.lx, msh.ly, msh.lz
+                            )
+                            field_at_shared = np.array(
+                                [
+                                    tmp[shared_points[l]]
+                                    for l in range(len(shared_points))
+                                ]
+                            )
                             field[e, k, j, i] = np.mean(field_at_shared)
 
-                
-                for i in [0, msh.lx-1]:
+                for i in [0, msh.lx - 1]:
                     for k in range(msh.lz):
                         for j in range(msh.ly):
-                            point = (msh.x[e, k, j, i], msh.y[e, k, j, i], msh.z[e, k, j, i])
+                            point = (
+                                msh.x[e, k, j, i],
+                                msh.y[e, k, j, i],
+                                msh.z[e, k, j, i],
+                            )
                             point = hash(point)
                             shared_points = msh.coord_hash_to_shared_map[point]
-                            shared_points = nonlinear_index(shared_points, msh.lx, msh.ly, msh.lz)
-                            field_at_shared = np.array([tmp[shared_points[l]] for l in range(len(shared_points))])
+                            shared_points = nonlinear_index(
+                                shared_points, msh.lx, msh.ly, msh.lz
+                            )
+                            field_at_shared = np.array(
+                                [
+                                    tmp[shared_points[l]]
+                                    for l in range(len(shared_points))
+                                ]
+                            )
                             field[e, k, j, i] = np.mean(field_at_shared)
 
         else:
@@ -844,6 +876,7 @@ def get_derivative_matrix(n, dim):
         dz = dz3d
 
     return dx, dy, dz, d_n
+
 
 def nonlinear_index(linear_index_, lx, ly, lz):
     """

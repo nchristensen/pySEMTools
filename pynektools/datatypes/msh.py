@@ -125,39 +125,63 @@ class Mesh:
                 for k in z_ind:
                     for j in range(0, self.ly):
                         for i in range(0, self.lx):
-                            point = (self.x[e, k, j, i], self.y[e, k, j, i], self.z[e, k, j, i])
+                            point = (
+                                self.x[e, k, j, i],
+                                self.y[e, k, j, i],
+                                self.z[e, k, j, i],
+                            )
                             point = hash(point)
                             if point in self.coord_hash_to_shared_map:
-                                #self.coord_hash_to_shared_map[point].append((e, k, j, i))
-                                self.coord_hash_to_shared_map[point].append(linear_index(i, j, k, e, self.lx, self.ly, self.lz))
+                                # self.coord_hash_to_shared_map[point].append((e, k, j, i))
+                                self.coord_hash_to_shared_map[point].append(
+                                    linear_index(i, j, k, e, self.lx, self.ly, self.lz)
+                                )
                             else:
-                                #self.coord_hash_to_shared_map[point] = [(e, k, j, i)]
-                                self.coord_hash_to_shared_map[point] = [linear_index(i, j, k, e, self.lx, self.ly, self.lz)]
-                
-                for j in [0, self.ly-1]:
+                                # self.coord_hash_to_shared_map[point] = [(e, k, j, i)]
+                                self.coord_hash_to_shared_map[point] = [
+                                    linear_index(i, j, k, e, self.lx, self.ly, self.lz)
+                                ]
+
+                for j in [0, self.ly - 1]:
                     for k in range(self.lz):
                         for i in range(self.lx):
-                            point = (self.x[e, k, j, i], self.y[e, k, j, i], self.z[e, k, j, i])
+                            point = (
+                                self.x[e, k, j, i],
+                                self.y[e, k, j, i],
+                                self.z[e, k, j, i],
+                            )
                             point = hash(point)
                             if point in self.coord_hash_to_shared_map:
-                                #self.coord_hash_to_shared_map[point].append((e, k, j, i))
-                                self.coord_hash_to_shared_map[point].append(linear_index(i, j, k, e, self.lx, self.ly, self.lz))
+                                # self.coord_hash_to_shared_map[point].append((e, k, j, i))
+                                self.coord_hash_to_shared_map[point].append(
+                                    linear_index(i, j, k, e, self.lx, self.ly, self.lz)
+                                )
                             else:
-                                #self.coord_hash_to_shared_map[point] = [(e, k, j, i)]
-                                self.coord_hash_to_shared_map[point] = [linear_index(i, j, k, e, self.lx, self.ly, self.lz)]
+                                # self.coord_hash_to_shared_map[point] = [(e, k, j, i)]
+                                self.coord_hash_to_shared_map[point] = [
+                                    linear_index(i, j, k, e, self.lx, self.ly, self.lz)
+                                ]
 
-                
-                for i in [0, self.lx-1]:
+                for i in [0, self.lx - 1]:
                     for k in range(self.lz):
                         for j in range(self.ly):
-                            point = (self.x[e, k, j, i], self.y[e, k, j, i], self.z[e, k, j, i])
+                            point = (
+                                self.x[e, k, j, i],
+                                self.y[e, k, j, i],
+                                self.z[e, k, j, i],
+                            )
                             point = hash(point)
                             if point in self.coord_hash_to_shared_map:
-                                #self.coord_hash_to_shared_map[point].append((e, k, j, i))
-                                self.coord_hash_to_shared_map[point].append(linear_index(i, j, k, e, self.lx, self.ly, self.lz))
+                                # self.coord_hash_to_shared_map[point].append((e, k, j, i))
+                                self.coord_hash_to_shared_map[point].append(
+                                    linear_index(i, j, k, e, self.lx, self.ly, self.lz)
+                                )
                             else:
-                                #self.coord_hash_to_shared_map[point] = [(e, k, j, i)]
-                                self.coord_hash_to_shared_map[point] = [linear_index(i, j, k, e, self.lx, self.ly, self.lz)]
+                                # self.coord_hash_to_shared_map[point] = [(e, k, j, i)]
+                                self.coord_hash_to_shared_map[point] = [
+                                    linear_index(i, j, k, e, self.lx, self.ly, self.lz)
+                                ]
+
 
 def linear_index(i, j, k, l, lx, ly, lz):
     """
