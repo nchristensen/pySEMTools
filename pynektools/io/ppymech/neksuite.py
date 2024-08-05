@@ -14,6 +14,25 @@ from .parallel_io import (
     fld_file_write_vector_metadata,
     fld_file_write_metadata,
 )
+from memory_profiler import profile
+
+class MemMonitor():
+    def __init__(self, comm):
+        
+        self.comm = comm
+        self.base_mem = memory_usage()[0]
+        self.mem_usage = self.base_mem
+        self.history = dict()
+
+    def report_memory(self, msg):
+        self.delta = memory_usage()[0] - self.mem_usage
+        self.mem_usage = memory_usage()[0]
+        print(msg + f": Rank: {self.comm.Get_rank()} memory usage: {self.mem_usage} MiB, delta: {self.delta} MiB")
+        report = dict()
+        report["memory"] = self.mem_usage
+        report["delta"] = self.delta
+        report['msg'] = msg
+        self.history[msg] = report
 
 
 class IoHelper:
@@ -25,9 +44,10 @@ class IoHelper:
     :meta private:
     """
 
-    def __init__(self, h):
+    def __init__(self, h, pynek_dtype = np.double):
 
         self.fld_data_size = h.wdsz
+        self.pynek_dtype = pynek_dtype
         self.lx = h.orders[0]
         self.ly = h.orders[1]
         self.lz = h.orders[2]
@@ -176,15 +196,167 @@ class IoHelper:
 
     def allocate_temporal_arrays(self):
         """'Allocate temporal arrays for reading and writing fields"""
-        self.tmp_sp_vector = np.zeros(self.gdim * self.n, dtype=np.single)
-        self.tmp_dp_vector = np.zeros(self.gdim * self.n, dtype=np.double)
-        self.tmp_sp_field = np.zeros(self.n, dtype=np.single)
-        self.tmp_dp_field = np.zeros(self.n, dtype=np.double)
+        if self.fld_data_size == 4:
+            self.tmp_sp_vector = np.zeros(self.gdim * self.n, dtype=np.single)
+            self.tmp_sp_field = np.zeros(self.n, dtype=np.single)
+        elif self.fld_data_size == 8:
+            self.tmp_dp_vector = np.zeros(self.gdim * self.n, dtype=np.double)
+            self.tmp_dp_field = np.zeros(self.n, dtype=np.double)
 
-
-def preadnek(filename, comm, data_dtype="float64"):
+#@profile
+def preadnek(filename, comm, data_dtype=np.double):
     """
     Read and fld file and return a pymech hexadata object (Parallel).
+
+    Main function for readinf nek type fld filed.
+
+    Parameters
+    ----------
+    filename : str
+        The filename of the fld file.
+        
+    comm : Comm
+        MPI communicator.
+        
+    data_dtype : str
+        The data type of the data in the file. (Default value = "float64").
+
+    Returns
+    -------
+    HexaData
+        The data read from the file in a pymech hexadata object.
+    
+    Examples
+    --------
+    >>> from mpi4py import MPI
+    >>> from pynektools.io.ppymech.neksuite import preadnek
+    >>> comm = MPI.COMM_WORLD
+    >>> data = preadnek('field00001.fld', comm)
+    """
+
+    mpi_int_size = MPI.INT.Get_size()
+    mpi_real_size = MPI.REAL.Get_size()
+    # mpi_double_size = MPI.DOUBLE.Get_size()
+    mpi_character_size = MPI.CHARACTER.Get_size()
+
+    # Read the header
+    header = read_header(filename)
+
+    # Initialize the io helper
+    ioh = IoHelper(header, pynek_dtype=data_dtype)
+
+    # Find the appropiate partitioning of the file
+    # ioh.element_mapping(comm)
+    ioh.element_mapping_load_balanced_linear(comm)
+
+    # allocate temporal arrays
+    ioh.allocate_temporal_arrays()
+
+    # Create the pymech hexadata object
+    data = HexaData(
+        header.nb_dims, ioh.nelv, header.orders, header.nb_vars, 0, dtype=data_dtype
+    )
+    data.time = header.time
+    data.istep = header.istep
+    data.wdsz = header.wdsz
+    data.endian = sys.byteorder
+
+    # Open the file
+    fh = MPI.File.Open(comm, filename, MPI.MODE_RDONLY)
+
+    # Read the test pattern
+    mpi_offset = 132 * mpi_character_size
+    test_pattern = np.zeros(1, dtype=np.single)
+    fh.Read_at_all(mpi_offset, test_pattern, status=None)
+
+    # Read the indices?
+    mpi_offset += mpi_real_size
+    idx = np.zeros(ioh.nelv, dtype=np.intc)
+    byte_offset = mpi_offset + ioh.offset_el * mpi_int_size
+    fh.Read_at_all(byte_offset, idx, status=None)
+    data.elmap = idx
+    mpi_offset += ioh.glb_nelv * mpi_int_size
+
+    # Read the coordinates
+    if ioh.pos_variables > 0:
+        byte_offset = (
+            mpi_offset + ioh.offset_el * ioh.gdim * ioh.lxyz * ioh.fld_data_size
+        )
+        x = np.zeros(ioh.nelv * ioh.lxyz, dtype=ioh.pynek_dtype)
+        y = np.zeros(ioh.nelv * ioh.lxyz, dtype=ioh.pynek_dtype)
+        z = np.zeros(ioh.nelv * ioh.lxyz, dtype=ioh.pynek_dtype)
+        fld_file_read_vector_field(fh, byte_offset, ioh, x=x, y=y, z=z)
+        for e in range(0, ioh.nelv):
+            data.elem[e].pos[0, :, :, :] = x[e, :, :, :].copy()
+            data.elem[e].pos[1, :, :, :] = y[e, :, :, :].copy()
+            data.elem[e].pos[2, :, :, :] = z[e, :, :, :].copy()
+        mpi_offset += ioh.glb_nelv * ioh.gdim * ioh.lxyz * ioh.fld_data_size
+
+    # Read the velocity
+    if ioh.vel_variables > 0:
+        byte_offset = (
+            mpi_offset + ioh.offset_el * ioh.gdim * ioh.lxyz * ioh.fld_data_size
+        )
+
+        if 'x' not in locals():
+            x = np.zeros(ioh.nelv * ioh.lxyz, dtype=ioh.pynek_dtype)
+        if 'y' not in locals():
+            y = np.zeros(ioh.nelv * ioh.lxyz, dtype=ioh.pynek_dtype)
+        if 'z' not in locals():
+            z = np.zeros(ioh.nelv * ioh.lxyz, dtype=ioh.pynek_dtype)
+
+        u = x
+        v = y 
+        w = z
+        fld_file_read_vector_field(fh, byte_offset, ioh, x=u, y=v, z=w)
+        for e in range(0, ioh.nelv):
+            data.elem[e].vel[0, :, :, :] = u[e, :, :, :].copy()
+            data.elem[e].vel[1, :, :, :] = v[e, :, :, :].copy()
+            data.elem[e].vel[2, :, :, :] = w[e, :, :, :].copy()
+        mpi_offset += ioh.glb_nelv * ioh.gdim * ioh.lxyz * ioh.fld_data_size
+
+    # Read pressure
+    if ioh.pres_variables > 0:
+        byte_offset = mpi_offset + ioh.offset_el * 1 * ioh.lxyz * ioh.fld_data_size
+        
+        if 'x' not in locals():
+            x = np.zeros(ioh.nelv * ioh.lxyz, dtype=ioh.pynek_dtype)
+        
+        p = x
+        fld_file_read_field(fh, byte_offset, ioh, x=p)
+        for e in range(0, ioh.nelv):
+            data.elem[e].pres[0, :, :, :] = p[e, :, :, :].copy()
+        mpi_offset += ioh.glb_nelv * 1 * ioh.lxyz * ioh.fld_data_size
+
+    # Read temperature
+    if ioh.temp_variables > 0:
+        byte_offset = mpi_offset + ioh.offset_el * 1 * ioh.lxyz * ioh.fld_data_size
+        if 'x' not in locals():
+            x = np.zeros(ioh.nelv * ioh.lxyz, dtype=ioh.pynek_dtype)
+        t = x
+        fld_file_read_field(fh, byte_offset, ioh, x=t)
+        for e in range(0, ioh.nelv):
+            data.elem[e].temp[0, :, :, :] = t[e, :, :, :].copy()
+        mpi_offset += ioh.glb_nelv * 1 * ioh.lxyz * ioh.fld_data_size
+
+    # Read scalars
+    for var in range(0, ioh.scalar_variables):
+        byte_offset = mpi_offset + ioh.offset_el * 1 * ioh.lxyz * ioh.fld_data_size
+        if 'x' not in locals():
+            x = np.zeros(ioh.nelv * ioh.lxyz, dtype=ioh.pynek_dtype)
+        s = x
+        fld_file_read_field(fh, byte_offset, ioh, x=s)
+        for e in range(0, ioh.nelv):
+            data.elem[e].scal[var, :, :, :] = s[e, :, :, :].copy()
+        mpi_offset += ioh.glb_nelv * 1 * ioh.lxyz * ioh.fld_data_size
+
+    fh.Close()
+
+    return data
+
+def pynekread(filename, comm, data_dtype="float64", msh=None):
+    """
+    This routine reads nek file and returs a pynekobject (Parallel).
 
     Main function for readinf nek type fld filed.
 
@@ -229,15 +401,15 @@ def preadnek(filename, comm, data_dtype="float64"):
 
     # allocate temporal arrays
     ioh.allocate_temporal_arrays()
-
-    # Create the pymech hexadata object
-    data = HexaData(
-        header.nb_dims, ioh.nelv, header.orders, header.nb_vars, 0, dtype=data_dtype
-    )
-    data.time = header.time
-    data.istep = header.istep
-    data.wdsz = header.wdsz
-    data.endian = sys.byteorder
+    
+    ## Create the pymech hexadata object
+    #data = HexaData(
+    #    header.nb_dims, ioh.nelv, header.orders, header.nb_vars, 0, dtype=data_dtype
+    #)
+    #data.time = header.time
+    #data.istep = header.istep
+    #data.wdsz = header.wdsz
+    #data.endian = sys.byteorder
 
     # Open the file
     fh = MPI.File.Open(comm, filename, MPI.MODE_RDONLY)
@@ -252,62 +424,33 @@ def preadnek(filename, comm, data_dtype="float64"):
     idx = np.zeros(ioh.nelv, dtype=np.intc)
     byte_offset = mpi_offset + ioh.offset_el * mpi_int_size
     fh.Read_at_all(byte_offset, idx, status=None)
-    data.elmap = idx
+    #data.elmap = idx
     mpi_offset += ioh.glb_nelv * mpi_int_size
 
     # Read the coordinates
     if ioh.pos_variables > 0:
-        byte_offset = (
-            mpi_offset + ioh.offset_el * ioh.gdim * ioh.lxyz * ioh.fld_data_size
-        )
-        x, y, z = fld_file_read_vector_field(fh, byte_offset, ioh)
-        for e in range(0, ioh.nelv):
-            data.elem[e].pos[0, :, :, :] = x[e, :, :, :]
-            data.elem[e].pos[1, :, :, :] = y[e, :, :, :]
-            data.elem[e].pos[2, :, :, :] = z[e, :, :, :]
-        mpi_offset += ioh.glb_nelv * ioh.gdim * ioh.lxyz * ioh.fld_data_size
+        
+        if not isinstance(msh, type(None)):
+            byte_offset = (
+                mpi_offset + ioh.offset_el * ioh.gdim * ioh.lxyz * ioh.fld_data_size
+            )
+            x, y, z = fld_file_read_vector_field(fh, byte_offset, ioh)
+            
+            msh.init_from_coords(comm, x, y, z)
+            
+            mpi_offset += ioh.glb_nelv * ioh.gdim * ioh.lxyz * ioh.fld_data_size
+        else: 
+            mpi_offset += ioh.glb_nelv * ioh.gdim * ioh.lxyz * ioh.fld_data_size
 
-    # Read the velocity
-    if ioh.vel_variables > 0:
-        byte_offset = (
-            mpi_offset + ioh.offset_el * ioh.gdim * ioh.lxyz * ioh.fld_data_size
-        )
-        u, v, w = fld_file_read_vector_field(fh, byte_offset, ioh)
-        for e in range(0, ioh.nelv):
-            data.elem[e].vel[0, :, :, :] = u[e, :, :, :]
-            data.elem[e].vel[1, :, :, :] = v[e, :, :, :]
-            data.elem[e].vel[2, :, :, :] = w[e, :, :, :]
-        mpi_offset += ioh.glb_nelv * ioh.gdim * ioh.lxyz * ioh.fld_data_size
+    
+    
+    
+    
+    
+    fh.Close() 
+    return None
 
-    # Read pressure
-    if ioh.pres_variables > 0:
-        byte_offset = mpi_offset + ioh.offset_el * 1 * ioh.lxyz * ioh.fld_data_size
-        p = fld_file_read_field(fh, byte_offset, ioh)
-        for e in range(0, ioh.nelv):
-            data.elem[e].pres[0, :, :, :] = p[e, :, :, :]
-        mpi_offset += ioh.glb_nelv * 1 * ioh.lxyz * ioh.fld_data_size
-
-    # Read temperature
-    if ioh.temp_variables > 0:
-        byte_offset = mpi_offset + ioh.offset_el * 1 * ioh.lxyz * ioh.fld_data_size
-        t = fld_file_read_field(fh, byte_offset, ioh)
-        for e in range(0, ioh.nelv):
-            data.elem[e].temp[0, :, :, :] = t[e, :, :, :]
-        mpi_offset += ioh.glb_nelv * 1 * ioh.lxyz * ioh.fld_data_size
-
-    # Read scalars
-    for var in range(0, ioh.scalar_variables):
-        byte_offset = mpi_offset + ioh.offset_el * 1 * ioh.lxyz * ioh.fld_data_size
-        s = fld_file_read_field(fh, byte_offset, ioh)
-        for e in range(0, ioh.nelv):
-            data.elem[e].scal[var, :, :, :] = s[e, :, :, :]
-        mpi_offset += ioh.glb_nelv * 1 * ioh.lxyz * ioh.fld_data_size
-
-    fh.Close()
-
-    return data
-
-
+#@profile
 def pwritenek(filename, data, comm):
     """
     Write and fld file and from a pymech hexadata object (Parallel).
@@ -401,13 +544,14 @@ def pwritenek(filename, data, comm):
 
     # Write the coordinates
     if ioh.pos_variables > 0:
-        x = np.zeros((ioh.nelv, ioh.lz, ioh.ly, ioh.lx), dtype=np.double)
-        y = np.zeros((ioh.nelv, ioh.lz, ioh.ly, ioh.lx), dtype=np.double)
-        z = np.zeros((ioh.nelv, ioh.lz, ioh.ly, ioh.lx), dtype=np.double)
+        ddtype = data.elem[0].pos.dtype
+        x = np.zeros((ioh.nelv, ioh.lz, ioh.ly, ioh.lx), dtype=ddtype)
+        y = np.zeros((ioh.nelv, ioh.lz, ioh.ly, ioh.lx), dtype=ddtype)
+        z = np.zeros((ioh.nelv, ioh.lz, ioh.ly, ioh.lx), dtype=ddtype)
         for e in range(0, ioh.nelv):
-            x[e, :, :, :] = data.elem[e].pos[0, :, :, :]
-            y[e, :, :, :] = data.elem[e].pos[1, :, :, :]
-            z[e, :, :, :] = data.elem[e].pos[2, :, :, :]
+            x[e, :, :, :] = data.elem[e].pos[0, :, :, :].copy()
+            y[e, :, :, :] = data.elem[e].pos[1, :, :, :].copy()
+            z[e, :, :, :] = data.elem[e].pos[2, :, :, :].copy()
         byte_offset = (
             mpi_offset + ioh.offset_el * ioh.gdim * ioh.lxyz * ioh.fld_data_size
         )
@@ -416,13 +560,22 @@ def pwritenek(filename, data, comm):
 
     # Write the velocity
     if ioh.vel_variables > 0:
-        u = np.zeros((ioh.nelv, ioh.lz, ioh.ly, ioh.lx), dtype=np.double)
-        v = np.zeros((ioh.nelv, ioh.lz, ioh.ly, ioh.lx), dtype=np.double)
-        w = np.zeros((ioh.nelv, ioh.lz, ioh.ly, ioh.lx), dtype=np.double)
+        ddtype = data.elem[0].vel.dtype
+        if 'x' not in locals():
+            x = np.zeros((ioh.nelv, ioh.lz, ioh.ly, ioh.lx), dtype=ddtype)
+        if 'y' not in locals():
+            y = np.zeros((ioh.nelv, ioh.lz, ioh.ly, ioh.lx), dtype=ddtype) 
+        if 'z' not in locals():
+            z = np.zeros((ioh.nelv, ioh.lz, ioh.ly, ioh.lx), dtype=ddtype)
+        
+        u = x.reshape(ioh.nelv, ioh.lz, ioh.ly, ioh.lx)
+        v = y.reshape(ioh.nelv, ioh.lz, ioh.ly, ioh.lx)
+        w = z.reshape(ioh.nelv, ioh.lz, ioh.ly, ioh.lx)
+
         for e in range(0, ioh.nelv):
-            u[e, :, :, :] = data.elem[e].vel[0, :, :, :]
-            v[e, :, :, :] = data.elem[e].vel[1, :, :, :]
-            w[e, :, :, :] = data.elem[e].vel[2, :, :, :]
+            u[e, :, :, :] = data.elem[e].vel[0, :, :, :].copy()
+            v[e, :, :, :] = data.elem[e].vel[1, :, :, :].copy()
+            w[e, :, :, :] = data.elem[e].vel[2, :, :, :].copy()
         byte_offset = (
             mpi_offset + ioh.offset_el * ioh.gdim * ioh.lxyz * ioh.fld_data_size
         )
@@ -431,27 +584,39 @@ def pwritenek(filename, data, comm):
 
     # Write pressure
     if ioh.pres_variables > 0:
-        p = np.zeros((ioh.nelv, ioh.lz, ioh.ly, ioh.lx), dtype=np.double)
+        ddtype = data.elem[0].pres.dtype
+        if 'x' not in locals():
+            x = np.zeros((ioh.nelv, ioh.lz, ioh.ly, ioh.lx), dtype=ddtype)
+        
+        p = x.reshape(ioh.nelv, ioh.lz, ioh.ly, ioh.lx)
         for e in range(0, ioh.nelv):
-            p[e, :, :, :] = data.elem[e].pres[0, :, :, :]
+            p[e, :, :, :] = data.elem[e].pres[0, :, :, :].copy()
         byte_offset = mpi_offset + ioh.offset_el * 1 * ioh.lxyz * ioh.fld_data_size
         fld_file_write_field(fh, byte_offset, p, ioh)
         mpi_offset += ioh.glb_nelv * 1 * ioh.lxyz * ioh.fld_data_size
 
     # Write Temperature
     if ioh.temp_variables > 0:
-        t = np.zeros((ioh.nelv, ioh.lz, ioh.ly, ioh.lx), dtype=np.double)
+        ddtype = data.elem[0].temp.dtype
+        if 'x' not in locals():
+            x = np.zeros((ioh.nelv, ioh.lz, ioh.ly, ioh.lx), dtype=ddtype)
+        
+        t = x.reshape(ioh.nelv, ioh.lz, ioh.ly, ioh.lx)
         for e in range(0, ioh.nelv):
-            t[e, :, :, :] = data.elem[e].temp[0, :, :, :]
+            t[e, :, :, :] = data.elem[e].temp[0, :, :, :].copy()
         byte_offset = mpi_offset + ioh.offset_el * 1 * ioh.lxyz * ioh.fld_data_size
         fld_file_write_field(fh, byte_offset, t, ioh)
         mpi_offset += ioh.glb_nelv * 1 * ioh.lxyz * ioh.fld_data_size
 
     # Write scalars
     for var in range(0, ioh.scalar_variables):
-        s = np.zeros((ioh.nelv, ioh.lz, ioh.ly, ioh.lx), dtype=np.double)
+        ddtype = data.elem[0].scal.dtype
+        if 'x' not in locals():
+            x = np.zeros((ioh.nelv, ioh.lz, ioh.ly, ioh.lx), dtype=ddtype)
+        
+        s = x.reshape(ioh.nelv, ioh.lz, ioh.ly, ioh.lx)
         for e in range(0, ioh.nelv):
-            s[e, :, :, :] = data.elem[e].scal[var, :, :, :]
+            s[e, :, :, :] = data.elem[e].scal[var, :, :, :].copy()
         byte_offset = mpi_offset + ioh.offset_el * 1 * ioh.lxyz * ioh.fld_data_size
         fld_file_write_field(fh, byte_offset, s, ioh)
         mpi_offset += ioh.glb_nelv * 1 * ioh.lxyz * ioh.fld_data_size
@@ -461,9 +626,18 @@ def pwritenek(filename, data, comm):
 
         # Write the coordinates
         if ioh.pos_variables > 0:
-            x = np.zeros((ioh.nelv, ioh.lz, ioh.ly, ioh.lx), dtype=np.double)
-            y = np.zeros((ioh.nelv, ioh.lz, ioh.ly, ioh.lx), dtype=np.double)
-            z = np.zeros((ioh.nelv, ioh.lz, ioh.ly, ioh.lx), dtype=np.double)
+            ddtype = data.elem[0].pos.dtype
+            if 'x' not in locals():
+                x = np.zeros((ioh.nelv, ioh.lz, ioh.ly, ioh.lx), dtype=ddtype)
+            if 'y' not in locals():
+                y = np.zeros((ioh.nelv, ioh.lz, ioh.ly, ioh.lx), dtype=ddtype) 
+            if 'z' not in locals():
+                z = np.zeros((ioh.nelv, ioh.lz, ioh.ly, ioh.lx), dtype=ddtype)
+            
+            x = x.reshape(ioh.nelv, ioh.lz, ioh.ly, ioh.lx)
+            y = y.reshape(ioh.nelv, ioh.lz, ioh.ly, ioh.lx)
+            z = z.reshape(ioh.nelv, ioh.lz, ioh.ly, ioh.lx)
+
             for e in range(0, ioh.nelv):
                 x[e, :, :, :] = data.elem[e].pos[0, :, :, :]
                 y[e, :, :, :] = data.elem[e].pos[1, :, :, :]
@@ -474,9 +648,17 @@ def pwritenek(filename, data, comm):
 
         # Write the velocity
         if ioh.vel_variables > 0:
-            u = np.zeros((ioh.nelv, ioh.lz, ioh.ly, ioh.lx), dtype=np.double)
-            v = np.zeros((ioh.nelv, ioh.lz, ioh.ly, ioh.lx), dtype=np.double)
-            w = np.zeros((ioh.nelv, ioh.lz, ioh.ly, ioh.lx), dtype=np.double)
+            ddtype = data.elem[0].vel.dtype
+            if 'x' not in locals():
+                x = np.zeros((ioh.nelv, ioh.lz, ioh.ly, ioh.lx), dtype=ddtype)
+            if 'y' not in locals():
+                y = np.zeros((ioh.nelv, ioh.lz, ioh.ly, ioh.lx), dtype=ddtype) 
+            if 'z' not in locals():
+                z = np.zeros((ioh.nelv, ioh.lz, ioh.ly, ioh.lx), dtype=ddtype)
+            
+            u = x.reshape(ioh.nelv, ioh.lz, ioh.ly, ioh.lx)
+            v = y.reshape(ioh.nelv, ioh.lz, ioh.ly, ioh.lx)
+            w = z.reshape(ioh.nelv, ioh.lz, ioh.ly, ioh.lx)
             for e in range(0, ioh.nelv):
                 u[e, :, :, :] = data.elem[e].vel[0, :, :, :]
                 v[e, :, :, :] = data.elem[e].vel[1, :, :, :]
@@ -487,7 +669,11 @@ def pwritenek(filename, data, comm):
 
         # Write pressure
         if ioh.pres_variables > 0:
-            p = np.zeros((ioh.nelv, ioh.lz, ioh.ly, ioh.lx), dtype=np.double)
+            ddtype = data.elem[0].pres.dtype
+            if 'x' not in locals():
+                x = np.zeros((ioh.nelv, ioh.lz, ioh.ly, ioh.lx), dtype=ddtype) 
+            
+            p = x.reshape(ioh.nelv, ioh.lz, ioh.ly, ioh.lx)
             for e in range(0, ioh.nelv):
                 p[e, :, :, :] = data.elem[e].pres[0, :, :, :]
             byte_offset = mpi_offset + ioh.offset_el * 1 * 2 * ioh.fld_data_size
@@ -496,7 +682,11 @@ def pwritenek(filename, data, comm):
 
         # Write Temperature
         if ioh.temp_variables > 0:
-            t = np.zeros((ioh.nelv, ioh.lz, ioh.ly, ioh.lx), dtype=np.double)
+            ddtype = data.elem[0].temp.dtype
+            if 'x' not in locals():
+                x = np.zeros((ioh.nelv, ioh.lz, ioh.ly, ioh.lx), dtype=ddtype) 
+            
+            t = x.reshape(ioh.nelv, ioh.lz, ioh.ly, ioh.lx)
             for e in range(0, ioh.nelv):
                 t[e, :, :, :] = data.elem[e].temp[0, :, :, :]
             byte_offset = mpi_offset + ioh.offset_el * 1 * 2 * ioh.fld_data_size
@@ -505,7 +695,11 @@ def pwritenek(filename, data, comm):
 
         # Write scalars
         for var in range(0, ioh.scalar_variables):
-            s = np.zeros((ioh.nelv, ioh.lz, ioh.ly, ioh.lx), dtype=np.double)
+            ddtype = data.elem[0].scal.dtype
+            if 'x' not in locals():
+                x = np.zeros((ioh.nelv, ioh.lz, ioh.ly, ioh.lx), dtype=ddtype) 
+            
+            s = x.reshape(ioh.nelv, ioh.lz, ioh.ly, ioh.lx)
             for e in range(0, ioh.nelv):
                 s[e, :, :, :] = data.elem[e].scal[var, :, :, :]
             byte_offset = mpi_offset + ioh.offset_el * 1 * 2 * ioh.fld_data_size

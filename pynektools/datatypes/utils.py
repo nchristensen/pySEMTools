@@ -18,7 +18,7 @@ NoneType = type(None)
 
 
 def create_hexadata_from_msh_fld(
-    msh=None, fld=None, wdsz=4, istep=0, time=0, data_dtype="float64", write_mesh=True
+    msh=None, fld=None, wdsz=4, istep=0, time=0, data_dtype=np.double, write_mesh=True
 ):
     """
     Create a HexaData object from a msh and fld object. Used to write fld files.
@@ -35,6 +35,7 @@ def create_hexadata_from_msh_fld(
          (Default value = None).
     wdsz : int
         Word size of data in number of bytes. 4 for single precision, 8 for double precision.
+        This is relevant when writing a file to disk, not to data processing in memory.
          (Default value = 4).
     istep : int
         Used for writing multistep files. Not really used in practice.
@@ -43,8 +44,8 @@ def create_hexadata_from_msh_fld(
         Time to use in the header of the file and HexaData object.
          (Default value = 0).
     data_dtype : str
-        Data type to be used. "float32" or "float64". Many things are currently hardcoded for float64.
-         (Default value = "float64")
+        Data type to be used in the hexadata type. "np.single" or "np.double".
+        (Default value = "np.double")
     write_mesh : bool
         If true, the mesh will be written to the HexaData object and posterior fld files.
          (Default value = True)
@@ -100,24 +101,24 @@ def create_hexadata_from_msh_fld(
     data.endian = sys.byteorder
 
     # Include the mesh
-    data = put_coordinates_in_hexadata_from_msh(data, msh)
+    put_coordinates_in_hexadata_from_msh(data, msh)
 
     # Include the fields
     for qoi in range(0, vel_fields):
         prefix = "vel"
-        data = put_field_in_hexadata(data, fld.fields[prefix][qoi], prefix, qoi)
+        put_field_in_hexadata(data, fld.fields[prefix][qoi], prefix, qoi)
 
     for qoi in range(0, pres_fields):
         prefix = "pres"
-        data = put_field_in_hexadata(data, fld.fields[prefix][qoi], prefix, qoi)
+        put_field_in_hexadata(data, fld.fields[prefix][qoi], prefix, qoi)
 
     for qoi in range(0, temp_fields):
         prefix = "temp"
-        data = put_field_in_hexadata(data, fld.fields[prefix][qoi], prefix, qoi)
+        put_field_in_hexadata(data, fld.fields[prefix][qoi], prefix, qoi)
 
     for qoi in range(0, scal_fields):
         prefix = "scal"
-        data = put_field_in_hexadata(data, fld.fields[prefix][qoi], prefix, qoi)
+        put_field_in_hexadata(data, fld.fields[prefix][qoi], prefix, qoi)
 
     return data
 
@@ -152,7 +153,7 @@ def put_coordinates_in_hexadata_from_msh(data, msh):
         data.elem[e].pos[1, :, :, :] = msh.y[e, :, :, :]
         data.elem[e].pos[2, :, :, :] = msh.z[e, :, :, :]
 
-    return data
+    return
 
 
 def put_field_in_hexadata(data, field, prefix, qoi):
@@ -200,7 +201,7 @@ def put_field_in_hexadata(data, field, prefix, qoi):
         for e in range(0, nelv):
             data.elem[e].scal[qoi, :, :, :] = field[e, :, :, :]
 
-    return data
+    return
 
 
 def get_gradient(msh, coef, field_list=None):

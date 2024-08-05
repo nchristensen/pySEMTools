@@ -2,8 +2,7 @@
 
 import numpy as np
 
-
-def fld_file_read_vector_field(fh, byte_offset, ioh):
+def fld_file_read_vector_field(fh, byte_offset, ioh, x=None, y=None, z=None):
     """Function used to read a vector field from a fld file"""
 
     # Associate
@@ -18,9 +17,16 @@ def fld_file_read_vector_field(fh, byte_offset, ioh):
     tmp_dp_vector = ioh.tmp_dp_vector
 
     # Allocate
-    x = np.zeros(nelv * lxyz, dtype=np.double)
-    y = np.zeros(nelv * lxyz, dtype=np.double)
-    z = np.zeros(nelv * lxyz, dtype=np.double)
+    return_values = False
+    if isinstance(x, type(None)) or isinstance(y, type(None)) or isinstance(z, type(None)):
+        x = np.zeros(nelv * lxyz, dtype=ioh.pynek_dtype)
+        y = np.zeros(nelv * lxyz, dtype=ioh.pynek_dtype)
+        z = np.zeros(nelv * lxyz, dtype=ioh.pynek_dtype)
+        return_values = True
+    else:
+        x.shape = (nelv * lxyz)
+        y.shape = (nelv * lxyz)
+        z.shape = (nelv * lxyz)
 
     # Read
     if fld_data_size == 4:
@@ -53,14 +59,17 @@ def fld_file_read_vector_field(fh, byte_offset, ioh):
                     i += 1
 
     # Reshape to pymech compatible
-    x = x.reshape((nelv, lz, ly, lx))
-    y = y.reshape((nelv, lz, ly, lx))
-    z = z.reshape((nelv, lz, ly, lx))
+    x.shape = (nelv, lz, ly, lx)
+    y.shape = (nelv, lz, ly, lx)
+    z.shape = (nelv, lz, ly, lx)
 
-    return x, y, z
+    if return_values:
+        return x, y, z
+    else:
+        return
 
 
-def fld_file_read_field(fh, byte_offset, ioh):
+def fld_file_read_field(fh, byte_offset, ioh, x=None):
     """Function used to read a scalar field from a fld file"""
 
     # Associate
@@ -74,7 +83,12 @@ def fld_file_read_field(fh, byte_offset, ioh):
     tmp_dp_field = ioh.tmp_dp_field
 
     # Allocate
-    x = np.zeros(nelv * lxyz, dtype=np.double)
+    return_values = False
+    if isinstance(x, type(None)):
+        x = np.zeros(nelv * lxyz, dtype=ioh.pynek_dtype)
+        return_values = True
+    else:
+        x.shape = (nelv * lxyz)
 
     # Read
     if fld_data_size == 4:
@@ -93,9 +107,12 @@ def fld_file_read_field(fh, byte_offset, ioh):
                 i += 1
 
     # Reshape to pymech compatible
-    x = x.reshape((nelv, lz, ly, lx))
+    x.shape = (nelv, lz, ly, lx)
 
-    return x
+    if return_values:
+        return x
+    else:
+        return
 
 
 def fld_file_write_vector_field(fh, byte_offset, x, y, z, ioh):
@@ -110,9 +127,9 @@ def fld_file_write_vector_field(fh, byte_offset, x, y, z, ioh):
     tmp_dp_vector = ioh.tmp_dp_vector
 
     # Reshape to be a column
-    x = x.reshape((nelv * lxyz))
-    y = y.reshape((nelv * lxyz))
-    z = z.reshape((nelv * lxyz))
+    x.shape = (nelv * lxyz)
+    y.shape = (nelv * lxyz)
+    z.shape = (nelv * lxyz)
 
     # Write
     if fld_data_size == 4:
@@ -162,7 +179,7 @@ def fld_file_write_field(fh, byte_offset, x, ioh):
     tmp_dp_field = ioh.tmp_dp_field
 
     # Reshape to single column
-    x = x.reshape((nelv * lxyz))
+    x.shape = (nelv * lxyz)
 
     # Write
     if fld_data_size == 4:

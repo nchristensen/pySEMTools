@@ -1,7 +1,6 @@
 """ Module that contains msh class, which contains relevant data on the domain"""
 
 import numpy as np
-from scipy.spatial import KDTree
 
 NoneType = type(None)
 
@@ -73,12 +72,40 @@ class Mesh:
         self, comm, data=None, x=None, y=None, z=None, create_connectivity=True
     ):
 
+        self.create_connectivity_bool = create_connectivity
+        
         if not isinstance(data, NoneType):
-            self.x, self.y, self.z = get_coordinates_from_hexadata(data)
+            self.init_from_data(comm, data)
+
+        elif not isinstance(x, NoneType) and not isinstance(y, NoneType) and not isinstance(z, NoneType):
+            self.init_from_coords(comm, x, y, z)
+        
         else:
-            self.x = x
-            self.y = y
-            self.z = z
+            if comm.rank == 0:
+                print("Initializing empty Mesh object.")
+        
+
+    def init_from_data(self, comm, data):
+            
+        if comm.rank == 0:
+            print("Initializing Mesh object from HexaData object.")
+            
+        self.x, self.y, self.z = get_coordinates_from_hexadata(data)
+        
+        self.init_common(comm)
+
+    def init_from_coords(self, comm, x, y, z):
+        
+        if comm.rank == 0:
+            print("Initializing Mesh object from x,y,z ndarrays.")
+
+        self.x = x
+        self.y = y
+        self.z = z
+
+        self.init_common(comm)
+
+    def init_common(self, comm):
 
         self.lx = self.x.shape[
             3
@@ -110,9 +137,11 @@ class Mesh:
         else:
             self.gdim = 2
 
-        self.create_connectivity = create_connectivity
+        self.create_connectivity()
 
-        if create_connectivity:
+    def create_connectivity(self):
+
+        if self.create_connectivity_bool:
             if self.lz > 1:
                 z_ind = [0, self.lz - 1]
             else:
