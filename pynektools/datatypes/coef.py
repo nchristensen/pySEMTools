@@ -293,10 +293,43 @@ class Coef:
             print(f"coef data is of type: {self.B.dtype}") 
 
     def __memory_usage__(self, comm):
+        '''
+        Print the memory usage of the object.
+
+        This function is used to print the memory usage of the object.
+
+        Parameters
+        ----------
+        comm : Comm
+            MPI communicator object.
+        
+        Returns
+        -------
+        None
+
+        '''
         memory_usage = asizeof.asizeof(self) / (1024 ** 2) # Convert bytes to MB
         print(f"Rank: {comm.Get_rank()} - Memory usage of Coef: {memory_usage} MB")
            
     def __memory_usage_per_attribute__(self, comm, print_data=True):
+        '''
+        Store and print the memory usage of each attribute of the object.
+
+        This function is used to print the memory usage of each attribute of the object.
+        The results are stored in the mem_per_attribute attribute.
+
+        Parameters
+        ----------
+        comm : Comm
+            MPI communicator object.
+        print_data : bool, optional
+            If True, the memory usage of each attribute will be printed.
+        
+        Returns
+        -------
+        None
+        
+        '''
         attributes = dir(self)
         non_callable_attributes = [attr for attr in attributes if not callable(getattr(self, attr)) and not attr.startswith("__")]
         size_per_attribute = [asizeof.asizeof(getattr(self, attr))/(1024**2) for attr in non_callable_attributes] # Convert bytes to MB
