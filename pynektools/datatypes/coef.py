@@ -4,6 +4,7 @@ from math import pi
 import numpy as np
 from pympler import asizeof
 
+
 class Coef:
     """
     Class that contains arrays like mass matrix, jacobian, jacobian inverse, etc.
@@ -61,10 +62,10 @@ class Coef:
     """
 
     def __init__(self, msh, comm, get_area=True):
-       
+
         if comm.Get_rank() == 0:
-            print('Initializing coef object')
-        
+            print("Initializing coef object")
+
         self.gdim = msh.gdim
         self.dtype = msh.x.dtype
 
@@ -288,12 +289,11 @@ class Coef:
                         self.ny[e, 5, j, i] = cross[1] / norm
                         self.nz[e, 5, j, i] = cross[2] / norm
 
-        
         if comm.Get_rank() == 0:
-            print(f"coef data is of type: {self.B.dtype}") 
+            print(f"coef data is of type: {self.B.dtype}")
 
     def __memory_usage__(self, comm):
-        '''
+        """
         Print the memory usage of the object.
 
         This function is used to print the memory usage of the object.
@@ -302,17 +302,17 @@ class Coef:
         ----------
         comm : Comm
             MPI communicator object.
-        
+
         Returns
         -------
         None
 
-        '''
-        memory_usage = asizeof.asizeof(self) / (1024 ** 2) # Convert bytes to MB
+        """
+        memory_usage = asizeof.asizeof(self) / (1024**2)  # Convert bytes to MB
         print(f"Rank: {comm.Get_rank()} - Memory usage of Coef: {memory_usage} MB")
-           
+
     def __memory_usage_per_attribute__(self, comm, print_data=True):
-        '''
+        """
         Store and print the memory usage of each attribute of the object.
 
         This function is used to print the memory usage of each attribute of the object.
@@ -324,23 +324,32 @@ class Coef:
             MPI communicator object.
         print_data : bool, optional
             If True, the memory usage of each attribute will be printed.
-        
+
         Returns
         -------
         None
-        
-        '''
+
+        """
         attributes = dir(self)
-        non_callable_attributes = [attr for attr in attributes if not callable(getattr(self, attr)) and not attr.startswith("__")]
-        size_per_attribute = [asizeof.asizeof(getattr(self, attr))/(1024**2) for attr in non_callable_attributes] # Convert bytes to MB
+        non_callable_attributes = [
+            attr
+            for attr in attributes
+            if not callable(getattr(self, attr)) and not attr.startswith("__")
+        ]
+        size_per_attribute = [
+            asizeof.asizeof(getattr(self, attr)) / (1024**2)
+            for attr in non_callable_attributes
+        ]  # Convert bytes to MB
 
         self.mem_per_attribute = dict()
         for i, attr in enumerate(non_callable_attributes):
             self.mem_per_attribute[attr] = size_per_attribute[i]
-            
+
             if print_data:
-                print(f"Rank: {comm.Get_rank()} - Memory usage of coef attr - {attr}: {size_per_attribute[i]} MB")
- 
+                print(
+                    f"Rank: {comm.Get_rank()} - Memory usage of coef attr - {attr}: {size_per_attribute[i]} MB"
+                )
+
     def dudrst(self, field, dr):
         """
         Perform derivative with respect to reference coordinate r.

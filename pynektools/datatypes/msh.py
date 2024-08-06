@@ -74,19 +74,23 @@ class Mesh:
     ):
 
         self.create_connectivity_bool = create_connectivity
-        
+
         if not isinstance(data, NoneType):
             self.init_from_data(comm, data)
 
-        elif not isinstance(x, NoneType) and not isinstance(y, NoneType) and not isinstance(z, NoneType):
+        elif (
+            not isinstance(x, NoneType)
+            and not isinstance(y, NoneType)
+            and not isinstance(z, NoneType)
+        ):
             self.init_from_coords(comm, x, y, z)
-        
+
         else:
             if comm.rank == 0:
                 print("Initializing empty Mesh object.")
 
     def __memory_usage__(self, comm):
-        '''
+        """
         Print the memory usage of the object.
 
         This function is used to print the memory usage of the object.
@@ -95,17 +99,17 @@ class Mesh:
         ----------
         comm : Comm
             MPI communicator object.
-        
+
         Returns
         -------
         None
 
-        '''
-        memory_usage = asizeof.asizeof(self) / (1024 ** 2) # Convert bytes to MB
+        """
+        memory_usage = asizeof.asizeof(self) / (1024**2)  # Convert bytes to MB
         print(f"Rank: {comm.Get_rank()} - Memory usage of Mesh: {memory_usage} MB")
 
     def __memory_usage_per_attribute__(self, comm, print_data=True):
-        '''
+        """
         Store and print the memory usage of each attribute of the object.
 
         This function is used to print the memory usage of each attribute of the object.
@@ -117,23 +121,31 @@ class Mesh:
             MPI communicator object.
         print_data : bool, optional
             If True, the memory usage of each attribute will be printed.
-        
+
         Returns
         -------
         None
-        
-        '''        
+
+        """
         attributes = dir(self)
-        non_callable_attributes = [attr for attr in attributes if not callable(getattr(self, attr)) and not attr.startswith("__")]
-        size_per_attribute = [asizeof.asizeof(getattr(self, attr))/(1024**2) for attr in non_callable_attributes] # Convert bytes to MB
+        non_callable_attributes = [
+            attr
+            for attr in attributes
+            if not callable(getattr(self, attr)) and not attr.startswith("__")
+        ]
+        size_per_attribute = [
+            asizeof.asizeof(getattr(self, attr)) / (1024**2)
+            for attr in non_callable_attributes
+        ]  # Convert bytes to MB
 
         self.mem_per_attribute = dict()
         for i, attr in enumerate(non_callable_attributes):
             self.mem_per_attribute[attr] = size_per_attribute[i]
-            
-            if print_data:
-                print(f"Rank: {comm.Get_rank()} - Memory usage of msh attr - {attr}: {size_per_attribute[i]} MB")        
 
+            if print_data:
+                print(
+                    f"Rank: {comm.Get_rank()} - Memory usage of msh attr - {attr}: {size_per_attribute[i]} MB"
+                )
 
     def init_from_data(self, comm, data):
         """
@@ -147,23 +159,22 @@ class Mesh:
             MPI communicator object.
         data : HexaData
             HexaData object that contains the coordinates of the domain.
-        
+
         Returns
         -------
         None
 
         """
-                
+
         if comm.rank == 0:
             print("Initializing Mesh object from HexaData object.")
-            
+
         self.x, self.y, self.z = get_coordinates_from_hexadata(data)
-        
+
         self.init_common(comm)
-            
+
         if comm.rank == 0:
             print(f"msh data is of type: {self.x.dtype}")
-
 
     def init_from_coords(self, comm, x, y, z):
         """
@@ -181,7 +192,7 @@ class Mesh:
             Y coordinates of the domain. shape is (nelv, lz, ly, lx).
         z : ndarray
             Z coordinates of the domain. shape is (nelv, lz, ly, lx).
-        
+
         Returns
         -------
         None
@@ -196,7 +207,7 @@ class Mesh:
         self.z = z
 
         self.init_common(comm)
-        
+
         if comm.rank == 0:
             print(f"msh data is of type: {self.x.dtype}")
 
@@ -210,7 +221,7 @@ class Mesh:
         ----------
         comm : Comm
             MPI communicator object.
-        
+
         Returns
         -------
         None

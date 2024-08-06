@@ -109,7 +109,7 @@ class Field:
             self.t = data.time
 
     def __memory_usage__(self, comm):
-        '''
+        """
         Print the memory usage of the object.
 
         This function is used to print the memory usage of the object.
@@ -118,14 +118,14 @@ class Field:
         ----------
         comm : Comm
             MPI communicator object.
-        
+
         Returns
         -------
         None
 
-        ''' 
+        """
 
-        memory_usage = asizeof.asizeof(self) / (1024 ** 2) # Convert bytes to MB
+        memory_usage = asizeof.asizeof(self) / (1024**2)  # Convert bytes to MB
         print(f"Rank: {comm.Get_rank()} - Memory usage of Field: {memory_usage} MB")
 
     def update_vars(self):
