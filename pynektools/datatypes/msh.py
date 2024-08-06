@@ -1,6 +1,7 @@
 """ Module that contains msh class, which contains relevant data on the domain"""
 
 import numpy as np
+from pympler import asizeof
 
 NoneType = type(None)
 
@@ -83,7 +84,23 @@ class Mesh:
         else:
             if comm.rank == 0:
                 print("Initializing empty Mesh object.")
-        
+
+    def __memory_usage__(self, comm):
+        memory_usage = asizeof.asizeof(self) / (1024 ** 2) # Convert bytes to MB
+        print(f"Rank: {comm.Get_rank()} - Memory usage of Mesh: {memory_usage} MB")
+
+    def __memory_usage_per_attribute__(self, comm, print_data=True):
+        attributes = dir(self)
+        non_callable_attributes = [attr for attr in attributes if not callable(getattr(self, attr)) and not attr.startswith("__")]
+        size_per_attribute = [asizeof.asizeof(getattr(self, attr))/(1024**2) for attr in non_callable_attributes] # Convert bytes to MB
+
+        self.mem_per_attribute = dict()
+        for i, attr in enumerate(non_callable_attributes):
+            self.mem_per_attribute[attr] = size_per_attribute[i]
+            
+            if print_data:
+                print(f"Rank: {comm.Get_rank()} - Memory usage of msh attr - {attr}: {size_per_attribute[i]} MB")        
+
 
     def init_from_data(self, comm, data):
             
@@ -93,6 +110,10 @@ class Mesh:
         self.x, self.y, self.z = get_coordinates_from_hexadata(data)
         
         self.init_common(comm)
+            
+        if comm.rank == 0:
+            print(f"msh data is of type: {self.x.dtype}")
+
 
     def init_from_coords(self, comm, x, y, z):
         
@@ -104,6 +125,9 @@ class Mesh:
         self.z = z
 
         self.init_common(comm)
+        
+        if comm.rank == 0:
+            print(f"msh data is of type: {self.x.dtype}")
 
     def init_common(self, comm):
 
@@ -306,7 +330,7 @@ def get_coordinates_from_hexadata(data):
     ly = data.lr1[1]
     lz = data.lr1[2]
 
-    x = np.zeros((nelv, lz, ly, lx), dtype=np.double)
+    x = np.zeros((nelv, lz, ly, lx), dtype=data.elem[0].pos.dtype)
     y = np.zeros_like(x)
     z = np.zeros_like(x)
 
