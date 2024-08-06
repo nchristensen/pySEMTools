@@ -342,7 +342,7 @@ def preadnek(filename, comm, data_dtype=np.double):
 # @profile
 def pynekread(filename, comm, data_dtype=np.double, msh=None, fld=None):
     """
-    This routine reads nek file and returs a pynekobject (Parallel).
+    Read nek file and returs a pynekobject (Parallel).
 
     Main function for readinf nek type fld filed.
 
@@ -366,6 +366,7 @@ def pynekread(filename, comm, data_dtype=np.double, msh=None, fld=None):
     Returns
     -------
     None
+        Nothing is returned, the attributes are set in the object.
 
     Examples
     --------
@@ -375,7 +376,6 @@ def pynekread(filename, comm, data_dtype=np.double, msh=None, fld=None):
     >>> msh = msh_c(comm)
     >>> fld = field_c(comm)
     >>> pynekread(fname, comm, msh = msh, fld=fld)
-
     """
 
     mpi_int_size = MPI.INT.Get_size()

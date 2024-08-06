@@ -163,7 +163,7 @@ class Mesh:
         Returns
         -------
         None
-
+            Nothing is returned, the attributes are set in the object.
         """
 
         if comm.rank == 0:
@@ -196,7 +196,7 @@ class Mesh:
         Returns
         -------
         None
-
+            Nothing is returned, the attributes are set in the object.
         """
 
         if comm.rank == 0:
@@ -225,7 +225,7 @@ class Mesh:
         Returns
         -------
         None
-
+            Nothing is returned, the attributes are set in the object.
         """
 
         self.lx = self.x.shape[

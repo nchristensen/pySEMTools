@@ -62,6 +62,9 @@ class Probes:
     global_tree_nbins : int
         Number of bins in the global tree. Only used if the global tree is domain_binning.
         Default is 1024.
+    use_autograd : bool
+        If True, autograd is used to compute the interpolation. Default is False.
+        This is only used if the interpolator is a torch interpolator.
         
     Attributes
     ----------

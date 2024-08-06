@@ -20,10 +20,10 @@ class Coef:
         MPI comminicator object.
     
     get_area : bool, optional
-        If True, the area integration weight and normal vectors will be calculated. (Default value = True)
+        If True, the area integration weight and normal vectors will be calculated. (Default value = True).
     
     apply_1d_operators : bool, optional
-        If True, the 1D operators will be applied instead of building 3D operators. (Default value = True)
+        If True, the 1D operators will be applied instead of building 3D operators. (Default value = True).
 
     Attributes
     ----------
@@ -368,14 +368,13 @@ class Coef:
         field : ndarray
             Field to take derivative of. Shape should be (nelv, lz, ly, lx).
         
-        dir : str
-            Direction to take the derivative. Can be 'r', 's', or 't'. (Default value = 'r')
+        direction : str
+            Direction to take the derivative. Can be 'r', 's', or 't'. (Default value = 'r').
 
         Returns
         -------
         ndarray
             Derivative of the field with respect to r/s/t. Shape is the same as the input field.
-
         '''
         lx = field.shape[3]  # This is not a mistake. This is how the data is read
         ly = field.shape[2]
