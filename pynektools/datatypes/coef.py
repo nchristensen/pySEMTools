@@ -2,6 +2,7 @@
 
 from math import pi
 import numpy as np
+from pympler import asizeof
 
 
 class Coef:
@@ -60,8 +61,13 @@ class Coef:
     >>> coef = Coef(msh, comm)
     """
 
-    def __init__(self, msh, comm):
+    def __init__(self, msh, comm, get_area=True):
+
+        if comm.Get_rank() == 0:
+            print("Initializing coef object")
+
         self.gdim = msh.gdim
+        self.dtype = msh.x.dtype
 
         self.v, self.vinv, self.w3, self.x, self.w = get_transform_matrix(
             msh.lx, msh.gdim
@@ -86,28 +92,28 @@ class Coef:
             self.dzds = self.dudrst(msh.z, self.ds)
             self.dzdt = self.dudrst(msh.z, self.dt)
 
-        self.drdx = np.zeros_like(self.dxdr, dtype=np.double)
-        self.drdy = np.zeros_like(self.dxdr, dtype=np.double)
+        self.drdx = np.zeros_like(self.dxdr, dtype=self.dtype)
+        self.drdy = np.zeros_like(self.dxdr, dtype=self.dtype)
         if msh.gdim > 2:
-            self.drdz = np.zeros_like(self.dxdr, dtype=np.double)
+            self.drdz = np.zeros_like(self.dxdr, dtype=self.dtype)
 
-        self.dsdx = np.zeros_like(self.dxdr, dtype=np.double)
-        self.dsdy = np.zeros_like(self.dxdr, dtype=np.double)
+        self.dsdx = np.zeros_like(self.dxdr, dtype=self.dtype)
+        self.dsdy = np.zeros_like(self.dxdr, dtype=self.dtype)
         if msh.gdim > 2:
-            self.dsdz = np.zeros_like(self.dxdr, dtype=np.double)
+            self.dsdz = np.zeros_like(self.dxdr, dtype=self.dtype)
 
         if msh.gdim > 2:
-            self.dtdx = np.zeros_like(self.dxdr, dtype=np.double)
-            self.dtdy = np.zeros_like(self.dxdr, dtype=np.double)
-            self.dtdz = np.zeros_like(self.dxdr, dtype=np.double)
+            self.dtdx = np.zeros_like(self.dxdr, dtype=self.dtype)
+            self.dtdy = np.zeros_like(self.dxdr, dtype=self.dtype)
+            self.dtdz = np.zeros_like(self.dxdr, dtype=self.dtype)
 
         # Find the jacobian determinant, its inverse inverse and mass matrix (3D)
         # This maps dxyz/drst
         # Gere we store the jacobian determinant as "jac"
-        self.jac = np.zeros_like(self.dxdr, dtype=np.double)
+        self.jac = np.zeros_like(self.dxdr, dtype=self.dtype)
         # This maps drst/dxyz
-        self.jac_inv = np.zeros_like(self.dxdr, dtype=np.double)
-        self.B = np.zeros_like(self.dxdr, dtype=np.double)
+        self.jac_inv = np.zeros_like(self.dxdr, dtype=self.dtype)
+        self.B = np.zeros_like(self.dxdr, dtype=self.dtype)
 
         if msh.gdim > 2:
             temp_mat = np.zeros((3, 3))
@@ -173,13 +179,13 @@ class Coef:
         # Similar to what we do with the volume mass matrix.
         # Where we calculate the jacobian determinant
         # and then multiply with weights
-        if msh.gdim > 2:
-            d1 = np.zeros((3), dtype=np.double)
-            d2 = np.zeros((3), dtype=np.double)
-            self.area = np.zeros((msh.nelv, 6, msh.ly, msh.lx), dtype=np.double)
-            self.nx = np.zeros((msh.nelv, 6, msh.ly, msh.lx), dtype=np.double)
-            self.ny = np.zeros((msh.nelv, 6, msh.ly, msh.lx), dtype=np.double)
-            self.nz = np.zeros((msh.nelv, 6, msh.ly, msh.lx), dtype=np.double)
+        if msh.gdim > 2 and get_area:
+            d1 = np.zeros((3), dtype=self.dtype)
+            d2 = np.zeros((3), dtype=self.dtype)
+            self.area = np.zeros((msh.nelv, 6, msh.ly, msh.lx), dtype=self.dtype)
+            self.nx = np.zeros((msh.nelv, 6, msh.ly, msh.lx), dtype=self.dtype)
+            self.ny = np.zeros((msh.nelv, 6, msh.ly, msh.lx), dtype=self.dtype)
+            self.nz = np.zeros((msh.nelv, 6, msh.ly, msh.lx), dtype=self.dtype)
 
             # ds x dt
             for e in range(0, msh.nelv):
@@ -283,6 +289,67 @@ class Coef:
                         self.ny[e, 5, j, i] = cross[1] / norm
                         self.nz[e, 5, j, i] = cross[2] / norm
 
+        if comm.Get_rank() == 0:
+            print(f"coef data is of type: {self.B.dtype}")
+
+    def __memory_usage__(self, comm):
+        """
+        Print the memory usage of the object.
+
+        This function is used to print the memory usage of the object.
+
+        Parameters
+        ----------
+        comm : Comm
+            MPI communicator object.
+
+        Returns
+        -------
+        None
+
+        """
+        memory_usage = asizeof.asizeof(self) / (1024**2)  # Convert bytes to MB
+        print(f"Rank: {comm.Get_rank()} - Memory usage of Coef: {memory_usage} MB")
+
+    def __memory_usage_per_attribute__(self, comm, print_data=True):
+        """
+        Store and print the memory usage of each attribute of the object.
+
+        This function is used to print the memory usage of each attribute of the object.
+        The results are stored in the mem_per_attribute attribute.
+
+        Parameters
+        ----------
+        comm : Comm
+            MPI communicator object.
+        print_data : bool, optional
+            If True, the memory usage of each attribute will be printed.
+
+        Returns
+        -------
+        None
+
+        """
+        attributes = dir(self)
+        non_callable_attributes = [
+            attr
+            for attr in attributes
+            if not callable(getattr(self, attr)) and not attr.startswith("__")
+        ]
+        size_per_attribute = [
+            asizeof.asizeof(getattr(self, attr)) / (1024**2)
+            for attr in non_callable_attributes
+        ]  # Convert bytes to MB
+
+        self.mem_per_attribute = dict()
+        for i, attr in enumerate(non_callable_attributes):
+            self.mem_per_attribute[attr] = size_per_attribute[i]
+
+            if print_data:
+                print(
+                    f"Rank: {comm.Get_rank()} - Memory usage of coef attr - {attr}: {size_per_attribute[i]} MB"
+                )
+
     def dudrst(self, field, dr):
         """
         Perform derivative with respect to reference coordinate r.
@@ -312,7 +379,7 @@ class Coef:
         ly = field.shape[2]
         lz = field.shape[1]
 
-        dudrst = np.zeros_like(field, dtype=np.double)
+        dudrst = np.zeros_like(field, dtype=field.dtype)
 
         for e in range(0, nelv):
             tmp = field[e, :, :, :].reshape(-1, 1)
@@ -363,7 +430,7 @@ class Coef:
         lx = field.shape[3]  # This is not a mistake. This is how the data is read
         ly = field.shape[2]
         lz = field.shape[1]
-        dudxyz = np.zeros_like(field, dtype=np.double)
+        dudxyz = np.zeros_like(field, dtype=field.dtype)
 
         dfdr = self.dudrst(field, self.dr)
         dfds = self.dudrst(field, self.ds)

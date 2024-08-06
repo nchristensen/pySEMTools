@@ -1,6 +1,7 @@
 """ Contians class that contains information associated to fields"""
 
 import numpy as np
+from pympler import asizeof
 
 NoneType = type(None)
 
@@ -76,6 +77,11 @@ class Field:
         self.fields["temp"] = []
         self.fields["scal"] = []
         self.t = 0.0
+        self.vel_fields = 0
+        self.pres_fields = 0
+        self.temp_fields = 0
+        self.scal_fields = 0
+
         if not isinstance(data, NoneType):
             vars_ = data.var
             self.vel_fields = vars_[1]
@@ -101,6 +107,26 @@ class Field:
                 self.fields[prefix].append(get_field_from_hexadata(data, prefix, qoi))
 
             self.t = data.time
+
+    def __memory_usage__(self, comm):
+        """
+        Print the memory usage of the object.
+
+        This function is used to print the memory usage of the object.
+
+        Parameters
+        ----------
+        comm : Comm
+            MPI communicator object.
+
+        Returns
+        -------
+        None
+
+        """
+
+        memory_usage = asizeof.asizeof(self) / (1024**2)  # Convert bytes to MB
+        print(f"Rank: {comm.Get_rank()} - Memory usage of Field: {memory_usage} MB")
 
     def update_vars(self):
         """
@@ -152,21 +178,23 @@ def get_field_from_hexadata(data, prefix, qoi):
     ly = data.lr1[1]
     lz = data.lr1[2]
 
-    field = np.zeros((nelv, lz, ly, lx), dtype=np.double)
-
     if prefix == "vel":
+        field = np.zeros((nelv, lz, ly, lx), dtype=data.elem[0].vel.dtype)
         for e in range(0, nelv):
             field[e, :, :, :] = data.elem[e].vel[qoi, :, :, :]
 
     if prefix == "pres":
+        field = np.zeros((nelv, lz, ly, lx), dtype=data.elem[0].pres.dtype)
         for e in range(0, nelv):
             field[e, :, :, :] = data.elem[e].pres[0, :, :, :]
 
     if prefix == "temp":
+        field = np.zeros((nelv, lz, ly, lx), dtype=data.elem[0].temp.dtype)
         for e in range(0, nelv):
             field[e, :, :, :] = data.elem[e].temp[0, :, :, :]
 
     if prefix == "scal":
+        field = np.zeros((nelv, lz, ly, lx), dtype=data.elem[0].scal.dtype)
         for e in range(0, nelv):
             field[e, :, :, :] = data.elem[e].scal[qoi, :, :, :]
 

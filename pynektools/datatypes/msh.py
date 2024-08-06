@@ -1,7 +1,7 @@
 """ Module that contains msh class, which contains relevant data on the domain"""
 
 import numpy as np
-from scipy.spatial import KDTree
+from pympler import asizeof
 
 NoneType = type(None)
 
@@ -73,12 +73,160 @@ class Mesh:
         self, comm, data=None, x=None, y=None, z=None, create_connectivity=True
     ):
 
+        self.create_connectivity_bool = create_connectivity
+
         if not isinstance(data, NoneType):
-            self.x, self.y, self.z = get_coordinates_from_hexadata(data)
+            self.init_from_data(comm, data)
+
+        elif (
+            not isinstance(x, NoneType)
+            and not isinstance(y, NoneType)
+            and not isinstance(z, NoneType)
+        ):
+            self.init_from_coords(comm, x, y, z)
+
         else:
-            self.x = x
-            self.y = y
-            self.z = z
+            if comm.rank == 0:
+                print("Initializing empty Mesh object.")
+
+    def __memory_usage__(self, comm):
+        """
+        Print the memory usage of the object.
+
+        This function is used to print the memory usage of the object.
+
+        Parameters
+        ----------
+        comm : Comm
+            MPI communicator object.
+
+        Returns
+        -------
+        None
+
+        """
+        memory_usage = asizeof.asizeof(self) / (1024**2)  # Convert bytes to MB
+        print(f"Rank: {comm.Get_rank()} - Memory usage of Mesh: {memory_usage} MB")
+
+    def __memory_usage_per_attribute__(self, comm, print_data=True):
+        """
+        Store and print the memory usage of each attribute of the object.
+
+        This function is used to print the memory usage of each attribute of the object.
+        The results are stored in the mem_per_attribute attribute.
+
+        Parameters
+        ----------
+        comm : Comm
+            MPI communicator object.
+        print_data : bool, optional
+            If True, the memory usage of each attribute will be printed.
+
+        Returns
+        -------
+        None
+
+        """
+        attributes = dir(self)
+        non_callable_attributes = [
+            attr
+            for attr in attributes
+            if not callable(getattr(self, attr)) and not attr.startswith("__")
+        ]
+        size_per_attribute = [
+            asizeof.asizeof(getattr(self, attr)) / (1024**2)
+            for attr in non_callable_attributes
+        ]  # Convert bytes to MB
+
+        self.mem_per_attribute = dict()
+        for i, attr in enumerate(non_callable_attributes):
+            self.mem_per_attribute[attr] = size_per_attribute[i]
+
+            if print_data:
+                print(
+                    f"Rank: {comm.Get_rank()} - Memory usage of msh attr - {attr}: {size_per_attribute[i]} MB"
+                )
+
+    def init_from_data(self, comm, data):
+        """
+        Initialize form data.
+
+        This function is used to initialize the mesh object from a hexadata object.
+
+        Parameters
+        ----------
+        comm : Comm
+            MPI communicator object.
+        data : HexaData
+            HexaData object that contains the coordinates of the domain.
+
+        Returns
+        -------
+        None
+
+        """
+
+        if comm.rank == 0:
+            print("Initializing Mesh object from HexaData object.")
+
+        self.x, self.y, self.z = get_coordinates_from_hexadata(data)
+
+        self.init_common(comm)
+
+        if comm.rank == 0:
+            print(f"msh data is of type: {self.x.dtype}")
+
+    def init_from_coords(self, comm, x, y, z):
+        """
+        Initialize from coordinates.
+
+        This function is used to initialize the mesh object from x, y, z ndarrays.
+
+        Parameters
+        ----------
+        comm : Comm
+            MPI communicator object.
+        x : ndarray
+            X coordinates of the domain. shape is (nelv, lz, ly, lx).
+        y : ndarray
+            Y coordinates of the domain. shape is (nelv, lz, ly, lx).
+        z : ndarray
+            Z coordinates of the domain. shape is (nelv, lz, ly, lx).
+
+        Returns
+        -------
+        None
+
+        """
+
+        if comm.rank == 0:
+            print("Initializing Mesh object from x,y,z ndarrays.")
+
+        self.x = x
+        self.y = y
+        self.z = z
+
+        self.init_common(comm)
+
+        if comm.rank == 0:
+            print(f"msh data is of type: {self.x.dtype}")
+
+    def init_common(self, comm):
+        """
+        Initialize common attributes.
+
+        This function is used to initialize the common attributes of the mesh object.
+
+        Parameters
+        ----------
+        comm : Comm
+            MPI communicator object.
+
+        Returns
+        -------
+        None
+
+        """
 
         self.lx = self.x.shape[
             3
@@ -110,9 +258,11 @@ class Mesh:
         else:
             self.gdim = 2
 
-        self.create_connectivity = create_connectivity
+        self.create_connectivity()
 
-        if create_connectivity:
+    def create_connectivity(self):
+
+        if self.create_connectivity_bool:
             if self.lz > 1:
                 z_ind = [0, self.lz - 1]
             else:
@@ -277,7 +427,7 @@ def get_coordinates_from_hexadata(data):
     ly = data.lr1[1]
     lz = data.lr1[2]
 
-    x = np.zeros((nelv, lz, ly, lx), dtype=np.double)
+    x = np.zeros((nelv, lz, ly, lx), dtype=data.elem[0].pos.dtype)
     y = np.zeros_like(x)
     z = np.zeros_like(x)
 
