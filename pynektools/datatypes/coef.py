@@ -67,7 +67,7 @@ class Coef:
     >>> coef = Coef(msh, comm)
     """
 
-    def __init__(self, msh, comm, get_area=True, apply_1d_operators = False):
+    def __init__(self, msh, comm, get_area=True, apply_1d_operators = True):
 
         if comm.Get_rank() == 0:
             print("Initializing coef object")
@@ -84,20 +84,20 @@ class Coef:
 
         # Find the components of the jacobian per point
         # jac(x,y,z) = [dxdr, dxds, dxdt ; dydr, dyds, dydt; dzdr, dzds, dzdt]
-        self.dxdr = self.dudrst(msh.x, self.dr)
-        self.dxds = self.dudrst(msh.x, self.ds)
+        self.dxdr = self.dudrst(msh.x, direction='r')
+        self.dxds = self.dudrst(msh.x, direction='s')
         if msh.gdim > 2:
-            self.dxdt = self.dudrst(msh.x, self.dt)
+            self.dxdt = self.dudrst(msh.x, direction='t')
 
-        self.dydr = self.dudrst(msh.y, self.dr)
-        self.dyds = self.dudrst(msh.y, self.ds)
+        self.dydr = self.dudrst(msh.y, direction='r')
+        self.dyds = self.dudrst(msh.y, direction='s')
         if msh.gdim > 2:
-            self.dydt = self.dudrst(msh.y, self.dt)
+            self.dydt = self.dudrst(msh.y, direction='t')
 
         if msh.gdim > 2:
-            self.dzdr = self.dudrst(msh.z, self.dr)
-            self.dzds = self.dudrst(msh.z, self.ds)
-            self.dzdt = self.dudrst(msh.z, self.dt)
+            self.dzdr = self.dudrst(msh.z, direction='r')
+            self.dzds = self.dudrst(msh.z, direction='s')
+            self.dzdt = self.dudrst(msh.z, direction='t')
 
         self.drdx = np.zeros_like(self.dxdr, dtype=self.dtype)
         self.drdy = np.zeros_like(self.dxdr, dtype=self.dtype)
@@ -357,7 +357,56 @@ class Coef:
                     f"Rank: {comm.Get_rank()} - Memory usage of coef attr - {attr}: {size_per_attribute[i]} MB"
                 )
 
-    def dudrst(self, field, dr):
+    def dudrst(self, field, direction='r'):
+        '''
+        Perform derivative with respect to reference coordinate r/s/t.
+
+        Used to perform the derivative in the reference coordinates
+
+        Parameters
+        ----------
+        field : ndarray
+            Field to take derivative of. Shape should be (nelv, lz, ly, lx).
+        
+        dir : str
+            Direction to take the derivative. Can be 'r', 's', or 't'. (Default value = 'r')
+
+        Returns
+        -------
+        ndarray
+            Derivative of the field with respect to r/s/t. Shape is the same as the input field.
+
+        '''
+        lx = field.shape[3]  # This is not a mistake. This is how the data is read
+        ly = field.shape[2]
+        lz = field.shape[1]
+        
+        if not self.apply_1d_operators:
+            if direction == 'r':
+                return self.dudrst_3d_operator(field, self.dr)
+            elif direction == 's':
+                return self.dudrst_3d_operator(field, self.ds)
+            elif direction == 't':
+                return self.dudrst_3d_operator(field, self.dt)
+            else:
+                raise ValueError("Invalid direction. Should be 'r', 's', or 't'")
+        elif self.apply_1d_operators:
+            if direction == 'r':
+                if self.gdim == 2:
+                    return self.dudrst_1d_operator(field, self.dr, np.eye(ly))
+                elif self.gdim == 3:
+                    return self.dudrst_1d_operator(field, self.dr, np.eye(ly), np.eye(lz))
+            elif direction == 's':
+                if self.gdim == 2:
+                    return self.dudrst_1d_operator(field, np.eye(lx), self.ds)
+                elif self.gdim == 3:
+                    return self.dudrst_1d_operator(field, np.eye(lx), self.ds, np.eye(lz))
+            elif direction == 't':
+                return self.dudrst_1d_operator(field, np.eye(lx), np.eye(ly), self.dt)
+            else:
+                raise ValueError("Invalid direction. Should be 'r', 's', or 't'")
+
+    def dudrst_3d_operator(self, field, dr):
         """
         Perform derivative with respect to reference coordinate r.
 
@@ -391,6 +440,51 @@ class Coef:
         for e in range(0, nelv):
             tmp = field[e, :, :, :].reshape(-1, 1)
             dtmp = dr @ tmp
+            dudrst[e, :, :, :] = dtmp.reshape((lz, ly, lx))
+
+        return dudrst
+
+    def dudrst_1d_operator(self, field, dr, ds, dt=None):
+        """
+        Perform derivative with respect to reference coordinate r.
+
+        This method uses derivation matrices from the lagrange polynomials at the GLL points.
+
+        Parameters
+        ----------
+        field : ndarray
+            Field to take derivative of. Shape should be (nelv, lz, ly, lx).
+        dr : ndarray
+            Derivative matrix in the r direction to apply to each element. Shape should be (lx, lx).
+        
+        ds : ndarray
+            Derivative matrix in the s direction to apply to each element. Shape should be (ly, ly).
+        
+        dt : ndarray
+            Derivative matrix in the t direction to apply to each element. Shape should be (lz, lz).
+            This is optional. If none is passed, it is assumed that the field is 2D.
+
+        Returns
+        -------
+        ndarray
+            Derivative of the field with respect to r/s/t. Shape is the same as the input field.
+
+        Examples
+        --------
+        Assuming you have a Coef object
+
+        >>> dxdr = coef.dudrst(x, coef.dr)
+        """
+        nelv = field.shape[0]
+        lx = field.shape[3]  # This is not a mistake. This is how the data is read
+        ly = field.shape[2]
+        lz = field.shape[1]
+
+        dudrst = np.zeros_like(field, dtype=field.dtype)
+
+        for e in range(0, nelv):
+            tmp = field[e, :, :, :].reshape(-1, 1)
+            dtmp = apply_1d_operators(tmp, dr, ds, dt)
             dudrst[e, :, :, :] = dtmp.reshape((lz, ly, lx))
 
         return dudrst
@@ -439,10 +533,10 @@ class Coef:
         lz = field.shape[1]
         dudxyz = np.zeros_like(field, dtype=field.dtype)
 
-        dfdr = self.dudrst(field, self.dr)
-        dfds = self.dudrst(field, self.ds)
+        dfdr = self.dudrst(field, direction='r')
+        dfds = self.dudrst(field, direction='s')
         if self.gdim > 2:
-            dfdt = self.dudrst(field, self.dt)
+            dfdt = self.dudrst(field, direction='t')
 
         # NOTE: DO NOT NEED TO MULTIPLY BY INVERSE OF JACOBIAN DETERMINAT.
         # THIS STEP IS ALREADY DONE IF YOU CALCULATED THE INVERSE WITH NUMPY
@@ -841,16 +935,16 @@ def get_transform_matrix(n, dim, apply_1d_operators=False, dtype=np.double):
         vinv3d = vinv
 
     if dim == 1:
-        vv = v
-        vvinv = vinv
+        vv = v.astype(dtype)
+        vvinv = vinv.astype(dtype)
         w3 = w
     elif dim == 2:
-        vv = v2d
-        vvinv = vinv2d
+        vv = v2d.astype(dtype)
+        vvinv = vinv2d.astype(dtype)
         w3 = np.diag(np.kron(ww, ww)).copy()
     else:
-        vv = v3d
-        vvinv = vinv3d
+        vv = v3d.astype(dtype)
+        vvinv = vinv3d.astype(dtype)
         w3 = np.diag(np.kron(ww, np.kron(ww, ww))).copy()
 
     return vv, vvinv, w3, x, w
@@ -1010,3 +1104,48 @@ def nonlinear_index(linear_index_, lx, ly, lz):
         indices.append(ind)
 
     return indices
+
+
+def apply_1d_operators(x, dr, ds, dt=None):
+
+    if not isinstance(dt, type(None)):
+        return apply_operators_3d(dr, ds, dt, x)
+    else:
+        return apply_operators_2d(dr, ds, x)
+
+def apply_operators_2d(dr, ds, x):
+    """This function applies operators the same way as they are applied in NEK5000
+    The only difference is that it is reversed, as this is
+    python and we decided to leave that arrays as is"""
+
+    # Apply in r direction
+    temp = x.reshape((int(x.size / dr.T.shape[0]), dr.T.shape[0])) @ dr.T
+
+    # Apply in s direction
+    temp = ds @ temp.reshape(ds.shape[1], (int(temp.size / ds.shape[1])))
+
+    return temp.reshape(-1, 1)
+
+def apply_operators_3d(dr, ds, dt, x):
+    """This function applies operators the same way as they are applied in NEK5000
+    The only difference is that it is reversed, as this is
+    python and we decided to leave that arrays as is"""
+
+    # Apply in r direction
+    temp = x.reshape((int(x.size / dr.T.shape[0]), dr.T.shape[0])) @ dr.T
+
+    # Apply in s direction
+    temp = temp.reshape((ds.shape[1], ds.shape[1], int(temp.size / (ds.shape[1] ** 2))))
+    ### The nek5000 way uses a for loop
+    ## temp2 = np.zeros((ds.shape[1], ds.shape[0],
+    # int(temp.size/(ds.shape[1]**2))))
+    # This is needed because dimensions could reduce
+    ## for k in range(0, temp.shape[0]):
+    ##     temp2[k,:,:] = ds@temp[k,:,:]
+    ### We can do it optimized in numpy if we reshape the operator. This way it can broadcast
+    temp = ds.reshape((1, ds.shape[0], ds.shape[1])) @ temp
+
+    # Apply in t direction
+    temp = dt @ temp.reshape(dt.shape[1], (int(temp.size / dt.shape[1])))
+
+    return temp.reshape(-1, 1)
