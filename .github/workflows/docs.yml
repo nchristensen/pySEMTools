@@ -36,7 +36,7 @@ jobs:
         env:
           MPICC : $(which mpicc)
         run: |
-          pip install mpi4py --no-cache-dir
+          pip install mpi4py==3.1.6 --no-cache-dir
           pip install numpy
           pip install scipy
           pip install pymech
@@ -51,6 +51,8 @@ jobs:
           pip install pandoc
           pip install nbsphinx
           pip install adios2
+          pip install pympler
+          pip install -U memory_profiler
           pip install .
 
       - name: Build docs
