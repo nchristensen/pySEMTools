@@ -18,6 +18,12 @@ class Coef:
 
     comm : Comm
         MPI comminicator object.
+    
+    get_area : bool, optional
+        If True, the area integration weight and normal vectors will be calculated. (Default value = True)
+    
+    apply_1d_operators : bool, optional
+        If True, the 1D operators will be applied instead of building 3D operators. (Default value = True)
 
     Attributes
     ----------
@@ -61,36 +67,37 @@ class Coef:
     >>> coef = Coef(msh, comm)
     """
 
-    def __init__(self, msh, comm, get_area=True):
+    def __init__(self, msh, comm, get_area=True, apply_1d_operators = True):
 
         if comm.Get_rank() == 0:
             print("Initializing coef object")
 
         self.gdim = msh.gdim
         self.dtype = msh.x.dtype
-
+        self.apply_1d_operators = apply_1d_operators
+        
         self.v, self.vinv, self.w3, self.x, self.w = get_transform_matrix(
-            msh.lx, msh.gdim
+            msh.lx, msh.gdim, apply_1d_operators=apply_1d_operators, dtype=self.dtype
         )
 
-        self.dr, self.ds, self.dt, self.dn = get_derivative_matrix(msh.lx, msh.gdim)
+        self.dr, self.ds, self.dt, self.dn = get_derivative_matrix(msh.lx, msh.gdim, dtype=self.dtype, apply_1d_operators=apply_1d_operators)
 
         # Find the components of the jacobian per point
         # jac(x,y,z) = [dxdr, dxds, dxdt ; dydr, dyds, dydt; dzdr, dzds, dzdt]
-        self.dxdr = self.dudrst(msh.x, self.dr)
-        self.dxds = self.dudrst(msh.x, self.ds)
+        self.dxdr = self.dudrst(msh.x, direction='r')
+        self.dxds = self.dudrst(msh.x, direction='s')
         if msh.gdim > 2:
-            self.dxdt = self.dudrst(msh.x, self.dt)
+            self.dxdt = self.dudrst(msh.x, direction='t')
 
-        self.dydr = self.dudrst(msh.y, self.dr)
-        self.dyds = self.dudrst(msh.y, self.ds)
+        self.dydr = self.dudrst(msh.y, direction='r')
+        self.dyds = self.dudrst(msh.y, direction='s')
         if msh.gdim > 2:
-            self.dydt = self.dudrst(msh.y, self.dt)
+            self.dydt = self.dudrst(msh.y, direction='t')
 
         if msh.gdim > 2:
-            self.dzdr = self.dudrst(msh.z, self.dr)
-            self.dzds = self.dudrst(msh.z, self.ds)
-            self.dzdt = self.dudrst(msh.z, self.dt)
+            self.dzdr = self.dudrst(msh.z, direction='r')
+            self.dzds = self.dudrst(msh.z, direction='s')
+            self.dzdt = self.dudrst(msh.z, direction='t')
 
         self.drdx = np.zeros_like(self.dxdr, dtype=self.dtype)
         self.drdy = np.zeros_like(self.dxdr, dtype=self.dtype)
@@ -144,7 +151,7 @@ class Coef:
                         self.jac_inv[e, k, j, i] = 1 / self.jac[e, k, j, i]
                         self.B[e, k, j, i] = (
                             self.jac[e, k, j, i]
-                            * np.diag(self.w3).reshape((msh.lz, msh.ly, msh.lx))[
+                            * (self.w3).reshape((msh.lz, msh.ly, msh.lx))[
                                 k, j, i
                             ]
                         )
@@ -350,7 +357,56 @@ class Coef:
                     f"Rank: {comm.Get_rank()} - Memory usage of coef attr - {attr}: {size_per_attribute[i]} MB"
                 )
 
-    def dudrst(self, field, dr):
+    def dudrst(self, field, direction='r'):
+        '''
+        Perform derivative with respect to reference coordinate r/s/t.
+
+        Used to perform the derivative in the reference coordinates
+
+        Parameters
+        ----------
+        field : ndarray
+            Field to take derivative of. Shape should be (nelv, lz, ly, lx).
+        
+        dir : str
+            Direction to take the derivative. Can be 'r', 's', or 't'. (Default value = 'r')
+
+        Returns
+        -------
+        ndarray
+            Derivative of the field with respect to r/s/t. Shape is the same as the input field.
+
+        '''
+        lx = field.shape[3]  # This is not a mistake. This is how the data is read
+        ly = field.shape[2]
+        lz = field.shape[1]
+        
+        if not self.apply_1d_operators:
+            if direction == 'r':
+                return self.dudrst_3d_operator(field, self.dr)
+            elif direction == 's':
+                return self.dudrst_3d_operator(field, self.ds)
+            elif direction == 't':
+                return self.dudrst_3d_operator(field, self.dt)
+            else:
+                raise ValueError("Invalid direction. Should be 'r', 's', or 't'")
+        elif self.apply_1d_operators:
+            if direction == 'r':
+                if self.gdim == 2:
+                    return self.dudrst_1d_operator(field, self.dr, np.eye(ly))
+                elif self.gdim == 3:
+                    return self.dudrst_1d_operator(field, self.dr, np.eye(ly), np.eye(lz))
+            elif direction == 's':
+                if self.gdim == 2:
+                    return self.dudrst_1d_operator(field, np.eye(lx), self.ds)
+                elif self.gdim == 3:
+                    return self.dudrst_1d_operator(field, np.eye(lx), self.ds, np.eye(lz))
+            elif direction == 't':
+                return self.dudrst_1d_operator(field, np.eye(lx), np.eye(ly), self.dt)
+            else:
+                raise ValueError("Invalid direction. Should be 'r', 's', or 't'")
+
+    def dudrst_3d_operator(self, field, dr):
         """
         Perform derivative with respect to reference coordinate r.
 
@@ -384,6 +440,51 @@ class Coef:
         for e in range(0, nelv):
             tmp = field[e, :, :, :].reshape(-1, 1)
             dtmp = dr @ tmp
+            dudrst[e, :, :, :] = dtmp.reshape((lz, ly, lx))
+
+        return dudrst
+
+    def dudrst_1d_operator(self, field, dr, ds, dt=None):
+        """
+        Perform derivative with respect to reference coordinate r.
+
+        This method uses derivation matrices from the lagrange polynomials at the GLL points.
+
+        Parameters
+        ----------
+        field : ndarray
+            Field to take derivative of. Shape should be (nelv, lz, ly, lx).
+        dr : ndarray
+            Derivative matrix in the r direction to apply to each element. Shape should be (lx, lx).
+        
+        ds : ndarray
+            Derivative matrix in the s direction to apply to each element. Shape should be (ly, ly).
+        
+        dt : ndarray
+            Derivative matrix in the t direction to apply to each element. Shape should be (lz, lz).
+            This is optional. If none is passed, it is assumed that the field is 2D.
+
+        Returns
+        -------
+        ndarray
+            Derivative of the field with respect to r/s/t. Shape is the same as the input field.
+
+        Examples
+        --------
+        Assuming you have a Coef object
+
+        >>> dxdr = coef.dudrst(x, coef.dr)
+        """
+        nelv = field.shape[0]
+        lx = field.shape[3]  # This is not a mistake. This is how the data is read
+        ly = field.shape[2]
+        lz = field.shape[1]
+
+        dudrst = np.zeros_like(field, dtype=field.dtype)
+
+        for e in range(0, nelv):
+            tmp = field[e, :, :, :].reshape(-1, 1)
+            dtmp = apply_1d_operators(tmp, dr, ds, dt)
             dudrst[e, :, :, :] = dtmp.reshape((lz, ly, lx))
 
         return dudrst
@@ -432,10 +533,10 @@ class Coef:
         lz = field.shape[1]
         dudxyz = np.zeros_like(field, dtype=field.dtype)
 
-        dfdr = self.dudrst(field, self.dr)
-        dfds = self.dudrst(field, self.ds)
+        dfdr = self.dudrst(field, direction='r')
+        dfds = self.dudrst(field, direction='s')
         if self.gdim > 2:
-            dfdt = self.dudrst(field, self.dt)
+            dfdt = self.dudrst(field, direction='t')
 
         # NOTE: DO NOT NEED TO MULTIPLY BY INVERSE OF JACOBIAN DETERMINAT.
         # THIS STEP IS ALREADY DONE IF YOU CALCULATED THE INVERSE WITH NUMPY
@@ -611,7 +712,7 @@ class Coef:
 
 
 ## Define functions for the calculation of the quadrature points (Taken from the lecture notes)
-def GLC_pwts(n):
+def GLC_pwts(n, dtype=np.double):
     """Gauss-Lobatto-Chebyshev (GLC) points and weights over [-1,1]
 
     Parameters
@@ -650,8 +751,8 @@ def GLC_pwts(n):
             del_ = 0.5
         return del_
 
-    x = np.cos(np.arange(n) * pi / (n - 1))
-    w = np.zeros(n)
+    x = np.cos(np.arange(n, dtype=dtype) * pi / (n - 1))
+    w = np.zeros(n, dtype=dtype)
     for i in range(n):
         tmp_ = 0.0
         for k in range(int((n - 1) / 2)):
@@ -660,7 +761,7 @@ def GLC_pwts(n):
     return x, w
 
 
-def GLL_pwts(n, eps=10**-8, max_iter=1000):
+def GLL_pwts(n, eps=10**-8, max_iter=1000, dtype=np.double):
     """Generating `n` Gauss-Lobatto-Legendre (GLL) nodes and weights using the
     Newton-Raphson iteration.
 
@@ -698,9 +799,9 @@ def GLL_pwts(n, eps=10**-8, max_iter=1000):
 
 
     """
-    V = np.zeros((n, n))  # Legendre Vandermonde Matrix
+    V = np.zeros((n, n), dtype=dtype)  # Legendre Vandermonde Matrix
     # Initial guess for the nodes: GLC points
-    xi, _ = GLC_pwts(n)
+    xi, _ = GLC_pwts(n, dtype=dtype)
     iter_ = 0
     err = 1000
     xi_old = xi
@@ -724,7 +825,7 @@ def GLL_pwts(n, eps=10**-8, max_iter=1000):
     return xi, w
 
 
-def get_transform_matrix(n, dim):
+def get_transform_matrix(n, dim, apply_1d_operators=False, dtype=np.double):
     """
     get transformation matrix to Legendre space of given order and dimension
 
@@ -751,7 +852,7 @@ def get_transform_matrix(n, dim):
     """
     # Get the quadrature nodes
     x, w_ = GLL_pwts(
-        n
+        n, dtype=dtype
     )  # The outputs of this functions are not exactly in the order we want (start from 1 not -1)
 
     # Reorder the quadrature nodes
@@ -759,7 +860,7 @@ def get_transform_matrix(n, dim):
     w = np.flip(w_)
 
     # Create a diagonal matrix
-    ww = np.eye(n)
+    ww = np.eye((n), dtype=dtype)
     for i in range(0, n):
         ww[i, i] = w[i]
 
@@ -780,7 +881,7 @@ def get_transform_matrix(n, dim):
     #  the different columns represent different x_i
 
     # Allocate space
-    leg = np.zeros((p, p))
+    leg = np.zeros((p, p), dtype=dtype)
     # First row is filled with 1 according to recursive formula
     leg[0, :] = np.ones((1, p))
     # Second row is filled with x according to recursive formula
@@ -796,7 +897,7 @@ def get_transform_matrix(n, dim):
     leg = leg.T  # nek and I transpose it for transform
 
     # Scaling factor as in books
-    delta = np.ones(n)
+    delta = np.ones(n, dtype=dtype)
     for i in range(0, n):
         # delta[i]=2/(2*i+1)       #it is the same both ways
         delta[i] = 2 / (2 * (i + 1) - 1)
@@ -815,33 +916,41 @@ def get_transform_matrix(n, dim):
 
     # 2d transformation matrix
     v = leg
-    v2d = np.kron(v, v)
     vinv = leg.T @ ww
-    vinv2d = np.kron(vinv, vinv)
+    if not apply_1d_operators: 
+        v2d = np.kron(v, v)
+        vinv2d = np.kron(vinv, vinv)
+    else:
+        v2d = v
+        vinv2d = vinv
 
     # 3d transformation matrix
     v = leg
-    v3d = np.kron(v, np.kron(v, v))
     vinv = leg.T @ ww
-    vinv3d = np.kron(vinv, np.kron(vinv, vinv))
+    if not apply_1d_operators: 
+        v3d = np.kron(v, np.kron(v, v))
+        vinv3d = np.kron(vinv, np.kron(vinv, vinv))
+    else:
+        v3d = v
+        vinv3d = vinv
 
     if dim == 1:
-        vv = v
-        vvinv = vinv
+        vv = v.astype(dtype)
+        vvinv = vinv.astype(dtype)
         w3 = w
     elif dim == 2:
-        vv = v2d
-        vvinv = vinv2d
-        w3 = np.kron(ww, ww)
+        vv = v2d.astype(dtype)
+        vvinv = vinv2d.astype(dtype)
+        w3 = np.diag(np.kron(ww, ww)).copy()
     else:
-        vv = v3d
-        vvinv = vinv3d
-        w3 = np.kron(ww, np.kron(ww, ww))
+        vv = v3d.astype(dtype)
+        vvinv = vinv3d.astype(dtype)
+        w3 = np.diag(np.kron(ww, np.kron(ww, ww))).copy()
 
     return vv, vvinv, w3, x, w
 
 
-def get_derivative_matrix(n, dim):
+def get_derivative_matrix(n, dim, dtype=np.double, apply_1d_operators=False):
     """
     Derivative matrix of Lagrange polynomials a GLL points.
 
@@ -852,6 +961,12 @@ def get_derivative_matrix(n, dim):
 
     dim : int
         Dimension of the problem.
+    
+    apply_1d_operators : bool, optional
+        If True, the 1D operators will be applied instead of constructing 3d.
+
+    dtype : numpy.dtype, optional
+        Data type of the output matrices.
 
     Returns
     -------
@@ -866,7 +981,7 @@ def get_derivative_matrix(n, dim):
     """
     # Get the quadrature nodes
     x, w_ = GLL_pwts(
-        n
+        n, dtype=dtype
     )  # The outputs of this functions are not exactly in the order we want (start from 1 not -1)
 
     # Reorder the quadrature nodes
@@ -874,7 +989,7 @@ def get_derivative_matrix(n, dim):
     w = np.flip(w_)
 
     # Create a diagonal matrix
-    ww = np.eye(n)
+    ww = np.eye(n, dtype=dtype)
     for i in range(0, n):
         ww[i, i] = w[i]
 
@@ -895,7 +1010,7 @@ def get_derivative_matrix(n, dim):
     #  the different columns represent different x_i
 
     # Allocate space
-    leg = np.zeros((p, p))
+    leg = np.zeros((p, p), dtype=dtype)
     # First row is filled with 1 according to recursive formula
     leg[0, :] = np.ones((1, p))
     # Second row is filled with x according to recursive formula
@@ -908,7 +1023,7 @@ def get_derivative_matrix(n, dim):
                 j + 1
             )
 
-    d_n = np.zeros((p, p))
+    d_n = np.zeros((p, p), dtype=dtype)
 
     # Simply apply the values as given in the book
     for i in range(0, len(p_v)):
@@ -927,20 +1042,29 @@ def get_derivative_matrix(n, dim):
         dy = None
         dz = None
     elif dim == 2:
-        dx2d = np.kron(np.eye(p), d_n)
-        dy2d = np.kron(d_n, np.eye(p))
+        if not apply_1d_operators:
+            dx2d = np.kron(np.eye(p), d_n)
+            dy2d = np.kron(d_n, np.eye(p))
+        else:
+            dx2d = d_n
+            dy2d = d_n
 
         dx = dx2d
         dy = dy2d
         dz = None
     else:
-        dx3d = np.kron(np.eye(p), np.kron(np.eye(p), d_n))
-        dy3d = np.kron(np.eye(p), np.kron(d_n, np.eye(p)))
-        dz3d = np.kron(d_n, np.kron(np.eye(p), np.eye(p)))
+        if not apply_1d_operators:
+            dx3d = np.kron(np.eye(p), np.kron(np.eye(p), d_n))
+            dy3d = np.kron(np.eye(p), np.kron(d_n, np.eye(p)))
+            dz3d = np.kron(d_n, np.kron(np.eye(p), np.eye(p)))
+        else:
+            dx3d = d_n
+            dy3d = d_n
+            dz3d = d_n
 
-        dx = dx3d
-        dy = dy3d
-        dz = dz3d
+        dx = dx3d.astype(dtype)
+        dy = dy3d.astype(dtype)
+        dz = dz3d.astype(dtype)
 
     return dx, dy, dz, d_n
 
@@ -980,3 +1104,48 @@ def nonlinear_index(linear_index_, lx, ly, lz):
         indices.append(ind)
 
     return indices
+
+
+def apply_1d_operators(x, dr, ds, dt=None):
+
+    if not isinstance(dt, type(None)):
+        return apply_operators_3d(dr, ds, dt, x)
+    else:
+        return apply_operators_2d(dr, ds, x)
+
+def apply_operators_2d(dr, ds, x):
+    """This function applies operators the same way as they are applied in NEK5000
+    The only difference is that it is reversed, as this is
+    python and we decided to leave that arrays as is"""
+
+    # Apply in r direction
+    temp = x.reshape((int(x.size / dr.T.shape[0]), dr.T.shape[0])) @ dr.T
+
+    # Apply in s direction
+    temp = ds @ temp.reshape(ds.shape[1], (int(temp.size / ds.shape[1])))
+
+    return temp.reshape(-1, 1)
+
+def apply_operators_3d(dr, ds, dt, x):
+    """This function applies operators the same way as they are applied in NEK5000
+    The only difference is that it is reversed, as this is
+    python and we decided to leave that arrays as is"""
+
+    # Apply in r direction
+    temp = x.reshape((int(x.size / dr.T.shape[0]), dr.T.shape[0])) @ dr.T
+
+    # Apply in s direction
+    temp = temp.reshape((ds.shape[1], ds.shape[1], int(temp.size / (ds.shape[1] ** 2))))
+    ### The nek5000 way uses a for loop
+    ## temp2 = np.zeros((ds.shape[1], ds.shape[0],
+    # int(temp.size/(ds.shape[1]**2))))
+    # This is needed because dimensions could reduce
+    ## for k in range(0, temp.shape[0]):
+    ##     temp2[k,:,:] = ds@temp[k,:,:]
+    ### We can do it optimized in numpy if we reshape the operator. This way it can broadcast
+    temp = ds.reshape((1, ds.shape[0], ds.shape[1])) @ temp
+
+    # Apply in t direction
+    temp = dt @ temp.reshape(dt.shape[1], (int(temp.size / dt.shape[1])))
+
+    return temp.reshape(-1, 1)
