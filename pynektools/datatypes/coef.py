@@ -18,10 +18,10 @@ class Coef:
 
     comm : Comm
         MPI comminicator object.
-    
+
     get_area : bool, optional
         If True, the area integration weight and normal vectors will be calculated. (Default value = True).
-    
+
     apply_1d_operators : bool, optional
         If True, the 1D operators will be applied instead of building 3D operators. (Default value = True).
 
@@ -67,7 +67,7 @@ class Coef:
     >>> coef = Coef(msh, comm)
     """
 
-    def __init__(self, msh, comm, get_area=True, apply_1d_operators = True):
+    def __init__(self, msh, comm, get_area=False, apply_1d_operators=True):
 
         if comm.Get_rank() == 0:
             print("Initializing coef object")
@@ -75,29 +75,31 @@ class Coef:
         self.gdim = msh.gdim
         self.dtype = msh.x.dtype
         self.apply_1d_operators = apply_1d_operators
-        
+
         self.v, self.vinv, self.w3, self.x, self.w = get_transform_matrix(
             msh.lx, msh.gdim, apply_1d_operators=apply_1d_operators, dtype=self.dtype
         )
 
-        self.dr, self.ds, self.dt, self.dn = get_derivative_matrix(msh.lx, msh.gdim, dtype=self.dtype, apply_1d_operators=apply_1d_operators)
+        self.dr, self.ds, self.dt, self.dn = get_derivative_matrix(
+            msh.lx, msh.gdim, dtype=self.dtype, apply_1d_operators=apply_1d_operators
+        )
 
         # Find the components of the jacobian per point
         # jac(x,y,z) = [dxdr, dxds, dxdt ; dydr, dyds, dydt; dzdr, dzds, dzdt]
-        self.dxdr = self.dudrst(msh.x, direction='r')
-        self.dxds = self.dudrst(msh.x, direction='s')
+        self.dxdr = self.dudrst(msh.x, direction="r")
+        self.dxds = self.dudrst(msh.x, direction="s")
         if msh.gdim > 2:
-            self.dxdt = self.dudrst(msh.x, direction='t')
+            self.dxdt = self.dudrst(msh.x, direction="t")
 
-        self.dydr = self.dudrst(msh.y, direction='r')
-        self.dyds = self.dudrst(msh.y, direction='s')
+        self.dydr = self.dudrst(msh.y, direction="r")
+        self.dyds = self.dudrst(msh.y, direction="s")
         if msh.gdim > 2:
-            self.dydt = self.dudrst(msh.y, direction='t')
+            self.dydt = self.dudrst(msh.y, direction="t")
 
         if msh.gdim > 2:
-            self.dzdr = self.dudrst(msh.z, direction='r')
-            self.dzds = self.dudrst(msh.z, direction='s')
-            self.dzdt = self.dudrst(msh.z, direction='t')
+            self.dzdr = self.dudrst(msh.z, direction="r")
+            self.dzds = self.dudrst(msh.z, direction="s")
+            self.dzdt = self.dudrst(msh.z, direction="t")
 
         self.drdx = np.zeros_like(self.dxdr, dtype=self.dtype)
         self.drdy = np.zeros_like(self.dxdr, dtype=self.dtype)
@@ -115,69 +117,69 @@ class Coef:
             self.dtdz = np.zeros_like(self.dxdr, dtype=self.dtype)
 
         # Find the jacobian determinant, its inverse inverse and mass matrix (3D)
-        # This maps dxyz/drst
-        # Gere we store the jacobian determinant as "jac"
-        self.jac = np.zeros_like(self.dxdr, dtype=self.dtype)
-        # This maps drst/dxyz
-        self.jac_inv = np.zeros_like(self.dxdr, dtype=self.dtype)
-        self.B = np.zeros_like(self.dxdr, dtype=self.dtype)
+        # jac maps domain from xyz to rst -> dxyz =  jac * drst during integration
+
+        # Create the temp_mat array for all elements
+        if msh.gdim > 2:
+            temp_mat = np.zeros(
+                (msh.nelv, msh.lz, msh.ly, msh.lx, 3, 3), dtype=self.dtype
+            )
+        else:
+            temp_mat = np.zeros(
+                (msh.nelv, msh.lz, msh.ly, msh.lx, 2, 2), dtype=self.dtype
+            )
+
+        # Note that the temp_mat array is of shape (nelv, lz, ly, lx, gdim, gdim)
+        # Therefore it stores the Jacobian matrix for each point in the mesh
+        temp_mat[..., 0, 0] = self.dxdr
+        temp_mat[..., 0, 1] = self.dxds
+        if msh.gdim > 2:
+            temp_mat[..., 0, 2] = self.dxdt
+
+        temp_mat[..., 1, 0] = self.dydr
+        temp_mat[..., 1, 1] = self.dyds
+        if msh.gdim > 2:
+            temp_mat[..., 1, 2] = self.dydt
 
         if msh.gdim > 2:
-            temp_mat = np.zeros((3, 3))
-        else:
-            temp_mat = np.zeros((2, 2))
+            temp_mat[..., 2, 0] = self.dzdr
+            temp_mat[..., 2, 1] = self.dzds
+            temp_mat[..., 2, 2] = self.dzdt
 
-        for e in range(0, msh.nelv):
-            for k in range(0, msh.lz):
-                for j in range(0, msh.ly):
-                    for i in range(0, msh.lx):
-                        temp_mat[0, 0] = self.dxdr[e, k, j, i]
-                        temp_mat[0, 1] = self.dxds[e, k, j, i]
-                        if msh.gdim > 2:
-                            temp_mat[0, 2] = self.dxdt[e, k, j, i]
+        # Compute the Jacobian determinant
+        self.jac = np.linalg.det(temp_mat)
 
-                        temp_mat[1, 0] = self.dydr[e, k, j, i]
-                        temp_mat[1, 1] = self.dyds[e, k, j, i]
-                        if msh.gdim > 2:
-                            temp_mat[1, 2] = self.dydt[e, k, j, i]
+        # Compute the inverse of the Jacobian determinant
+        self.jac_inv = 1 / self.jac
 
-                        if msh.gdim > 2:
-                            temp_mat[2, 0] = self.dzdr[e, k, j, i]
-                            temp_mat[2, 1] = self.dzds[e, k, j, i]
-                            temp_mat[2, 2] = self.dzdt[e, k, j, i]
+        # Compute the mass matrix
+        self.B = self.jac * self.w3.reshape((msh.lz, msh.ly, msh.lx))
 
-                        # Fill the jaconian determinant, its inverse and the mass matrix
-                        self.jac[e, k, j, i] = np.linalg.det(temp_mat)
-                        self.jac_inv[e, k, j, i] = 1 / self.jac[e, k, j, i]
-                        self.B[e, k, j, i] = (
-                            self.jac[e, k, j, i]
-                            * (self.w3).reshape((msh.lz, msh.ly, msh.lx))[
-                                k, j, i
-                            ]
-                        )
-                        # Fill the terms for the jacobian inverse
+        # Compute the inverse of the Jacobian matrix
+        if self.gdim == 2:
+            temp_mat_inv = np.linalg.inv(temp_mat)
+        elif self.gdim == 3:
+            # Use this custom fuction to save memory
+            # seems that numpy requires more.
+            temp_mat_inv = invert_jac(temp_mat)
 
-                        # Find the components of the inverse of the jacobian per point
-                        temp_mat_inv = np.linalg.inv(
-                            temp_mat
-                        )  # Note that here, 1/det(jac) is already performed
+        # Fill the components of the Jacobian inverse
+        # The copy here is so that is not a reference
+        # so it appears as a new object in memory
+        self.drdx = temp_mat_inv[..., 0, 0].copy()
+        self.drdy = temp_mat_inv[..., 0, 1].copy()
+        if msh.gdim > 2:
+            self.drdz = temp_mat_inv[..., 0, 2].copy()
 
-                        # Find the components of the jacobian per point
-                        # jac_inv(r,s,t) = [drdx, drdy, drdz ; dsdx, dsdy, dsdz; dtdx, dtdy, dtdz]
-                        self.drdx[e, k, j, i] = temp_mat_inv[0, 0]
-                        self.drdy[e, k, j, i] = temp_mat_inv[0, 1]
-                        if msh.gdim > 2:
-                            self.drdz[e, k, j, i] = temp_mat_inv[0, 2]
+        self.dsdx = temp_mat_inv[..., 1, 0].copy()
+        self.dsdy = temp_mat_inv[..., 1, 1].copy()
+        if msh.gdim > 2:
+            self.dsdz = temp_mat_inv[..., 1, 2].copy()
 
-                        self.dsdx[e, k, j, i] = temp_mat_inv[1, 0]
-                        self.dsdy[e, k, j, i] = temp_mat_inv[1, 1]
-                        if msh.gdim > 2:
-                            self.dsdz[e, k, j, i] = temp_mat_inv[1, 2]
-
-                        if msh.gdim > 2:
-                            self.dtdx[e, k, j, i] = temp_mat_inv[2, 0]
-                            self.dtdy[e, k, j, i] = temp_mat_inv[2, 1]
-                            self.dtdz[e, k, j, i] = temp_mat_inv[2, 2]
+        if msh.gdim > 2:
+            self.dtdx = temp_mat_inv[..., 2, 0].copy()
+            self.dtdy = temp_mat_inv[..., 2, 1].copy()
+            self.dtdz = temp_mat_inv[..., 2, 2].copy()
 
         # Get area stuff only if mesh is 3D
         # Remember that the area described by two vectors is given by the norm of its cross product
@@ -187,114 +189,151 @@ class Coef:
         # Where we calculate the jacobian determinant
         # and then multiply with weights
         if msh.gdim > 2 and get_area:
-            d1 = np.zeros((3), dtype=self.dtype)
-            d2 = np.zeros((3), dtype=self.dtype)
+
             self.area = np.zeros((msh.nelv, 6, msh.ly, msh.lx), dtype=self.dtype)
             self.nx = np.zeros((msh.nelv, 6, msh.ly, msh.lx), dtype=self.dtype)
             self.ny = np.zeros((msh.nelv, 6, msh.ly, msh.lx), dtype=self.dtype)
             self.nz = np.zeros((msh.nelv, 6, msh.ly, msh.lx), dtype=self.dtype)
 
             # ds x dt
-            for e in range(0, msh.nelv):
-                for k in range(0, msh.lz):
-                    for j in range(0, msh.ly):
-                        weight = self.w[j] * self.w[k]
+            # For facet 1
 
-                        # For facet 1
-                        d1[0] = self.dxds[e, k, j, 0]
-                        d1[1] = self.dyds[e, k, j, 0]
-                        d1[2] = self.dzds[e, k, j, 0]
-                        d2[0] = self.dxdt[e, k, j, 0]
-                        d2[1] = self.dydt[e, k, j, 0]
-                        d2[2] = self.dzdt[e, k, j, 0]
-                        cross = np.cross(d1, d2)
-                        norm = np.linalg.norm(cross)
-                        self.area[e, 0, k, j] = norm * weight
-                        self.nx[e, 0, k, j] = -cross[0] / norm
-                        self.ny[e, 0, k, j] = -cross[1] / norm
-                        self.nz[e, 0, k, j] = -cross[2] / norm
+            d1 = np.stack(
+                (self.dxds[:, :, :, 0], self.dyds[:, :, :, 0], self.dzds[:, :, :, 0]),
+                axis=3,
+            )
+            d2 = np.stack(
+                (self.dxdt[:, :, :, 0], self.dydt[:, :, :, 0], self.dzdt[:, :, :, 0]),
+                axis=3,
+            )
+            cross = np.cross(d1, d2, axis=3)  # so this is (nelv, k, j, 3)
+            norm = np.linalg.norm(cross, axis=3)
+            weight = np.outer(self.w, self.w).reshape((1, msh.lz, msh.ly))
+            self.area[:, 0, :, :] = norm * weight
+            self.nx[:, 0, :, :] = -cross[..., 0] / norm
+            self.ny[:, 0, :, :] = -cross[..., 1] / norm
+            self.nz[:, 0, :, :] = -cross[..., 2] / norm
 
-                        # For facet 2
-                        d1[0] = self.dxds[e, k, j, msh.lx - 1]
-                        d1[1] = self.dyds[e, k, j, msh.lx - 1]
-                        d1[2] = self.dzds[e, k, j, msh.lx - 1]
-                        d2[0] = self.dxdt[e, k, j, msh.lx - 1]
-                        d2[1] = self.dydt[e, k, j, msh.lx - 1]
-                        d2[2] = self.dzdt[e, k, j, msh.lx - 1]
-                        cross = np.cross(d1, d2)
-                        norm = np.linalg.norm(cross)
-                        self.area[e, 1, k, j] = norm * weight
-                        self.nx[e, 1, k, j] = cross[0] / norm
-                        self.ny[e, 1, k, j] = cross[1] / norm
-                        self.nz[e, 1, k, j] = cross[2] / norm
+            # For facet 2
+            d1 = np.stack(
+                (
+                    self.dxds[:, :, :, -1],
+                    self.dyds[:, :, :, -1],
+                    self.dzds[:, :, :, -1],
+                ),
+                axis=3,
+            )
+            d2 = np.stack(
+                (
+                    self.dxdt[:, :, :, -1],
+                    self.dydt[:, :, :, -1],
+                    self.dzdt[:, :, :, -1],
+                ),
+                axis=3,
+            )
+            cross = np.cross(d1, d2, axis=3)
+            norm = np.linalg.norm(cross, axis=3)
+            self.area[:, 1, :, :] = norm * weight
+            self.nx[:, 1, :, :] = cross[..., 0] / norm
+            self.ny[:, 1, :, :] = cross[..., 1] / norm
+            self.nz[:, 1, :, :] = cross[..., 2] / norm
 
             # dr x dt
-            for e in range(0, msh.nelv):
-                for k in range(0, msh.lz):
-                    for i in range(0, msh.lx):
-                        weight = self.w[i] * self.w[k]
+            # For facet 3
+            d1 = np.stack(
+                (self.dxdr[:, :, 0, :], self.dydr[:, :, 0, :], self.dzdr[:, :, 0, :]),
+                axis=2,
+            )
+            d2 = np.stack(
+                (self.dxdt[:, :, 0, :], self.dydt[:, :, 0, :], self.dzdt[:, :, 0, :]),
+                axis=2,
+            )
+            cross = np.cross(d1, d2, axis=2).transpose(
+                (0, 1, 3, 2)
+            )  # Put the result in the last axis
+            # After the permutation, the shape is (nelv, k, i, 3)
+            norm = np.linalg.norm(cross, axis=3)
+            weight = np.outer(self.w, self.w).reshape((1, msh.lz, msh.ly))
+            self.area[:, 2, :, :] = norm * weight
+            self.nx[:, 2, :, :] = cross[..., 0] / norm
+            self.ny[:, 2, :, :] = cross[..., 1] / norm
+            self.nz[:, 2, :, :] = cross[..., 2] / norm
 
-                        # For facet 3
-                        d1[0] = self.dxdr[e, k, 0, i]
-                        d1[1] = self.dydr[e, k, 0, i]
-                        d1[2] = self.dzdr[e, k, 0, i]
-                        d2[0] = self.dxdt[e, k, 0, i]
-                        d2[1] = self.dydt[e, k, 0, i]
-                        d2[2] = self.dzdt[e, k, 0, i]
-                        cross = np.cross(d1, d2)
-                        norm = np.linalg.norm(cross)
-                        self.area[e, 2, k, i] = norm * weight
-                        self.nx[e, 2, k, i] = cross[0] / norm
-                        self.ny[e, 2, k, i] = cross[1] / norm
-                        self.nz[e, 2, k, i] = cross[2] / norm
-
-                        # For facet 4
-                        d1[0] = self.dxdr[e, k, msh.ly - 1, i]
-                        d1[1] = self.dydr[e, k, msh.ly - 1, i]
-                        d1[2] = self.dzdr[e, k, msh.ly - 1, i]
-                        d2[0] = self.dxdt[e, k, msh.ly - 1, i]
-                        d2[1] = self.dydt[e, k, msh.ly - 1, i]
-                        d2[2] = self.dzdt[e, k, msh.ly - 1, i]
-                        cross = np.cross(d1, d2)
-                        norm = np.linalg.norm(cross)
-                        self.area[e, 3, k, i] = norm * weight
-                        self.nx[e, 3, k, i] = -cross[0] / norm
-                        self.ny[e, 3, k, i] = -cross[1] / norm
-                        self.nz[e, 3, k, i] = -cross[2] / norm
+            # For facet 4
+            d1 = np.stack(
+                (
+                    self.dxdr[:, :, -1, :],
+                    self.dydr[:, :, -1, :],
+                    self.dzdr[:, :, -1, :],
+                ),
+                axis=2,
+            )
+            d2 = np.stack(
+                (
+                    self.dxdt[:, :, -1, :],
+                    self.dydt[:, :, -1, :],
+                    self.dzdt[:, :, -1, :],
+                ),
+                axis=2,
+            )
+            cross = np.cross(d1, d2, axis=2).transpose(
+                (0, 1, 3, 2)
+            )  # Put the result in the last axis
+            norm = np.linalg.norm(cross, axis=3)
+            weight = np.outer(self.w, self.w).reshape((1, msh.lz, msh.ly))
+            self.area[:, 3, :, :] = norm * weight
+            self.nx[:, 3, :, :] = -cross[..., 0] / norm
+            self.ny[:, 3, :, :] = -cross[..., 1] / norm
+            self.nz[:, 3, :, :] = -cross[..., 2] / norm
 
             # dr x ds
-            for e in range(0, msh.nelv):
-                for j in range(0, msh.ly):
-                    for i in range(0, msh.lx):
-                        weight = self.w[j] * self.w[i]
+            # For facet 5
+            d1 = np.stack(
+                (self.dxdr[:, 0, :, :], self.dydr[:, 0, :, :], self.dzdr[:, 0, :, :]),
+                axis=1,
+            )
+            d2 = np.stack(
+                (self.dxds[:, 0, :, :], self.dyds[:, 0, :, :], self.dzds[:, 0, :, :]),
+                axis=1,
+            )
+            cross = np.cross(d1, d2, axis=1).transpose(
+                (0, 2, 3, 1)
+            )  # Put the result in the last axis
+            # after the transpose it is (nelv, j, i, 3)
+            norm = np.linalg.norm(cross, axis=3)
+            weight = np.outer(self.w, self.w).reshape((1, msh.lz, msh.ly))
+            self.area[:, 4, :, :] = norm * weight
+            self.nx[:, 4, :, :] = -cross[..., 0] / norm
+            self.ny[:, 4, :, :] = -cross[..., 1] / norm
+            self.nz[:, 4, :, :] = -cross[..., 2] / norm
 
-                        # For facet 5
-                        d1[0] = self.dxdr[e, 0, j, i]
-                        d1[1] = self.dydr[e, 0, j, i]
-                        d1[2] = self.dzdr[e, 0, j, i]
-                        d2[0] = self.dxds[e, 0, j, i]
-                        d2[1] = self.dyds[e, 0, j, i]
-                        d2[2] = self.dzds[e, 0, j, i]
-                        cross = np.cross(d1, d2)
-                        norm = np.linalg.norm(cross)
-                        self.area[e, 4, j, i] = norm * weight
-                        self.nx[e, 4, j, i] = -cross[0] / norm
-                        self.ny[e, 4, j, i] = -cross[1] / norm
-                        self.nz[e, 4, j, i] = -cross[2] / norm
-
-                        # For facet 6
-                        d1[0] = self.dxdr[e, msh.lz - 1, j, i]
-                        d1[1] = self.dydr[e, msh.lz - 1, j, i]
-                        d1[2] = self.dzdr[e, msh.lz - 1, j, i]
-                        d2[0] = self.dxds[e, msh.lz - 1, j, i]
-                        d2[1] = self.dyds[e, msh.lz - 1, j, i]
-                        d2[2] = self.dzds[e, msh.lz - 1, j, i]
-                        cross = np.cross(d1, d2)
-                        norm = np.linalg.norm(cross)
-                        self.area[e, 5, j, i] = norm * weight
-                        self.nx[e, 5, j, i] = cross[0] / norm
-                        self.ny[e, 5, j, i] = cross[1] / norm
-                        self.nz[e, 5, j, i] = cross[2] / norm
+            # For facet 6
+            d1 = np.stack(
+                (
+                    self.dxdr[:, -1, :, :],
+                    self.dydr[:, -1, :, :],
+                    self.dzdr[:, -1, :, :],
+                ),
+                axis=1,
+            )
+            d2 = np.stack(
+                (
+                    self.dxds[:, -1, :, :],
+                    self.dyds[:, -1, :, :],
+                    self.dzds[:, -1, :, :],
+                ),
+                axis=1,
+            )
+            cross = np.cross(d1, d2, axis=1).transpose(
+                (0, 2, 3, 1)
+            )  # Put the result in the last axis
+            # after the transpose it is (nelv, j, i, 3)
+            norm = np.linalg.norm(cross, axis=3)
+            weight = np.outer(self.w, self.w).reshape((1, msh.lz, msh.ly))
+            self.area[:, 5, :, :] = norm * weight
+            self.nx[:, 5, :, :] = -cross[..., 0] / norm
+            self.ny[:, 5, :, :] = -cross[..., 1] / norm
+            self.nz[:, 5, :, :] = -cross[..., 2] / norm
 
         if comm.Get_rank() == 0:
             print(f"coef data is of type: {self.B.dtype}")
@@ -357,8 +396,8 @@ class Coef:
                     f"Rank: {comm.Get_rank()} - Memory usage of coef attr - {attr}: {size_per_attribute[i]} MB"
                 )
 
-    def dudrst(self, field, direction='r'):
-        '''
+    def dudrst(self, field, direction="r"):
+        """
         Perform derivative with respect to reference coordinate r/s/t.
 
         Used to perform the derivative in the reference coordinates
@@ -367,7 +406,7 @@ class Coef:
         ----------
         field : ndarray
             Field to take derivative of. Shape should be (nelv, lz, ly, lx).
-        
+
         direction : str
             Direction to take the derivative. Can be 'r', 's', or 't'. (Default value = 'r').
 
@@ -375,33 +414,52 @@ class Coef:
         -------
         ndarray
             Derivative of the field with respect to r/s/t. Shape is the same as the input field.
-        '''
+        """
         lx = field.shape[3]  # This is not a mistake. This is how the data is read
         ly = field.shape[2]
         lz = field.shape[1]
-        
+
         if not self.apply_1d_operators:
-            if direction == 'r':
+            if direction == "r":
                 return self.dudrst_3d_operator(field, self.dr)
-            elif direction == 's':
+            elif direction == "s":
                 return self.dudrst_3d_operator(field, self.ds)
-            elif direction == 't':
+            elif direction == "t":
                 return self.dudrst_3d_operator(field, self.dt)
             else:
                 raise ValueError("Invalid direction. Should be 'r', 's', or 't'")
         elif self.apply_1d_operators:
-            if direction == 'r':
+            if direction == "r":
                 if self.gdim == 2:
-                    return self.dudrst_1d_operator(field, self.dr, np.eye(ly))
+                    return self.dudrst_1d_operator(
+                        field, self.dr, np.eye(ly, dtype=self.dtype)
+                    )
                 elif self.gdim == 3:
-                    return self.dudrst_1d_operator(field, self.dr, np.eye(ly), np.eye(lz))
-            elif direction == 's':
+                    return self.dudrst_1d_operator(
+                        field,
+                        self.dr,
+                        np.eye(ly, dtype=self.dtype),
+                        np.eye(lz, dtype=self.dtype),
+                    )
+            elif direction == "s":
                 if self.gdim == 2:
-                    return self.dudrst_1d_operator(field, np.eye(lx), self.ds)
+                    return self.dudrst_1d_operator(
+                        field, np.eye(lx, dtype=self.dtype), self.ds
+                    )
                 elif self.gdim == 3:
-                    return self.dudrst_1d_operator(field, np.eye(lx), self.ds, np.eye(lz))
-            elif direction == 't':
-                return self.dudrst_1d_operator(field, np.eye(lx), np.eye(ly), self.dt)
+                    return self.dudrst_1d_operator(
+                        field,
+                        np.eye(lx, dtype=self.dtype),
+                        self.ds,
+                        np.eye(lz, dtype=self.dtype),
+                    )
+            elif direction == "t":
+                return self.dudrst_1d_operator(
+                    field,
+                    np.eye(lx, dtype=self.dtype),
+                    np.eye(ly, dtype=self.dtype),
+                    self.dt,
+                )
             else:
                 raise ValueError("Invalid direction. Should be 'r', 's', or 't'")
 
@@ -434,20 +492,46 @@ class Coef:
         ly = field.shape[2]
         lz = field.shape[1]
 
-        dudrst = np.zeros_like(field, dtype=field.dtype)
+        # ==================================================
+        # Using loops
+        # dudrst = np.zeros_like(field, dtype=field.dtype)
+        # for e in range(0, nelv):
+        #    tmp = field[e, :, :, :].reshape(-1, 1)
+        #    dtmp = dr @ tmp
+        #    dudrst[e, :, :, :] = dtmp.reshape((lz, ly, lx))
+        # ==================================================
 
-        for e in range(0, nelv):
-            tmp = field[e, :, :, :].reshape(-1, 1)
-            dtmp = dr @ tmp
-            dudrst[e, :, :, :] = dtmp.reshape((lz, ly, lx))
+        # Using einsum
+        field_shape = field.shape
+        operator_shape = dr.shape
+        field_shape_as_columns = (
+            field_shape[0],
+            field_shape[1] * field_shape[2] * field_shape[3],
+            1,
+        )
+
+        # Reshape the field in palce
+        field.shape = field_shape_as_columns
+
+        # Calculate the derivative applying the 3D operator broadcasting with einsum
+        dudrst = np.einsum(
+            "ejk, ekm -> ejm",
+            dr.reshape(1, operator_shape[0], operator_shape[1]),
+            field,
+        )
+
+        # Reshape the field back to its original shape
+        field.shape = field_shape
+        dudrst.shape = field_shape
 
         return dudrst
 
     def dudrst_1d_operator(self, field, dr, ds, dt=None):
         """
-        Perform derivative with respect to reference coordinate r.
+        Perform derivative applying the 1d operators provided as inputs.
 
-        This method uses derivation matrices from the lagrange polynomials at the GLL points.
+        This method uses the 1D operators to apply the derivative. To apply derivative in r.
+        you mush provide the 1d differenciation matrix in that direction and identity in the others.
 
         Parameters
         ----------
@@ -455,10 +539,10 @@ class Coef:
             Field to take derivative of. Shape should be (nelv, lz, ly, lx).
         dr : ndarray
             Derivative matrix in the r direction to apply to each element. Shape should be (lx, lx).
-        
+
         ds : ndarray
             Derivative matrix in the s direction to apply to each element. Shape should be (ly, ly).
-        
+
         dt : ndarray
             Derivative matrix in the t direction to apply to each element. Shape should be (lz, lz).
             This is optional. If none is passed, it is assumed that the field is 2D.
@@ -472,19 +556,52 @@ class Coef:
         --------
         Assuming you have a Coef object
 
-        >>> dxdr = coef.dudrst(x, coef.dr)
+        >>> dxdr = coef.dudrst(x, coef.dr, np.eye(ly, dtype=coef.dtype), np.eye(lz, dtype=coef.dtype))
         """
         nelv = field.shape[0]
         lx = field.shape[3]  # This is not a mistake. This is how the data is read
         ly = field.shape[2]
         lz = field.shape[1]
 
-        dudrst = np.zeros_like(field, dtype=field.dtype)
+        # ==================================================
+        # Using loops
+        # dudrst = np.zeros_like(field, dtype=field.dtype)
+        # for e in range(0, nelv):
+        #    tmp = field[e, :, :, :].reshape(-1, 1)
+        #    dtmp = apply_1d_operators(tmp, dr, ds, dt, use_broadcast=False)
+        #    dudrst[e, :, :, :] = dtmp.reshape((lz, ly, lx))
+        # ==================================================
 
-        for e in range(0, nelv):
-            tmp = field[e, :, :, :].reshape(-1, 1)
-            dtmp = apply_1d_operators(tmp, dr, ds, dt)
-            dudrst[e, :, :, :] = dtmp.reshape((lz, ly, lx))
+        # we will use an einsum implementation that expects fields in this form:
+        # (nelv, lz, ly, lx) -> (nelv, 1 , lxyz, 1)
+        field_shape = field.shape
+        operator_shape = dr.shape
+        field_shape_as_columns = (
+            field_shape[0],
+            1,
+            field_shape[1] * field_shape[2] * field_shape[3],
+            1,
+        )
+
+        # Reshape the field in palce
+        field.shape = field_shape_as_columns
+        # Reshape the operators to comply with that shape
+        dr.shape = (1, 1, operator_shape[0], operator_shape[1])
+        ds.shape = (1, 1, operator_shape[0], operator_shape[1])
+        if not isinstance(dt, type(None)):
+            dt.shape = (1, 1, operator_shape[0], operator_shape[1])
+
+        # In the operation, we broadcast in the first two axis.
+        # the last two axis are treated as matrices that are multiplied.
+        dudrst = apply_1d_operators(field, dr, ds, dt)
+
+        # Reshape everything back to its supposed shape
+        field.shape = field_shape
+        dr.shape = operator_shape
+        ds.shape = operator_shape
+        if not isinstance(dt, type(None)):
+            dt.shape = operator_shape
+        dudrst.shape = field_shape
 
         return dudrst
 
@@ -532,10 +649,10 @@ class Coef:
         lz = field.shape[1]
         dudxyz = np.zeros_like(field, dtype=field.dtype)
 
-        dfdr = self.dudrst(field, direction='r')
-        dfds = self.dudrst(field, direction='s')
+        dfdr = self.dudrst(field, direction="r")
+        dfds = self.dudrst(field, direction="s")
         if self.gdim > 2:
-            dfdt = self.dudrst(field, direction='t')
+            dfdt = self.dudrst(field, direction="t")
 
         # NOTE: DO NOT NEED TO MULTIPLY BY INVERSE OF JACOBIAN DETERMINAT.
         # THIS STEP IS ALREADY DONE IF YOU CALCULATED THE INVERSE WITH NUMPY
@@ -916,7 +1033,7 @@ def get_transform_matrix(n, dim, apply_1d_operators=False, dtype=np.double):
     # 2d transformation matrix
     v = leg
     vinv = leg.T @ ww
-    if not apply_1d_operators: 
+    if not apply_1d_operators:
         v2d = np.kron(v, v)
         vinv2d = np.kron(vinv, vinv)
     else:
@@ -926,7 +1043,7 @@ def get_transform_matrix(n, dim, apply_1d_operators=False, dtype=np.double):
     # 3d transformation matrix
     v = leg
     vinv = leg.T @ ww
-    if not apply_1d_operators: 
+    if not apply_1d_operators:
         v3d = np.kron(v, np.kron(v, v))
         vinv3d = np.kron(vinv, np.kron(vinv, vinv))
     else:
@@ -960,7 +1077,7 @@ def get_derivative_matrix(n, dim, dtype=np.double, apply_1d_operators=False):
 
     dim : int
         Dimension of the problem.
-    
+
     apply_1d_operators : bool, optional
         If True, the 1D operators will be applied instead of constructing 3d.
 
@@ -1105,14 +1222,21 @@ def nonlinear_index(linear_index_, lx, ly, lz):
     return indices
 
 
-def apply_1d_operators(x, dr, ds, dt=None):
+def apply_1d_operators(x, dr, ds, dt=None, use_broadcast=True):
 
-    if not isinstance(dt, type(None)):
-        return apply_operators_3d(dr, ds, dt, x)
+    if use_broadcast:
+        if not isinstance(dt, type(None)):
+            return apply_operators_3d(dr, ds, dt, x)
+        else:
+            return apply_operators_2d(dr, ds, x)
     else:
-        return apply_operators_2d(dr, ds, x)
+        if not isinstance(dt, type(None)):
+            return apply_operators_3d_no_broadcast(dr, ds, dt, x)
+        else:
+            return apply_operators_2d_no_broadcast(dr, ds, x)
 
-def apply_operators_2d(dr, ds, x):
+
+def apply_operators_2d_no_broadcast(dr, ds, x):
     """This function applies operators the same way as they are applied in NEK5000
     The only difference is that it is reversed, as this is
     python and we decided to leave that arrays as is"""
@@ -1125,7 +1249,8 @@ def apply_operators_2d(dr, ds, x):
 
     return temp.reshape(-1, 1)
 
-def apply_operators_3d(dr, ds, dt, x):
+
+def apply_operators_3d_no_broadcast(dr, ds, dt, x):
     """This function applies operators the same way as they are applied in NEK5000
     The only difference is that it is reversed, as this is
     python and we decided to leave that arrays as is"""
@@ -1148,3 +1273,150 @@ def apply_operators_3d(dr, ds, dt, x):
     temp = dt @ temp.reshape(dt.shape[1], (int(temp.size / dt.shape[1])))
 
     return temp.reshape(-1, 1)
+
+
+def apply_operators_2d(dr, ds, x):
+    """
+
+    This function applies operators the same way as they are applied in NEK5000
+
+    The only difference is that it is reversed, as
+
+    this is python and we decided to leave that arrays as is
+
+    this function is more readable in sem.py, where tensor optimization is not used.
+
+    """
+
+    dshape = dr.shape
+    xshape = x.shape
+    xsize = xshape[2] * xshape[3]
+
+    # Reshape the operator in the r direction
+    drt = dr.transpose(
+        0, 1, 3, 2
+    )  # This is just the transpose of the operator, leaving the first dimensions unaltered
+    drt_s0 = drt.shape[2]
+    # drt_s1 = drt.shape[3]
+    # Reshape the field to be consistent
+    xreshape = x.reshape((xshape[0], xshape[1], int(xsize / drt_s0), drt_s0))
+    # Apply the operator with einsum
+    temp = np.einsum("ijkl,ijlm->ijkm", xreshape, drt)
+
+    # Reshape the arrays as needed
+    tempsize = temp.shape[2] * temp.shape[3]
+    ds_s0 = ds.shape[2]
+    ds_s1 = ds.shape[3]
+
+    # Apply in s direction
+
+    temp = temp.reshape((xshape[0], xshape[1], ds_s1, int(tempsize / ds_s1)))
+    temp = np.einsum("ijkl,ijlm->ijkm", ds, temp)
+
+    # Reshape to proper size
+    tempshape = temp.shape
+    tempsize = temp.shape[2] * temp.shape[3]
+
+    return temp.reshape((tempshape[0], tempshape[1], tempsize, 1)).copy()
+
+
+def apply_operators_3d(dr, ds, dt, x):
+    """
+
+    This function applies operators the same way as they are applied in NEK5000
+
+    The only difference is that it is reversed, as
+
+    this is python and we decided to leave that arrays as is
+
+    this function is more readable in sem.py, where tensor optimization is not used.
+
+    """
+
+    dshape = dr.shape
+    xshape = x.shape
+    xsize = xshape[2] * xshape[3]
+
+    # Reshape the operator in the r direction
+    drt = dr.transpose(
+        0, 1, 3, 2
+    )  # This is just the transpose of the operator, leaving the first dimensions unaltered
+    drt_s0 = drt.shape[2]
+    # drt_s1 = drt.shape[3]
+    # Reshape the field to be consistent
+    xreshape = x.reshape((xshape[0], xshape[1], int(xsize / drt_s0), drt_s0))
+    # Apply the operator with einsum
+    temp = np.einsum("ijkl,ijlm->ijkm", xreshape, drt)
+
+    # Reshape the arrays as needed
+    tempsize = temp.shape[2] * temp.shape[3]
+    ds_s0 = ds.shape[2]
+    ds_s1 = ds.shape[3]
+
+    # Apply in s direction
+    temp = temp.reshape(
+        (xshape[0], xshape[1], ds_s1, ds_s1, int(tempsize / (ds_s1**2)))
+    )
+    temp = np.einsum(
+        "ijklm,ijkmn->ijkln", ds.reshape((dshape[0], dshape[1], 1, ds_s0, ds_s1)), temp
+    )
+
+    # Reshape the arrays as needed
+    tempsize = temp.shape[2] * temp.shape[3] * temp.shape[4]
+    # dt_s0 = dt.shape[2]
+    dt_s1 = dt.shape[3]
+
+    # Apply in t direction
+
+    temp = temp.reshape((xshape[0], xshape[1], dt_s1, int(tempsize / dt_s1)))
+    temp = np.einsum("ijkl,ijlm->ijkm", dt, temp)
+
+    # Reshape to proper size
+    tempshape = temp.shape
+    tempsize = temp.shape[2] * temp.shape[3]
+
+    return temp.reshape((tempshape[0], tempshape[1], tempsize, 1)).copy()
+
+
+def invert_jac(jac):
+    """
+    Invert the jacobian matrix on all points.
+
+    Works on any array that ends in a 3x3 matrix in last axes.
+
+    Parameters
+    ----------
+    jac : ndarray
+        Jacobian matrix. Shape should be (nelv, lz, ly, lx, 3, 3).
+
+    Returns
+    -------
+    ndarray
+        Inverted jacobian matrix. Shape is the same as the input jacobian.
+    """
+
+    jac_inv = np.zeros_like(jac)
+
+    a = jac[..., 0, 0]
+    b = jac[..., 0, 1]
+    c = jac[..., 0, 2]
+    d = jac[..., 1, 0]
+    e = jac[..., 1, 1]
+    f = jac[..., 1, 2]
+    g = jac[..., 2, 0]
+    h = jac[..., 2, 1]
+    i = jac[..., 2, 2]
+
+    det = a * (e * i - f * h) - b * (d * i - f * g) + c * (d * h - e * g)
+
+    jac_inv[..., 0, 0] = (e * i - f * h) / det
+    jac_inv[..., 0, 1] = (c * h - b * i) / det
+    jac_inv[..., 0, 2] = (b * f - c * e) / det
+    jac_inv[..., 1, 0] = (f * g - d * i) / det
+    jac_inv[..., 1, 1] = (a * i - c * g) / det
+    jac_inv[..., 1, 2] = (c * d - a * f) / det
+    jac_inv[..., 2, 0] = (d * h - e * g) / det
+    jac_inv[..., 2, 1] = (b * g - a * h) / det
+    jac_inv[..., 2, 2] = (a * e - b * d) / det
+
+    return jac_inv
