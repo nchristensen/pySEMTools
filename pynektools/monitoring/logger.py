@@ -14,12 +14,10 @@ class CustomFormatter(logging.Formatter):
     red = "\x1b[31;20m"
     bold_red = "\x1b[31;1m"
     reset = "\x1b[0m"
-    #formatt = (
+    # formatt = (
     #    "%(asctime)s - %(name)s - %(levelname)s - %(message)s (%(filename)s:%(lineno)d)"
-    #)
-    formatt = (
-        "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
-    )
+    # )
+    formatt = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
 
     FORMATS = {
         logging.DEBUG: grey + formatt + reset,
@@ -38,11 +36,11 @@ class CustomFormatter(logging.Formatter):
 class Logger:
     """Class that takes charge of logging messages during POD execution"""
 
-    def __init__(self, level = None, comm = None, module_name=None):
+    def __init__(self, level=None, comm=None, module_name=None):
 
         if isinstance(level, type(None)):
             level = logging.INFO
-        else:   
+        else:
             self.level = level
         self.comm = comm
 
@@ -71,25 +69,24 @@ class Logger:
         Returns
         -------
         None.
-        
+
         """
 
         self.time = time()
-    
+
     def toc(self):
         """
         Write elapsed time since the last call to tic.
-        
+
         """
 
         self.write("info", f"Elapsed time: {time() - self.time}s")
-
 
     def write(self, level, message):
         """Method that writes messages in the log"""
         comm = self.comm
         rank = comm.Get_rank()
-        
+
         if level == "debug_all":
             self.log.debug(message)
 

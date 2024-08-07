@@ -88,7 +88,7 @@ class Field:
         if not isinstance(data, NoneType):
 
             self.log.tic()
-            self.log.write('info', 'Initializing Field object from HexaData')
+            self.log.write("info", "Initializing Field object from HexaData")
 
             vars_ = data.var
             self.vel_fields = vars_[1]
@@ -115,10 +115,10 @@ class Field:
 
             self.t = data.time
 
-            self.log.write('info', 'Field object initialized')
+            self.log.write("info", "Field object initialized")
             self.log.toc()
         else:
-            self.log.write('info', 'Initializing empty Field object')
+            self.log.write("info", "Initializing empty Field object")
 
     def __memory_usage__(self, comm):
         """
@@ -164,8 +164,11 @@ class Field:
         self.temp_fields = len(self.fields["temp"])
         self.scal_fields = len(self.fields["scal"])
 
-        self.log.write('info', 'Field variables updated')
-        self.log.write('info', f'Velocity fields: {self.vel_fields}, Pressure fields: {self.pres_fields}, Temperature fields: {self.temp_fields}, Scalar fields: {self.scal_fields}')
+        self.log.write("info", "Field variables updated")
+        self.log.write(
+            "info",
+            f"Velocity fields: {self.vel_fields}, Pressure fields: {self.pres_fields}, Temperature fields: {self.temp_fields}, Scalar fields: {self.scal_fields}",
+        )
 
 
 def get_field_from_hexadata(data, prefix, qoi):

@@ -268,7 +268,7 @@ def preadnek(filename, comm, data_dtype=np.double):
     mpi_offset += ioh.glb_nelv * mpi_int_size
 
     # Read the coordinates
-    if ioh.pos_variables > 0: 
+    if ioh.pos_variables > 0:
         byte_offset = (
             mpi_offset + ioh.offset_el * ioh.gdim * ioh.lxyz * ioh.fld_data_size
         )
@@ -336,7 +336,7 @@ def preadnek(filename, comm, data_dtype=np.double):
     # Read scalars
     ii = 0
     for var in range(0, ioh.scalar_variables):
-        if ii == 0: # Only print once
+        if ii == 0:  # Only print once
             log.write("info", "Reading scalar data")
             ii += 1
 
@@ -350,7 +350,7 @@ def preadnek(filename, comm, data_dtype=np.double):
         mpi_offset += ioh.glb_nelv * 1 * ioh.lxyz * ioh.fld_data_size
 
     fh.Close()
-    
+
     log.write("info", "File read")
     log.toc()
 
@@ -517,7 +517,7 @@ def pynekread(filename, comm, data_dtype=np.double, msh=None, fld=None):
     # Read scalars
     ii = 0
     for var in range(0, ioh.scalar_variables):
-        if ii == 0: # Only print once
+        if ii == 0:  # Only print once
             log.write("info", "Reading scalar data")
             ii += 1
         if not isinstance(fld, type(None)):

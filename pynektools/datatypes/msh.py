@@ -74,7 +74,7 @@ class Mesh:
         self, comm, data=None, x=None, y=None, z=None, create_connectivity=True
     ):
 
-        self.log = Logger(comm=comm, module_name='Mesh')
+        self.log = Logger(comm=comm, module_name="Mesh")
         self.create_connectivity_bool = create_connectivity
 
         if not isinstance(data, NoneType):
@@ -173,7 +173,7 @@ class Mesh:
 
         self.init_common(comm)
 
-        self.log.write("info", 'Mesh object initialized.')
+        self.log.write("info", "Mesh object initialized.")
         self.log.write("info", f"Mesh data is of type: {self.x.dtype}")
         self.log.toc()
 
@@ -209,7 +209,7 @@ class Mesh:
 
         self.init_common(comm)
 
-        self.log.write("info", 'Mesh object initialized.')
+        self.log.write("info", "Mesh object initialized.")
         self.log.write("info", f"Mesh data is of type: {self.x.dtype}")
         self.log.toc()
 
@@ -229,7 +229,7 @@ class Mesh:
         None
             Nothing is returned, the attributes are set in the object.
         """
-        
+
         self.log.write("info", "Initializing common attributes.")
 
         self.lx = self.x.shape[

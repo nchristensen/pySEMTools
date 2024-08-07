@@ -5,6 +5,7 @@ import numpy as np
 from pympler import asizeof
 from ..monitoring.logger import Logger
 
+
 class Coef:
     """
     Class that contains arrays like mass matrix, jacobian, jacobian inverse, etc.
@@ -66,13 +67,14 @@ class Coef:
     >>> from pynektools import Coef
     >>> coef = Coef(msh, comm)
     """
+
     def __init__(self, msh, comm, get_area=False, apply_1d_operators=True):
 
-        self.log = Logger(comm=comm, module_name='Coef')
+        self.log = Logger(comm=comm, module_name="Coef")
         self.log.tic()
 
-        self.log.write('info', 'Initializing Coef object')
-        self.log.write('info', 'Getting derivative matrices')
+        self.log.write("info", "Initializing Coef object")
+        self.log.write("info", "Getting derivative matrices")
 
         self.gdim = msh.gdim
         self.dtype = msh.x.dtype
@@ -85,8 +87,8 @@ class Coef:
         self.dr, self.ds, self.dt, self.dn = get_derivative_matrix(
             msh.lx, msh.gdim, dtype=self.dtype, apply_1d_operators=apply_1d_operators
         )
-        
-        self.log.write('info', 'Calculating the components of the jacobian')
+
+        self.log.write("info", "Calculating the components of the jacobian")
 
         # Find the components of the jacobian per point
         # jac(x,y,z) = [dxdr, dxds, dxdt ; dydr, dyds, dydt; dzdr, dzds, dzdt]
@@ -122,14 +124,17 @@ class Coef:
 
         # Find the jacobian determinant, its inverse inverse and mass matrix (3D)
         # jac maps domain from xyz to rst -> dxyz =  jac * drst during integration
-        self.log.write('info', 'Calculating the jacobian determinant and inverse of the jacobian matrix')
+        self.log.write(
+            "info",
+            "Calculating the jacobian determinant and inverse of the jacobian matrix",
+        )
         calculate_jacobian_inverse_and_determinant(self)
 
         # Compute the inverse of the Jacobian determinant
-        #self.jac_inv = 1 / self.jac # This is not really used in the way we have it
+        # self.jac_inv = 1 / self.jac # This is not really used in the way we have it
 
         # Compute the mass matrix
-        self.log.write('info', 'Calculating the mass matrix')
+        self.log.write("info", "Calculating the mass matrix")
         self.B = self.jac * self.w3.reshape((msh.lz, msh.ly, msh.lx))
 
         # Get area stuff only if mesh is 3D
@@ -140,7 +145,7 @@ class Coef:
         # Where we calculate the jacobian determinant
         # and then multiply with weights
         if msh.gdim > 2 and get_area:
-            self.log.write('info', 'Calculating area weights and normal vectors')
+            self.log.write("info", "Calculating area weights and normal vectors")
 
             self.area = np.zeros((msh.nelv, 6, msh.ly, msh.lx), dtype=self.dtype)
             self.nx = np.zeros((msh.nelv, 6, msh.ly, msh.lx), dtype=self.dtype)
@@ -287,8 +292,8 @@ class Coef:
             self.ny[:, 5, :, :] = -cross[..., 1] / norm
             self.nz[:, 5, :, :] = -cross[..., 2] / norm
 
-        self.log.write('info', 'Coef object initialized')
-        self.log.write('info', f"Coef data is of type: {self.B.dtype}")
+        self.log.write("info", "Coef object initialized")
+        self.log.write("info", f"Coef data is of type: {self.B.dtype}")
         self.log.toc()
 
     def __memory_usage__(self, comm):
@@ -1281,6 +1286,7 @@ def apply_operators_2d(dr, ds, x):
 
     return temp.reshape((tempshape[0], tempshape[1], tempsize, 1)).copy()
 
+
 def apply_operators_3d(dr, ds, dt, x):
     """
 
@@ -1347,17 +1353,18 @@ def calculate_jacobian_inverse_and_determinant(self):
     ----------
     self : Coef
         Coef object.
-    
+
     Returns
     -------
     None
         Parameters are added into the Coef object
-    """ 
-    
+    """
+
     if self.gdim == 2:
         invert_jacobian_2d(self)
     elif self.gdim == 3:
         invert_jacobian_3d(self)
+
 
 def invert_jacobian_2d(self):
     """
@@ -1375,7 +1382,7 @@ def invert_jacobian_2d(self):
     -----
 
     If the jacobian matrix is regarded as a tensor, here we use the following notation:
-    
+
     jac_inv = np.zeros_like(jac)
 
     a = jac[..., 0, 0]
@@ -1407,6 +1414,7 @@ def invert_jacobian_2d(self):
 
     return
 
+
 def invert_jacobian_3d(self):
     """
     Invert the jacobian matrix on all points.
@@ -1423,7 +1431,7 @@ def invert_jacobian_3d(self):
     -----
 
     If the jacobian matrix is regarded as a tensor, here we use the following notation:
-    
+
     jac_inv = np.zeros_like(jac)
 
     a = jac[..., 0, 0]
@@ -1455,7 +1463,11 @@ def invert_jacobian_3d(self):
     """
 
     # Calculate the determinant of the jacobian matrix per point
-    self.jac = self.dxdr * (self.dyds * self.dzdt - self.dydt * self.dzds) - self.dxds * (self.dydr * self.dzdt - self.dydt * self.dzdr) + self.dxdt * (self.dydr * self.dzds - self.dyds * self.dzdr)
+    self.jac = (
+        self.dxdr * (self.dyds * self.dzdt - self.dydt * self.dzds)
+        - self.dxds * (self.dydr * self.dzdt - self.dydt * self.dzdr)
+        + self.dxdt * (self.dydr * self.dzds - self.dyds * self.dzdr)
+    )
 
     # Get the components of the inverse of the jacobian matrix per point
     self.drdx = (self.dyds * self.dzdt - self.dydt * self.dzds) / self.jac
