@@ -68,7 +68,8 @@ class Coef:
     """
     def __init__(self, msh, comm, get_area=False, apply_1d_operators=True):
 
-        self.log = Logger(comm=comm, module_name='coef')
+        self.log = Logger(comm=comm, module_name='Coef')
+        self.log.tic()
 
         self.log.write('info', 'Initializing Coef object')
         self.log.write('info', 'Getting derivative matrices')
@@ -288,6 +289,7 @@ class Coef:
 
         self.log.write('info', 'Coef object initialized')
         self.log.write('info', f"Coef data is of type: {self.B.dtype}")
+        self.log.toc()
 
     def __memory_usage__(self, comm):
         """

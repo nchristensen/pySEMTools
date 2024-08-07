@@ -2,6 +2,7 @@ from mpi4py import MPI #equivalent to the use of MPI_init() in C
 comm = MPI.COMM_WORLD
 
 from pynektools.monitoring.memory_monitor import MemoryMonitor
+#from memory_profiler import profile
 
 mm = MemoryMonitor()
 

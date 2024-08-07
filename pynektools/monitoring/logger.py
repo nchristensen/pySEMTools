@@ -2,9 +2,10 @@
 
 import logging
 import sys
+from mpi4py.MPI import Wtime as time
 
 
-# Retrieved from https://stackoverflow.com/questions/384076/how-can-i-color-python-logging-output
+# Modified from https://stackoverflow.com/questions/384076/how-can-i-color-python-logging-output
 class CustomFormatter(logging.Formatter):
     """Custom formatter for the log messages"""
 
@@ -40,7 +41,7 @@ class Logger:
     def __init__(self, level = None, comm = None, module_name=None):
 
         if isinstance(level, type(None)):
-            level = logging.DEBUG
+            level = logging.INFO
         else:   
             self.level = level
         self.comm = comm
@@ -62,6 +63,27 @@ class Logger:
         logger.propagate = False
 
         self.log = logger
+
+    def tic(self):
+        """
+        Store the current time.
+
+        Returns
+        -------
+        None.
+        
+        """
+
+        self.time = time()
+    
+    def toc(self):
+        """
+        Write elapsed time since the last call to tic.
+        
+        """
+
+        self.write("info", f"Elapsed time: {time() - self.time}s")
+
 
     def write(self, level, message):
         """Method that writes messages in the log"""
