@@ -115,7 +115,7 @@ class MemoryMonitor:
             self.object_report[obj_name] = dict()
 
         report = self.object_report[obj_name]
-        report["memory_ussage"] = memory_usage
+        report["memory_usage"] = memory_usage
 
     def object_memory_usage_per_attribute(self, comm, obj, obj_name, print_msg=False):
         """
