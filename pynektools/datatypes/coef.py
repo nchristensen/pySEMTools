@@ -3,7 +3,7 @@
 from math import pi
 import numpy as np
 from pympler import asizeof
-
+from memory_profiler import profile
 
 class Coef:
     """
@@ -66,8 +66,8 @@ class Coef:
     >>> from pynektools import Coef
     >>> coef = Coef(msh, comm)
     """
-
-    def __init__(self, msh, comm, get_area=True, apply_1d_operators = True):
+    
+    def __init__(self, msh, comm, get_area= True, apply_1d_operators = True):
 
         if comm.Get_rank() == 0:
             print("Initializing coef object")
@@ -115,69 +115,64 @@ class Coef:
             self.dtdz = np.zeros_like(self.dxdr, dtype=self.dtype)
 
         # Find the jacobian determinant, its inverse inverse and mass matrix (3D)
-        # This maps dxyz/drst
-        # Gere we store the jacobian determinant as "jac"
-        self.jac = np.zeros_like(self.dxdr, dtype=self.dtype)
-        # This maps drst/dxyz
-        self.jac_inv = np.zeros_like(self.dxdr, dtype=self.dtype)
-        self.B = np.zeros_like(self.dxdr, dtype=self.dtype)
+        # jac maps domain from xyz to rst -> dxyz =  jac * drst during integration
+
+        # Create the temp_mat array for all elements
+        if msh.gdim > 2:
+            temp_mat = np.zeros((msh.nelv, msh.lz, msh.ly, msh.lx, 3, 3), dtype=self.dtype)
+        else:
+            temp_mat = np.zeros((msh.nelv, msh.lz, msh.ly, msh.lx, 2, 2), dtype=self.dtype)
+
+        # Note that the temp_mat array is of shape (nelv, lz, ly, lx, gdim, gdim)
+        # Therefore it stores the Jacobian matrix for each point in the mesh
+        temp_mat[..., 0, 0] = self.dxdr
+        temp_mat[..., 0, 1] = self.dxds
+        if msh.gdim > 2:
+            temp_mat[..., 0, 2] = self.dxdt
+
+        temp_mat[..., 1, 0] = self.dydr
+        temp_mat[..., 1, 1] = self.dyds
+        if msh.gdim > 2:
+            temp_mat[..., 1, 2] = self.dydt
 
         if msh.gdim > 2:
-            temp_mat = np.zeros((3, 3))
-        else:
-            temp_mat = np.zeros((2, 2))
+            temp_mat[..., 2, 0] = self.dzdr
+            temp_mat[..., 2, 1] = self.dzds
+            temp_mat[..., 2, 2] = self.dzdt
 
-        for e in range(0, msh.nelv):
-            for k in range(0, msh.lz):
-                for j in range(0, msh.ly):
-                    for i in range(0, msh.lx):
-                        temp_mat[0, 0] = self.dxdr[e, k, j, i]
-                        temp_mat[0, 1] = self.dxds[e, k, j, i]
-                        if msh.gdim > 2:
-                            temp_mat[0, 2] = self.dxdt[e, k, j, i]
+        # Compute the Jacobian determinant
+        self.jac = np.linalg.det(temp_mat)
 
-                        temp_mat[1, 0] = self.dydr[e, k, j, i]
-                        temp_mat[1, 1] = self.dyds[e, k, j, i]
-                        if msh.gdim > 2:
-                            temp_mat[1, 2] = self.dydt[e, k, j, i]
+        # Compute the inverse of the Jacobian determinant
+        self.jac_inv = 1 / self.jac
 
-                        if msh.gdim > 2:
-                            temp_mat[2, 0] = self.dzdr[e, k, j, i]
-                            temp_mat[2, 1] = self.dzds[e, k, j, i]
-                            temp_mat[2, 2] = self.dzdt[e, k, j, i]
+        # Compute the mass matrix
+        self.B = self.jac * self.w3.reshape((msh.lz, msh.ly, msh.lx))
 
-                        # Fill the jaconian determinant, its inverse and the mass matrix
-                        self.jac[e, k, j, i] = np.linalg.det(temp_mat)
-                        self.jac_inv[e, k, j, i] = 1 / self.jac[e, k, j, i]
-                        self.B[e, k, j, i] = (
-                            self.jac[e, k, j, i]
-                            * (self.w3).reshape((msh.lz, msh.ly, msh.lx))[
-                                k, j, i
-                            ]
-                        )
-                        # Fill the terms for the jacobian inverse
+        # Compute the inverse of the Jacobian matrix
+        if self.gdim == 2:
+            temp_mat_inv = np.linalg.inv(temp_mat)
+        elif self.gdim == 3:
+            # Use this custom fuction to save memory
+            # seems that numpy requires more.
+            temp_mat_inv = invert_jac(temp_mat)
 
-                        # Find the components of the inverse of the jacobian per point
-                        temp_mat_inv = np.linalg.inv(
-                            temp_mat
-                        )  # Note that here, 1/det(jac) is already performed
+        # Fill the components of the Jacobian inverse
+        self.drdx = temp_mat_inv[..., 0, 0]
+        self.drdy = temp_mat_inv[..., 0, 1]
+        if msh.gdim > 2:
+            self.drdz = temp_mat_inv[..., 0, 2]
 
-                        # Find the components of the jacobian per point
-                        # jac_inv(r,s,t) = [drdx, drdy, drdz ; dsdx, dsdy, dsdz; dtdx, dtdy, dtdz]
-                        self.drdx[e, k, j, i] = temp_mat_inv[0, 0]
-                        self.drdy[e, k, j, i] = temp_mat_inv[0, 1]
-                        if msh.gdim > 2:
-                            self.drdz[e, k, j, i] = temp_mat_inv[0, 2]
+        self.dsdx = temp_mat_inv[..., 1, 0]
+        self.dsdy = temp_mat_inv[..., 1, 1]
+        if msh.gdim > 2:
+            self.dsdz = temp_mat_inv[..., 1, 2]
 
-                        self.dsdx[e, k, j, i] = temp_mat_inv[1, 0]
-                        self.dsdy[e, k, j, i] = temp_mat_inv[1, 1]
-                        if msh.gdim > 2:
-                            self.dsdz[e, k, j, i] = temp_mat_inv[1, 2]
+        if msh.gdim > 2:
+            self.dtdx = temp_mat_inv[..., 2, 0]
+            self.dtdy = temp_mat_inv[..., 2, 1]
+            self.dtdz = temp_mat_inv[..., 2, 2]
 
-                        if msh.gdim > 2:
-                            self.dtdx[e, k, j, i] = temp_mat_inv[2, 0]
-                            self.dtdy[e, k, j, i] = temp_mat_inv[2, 1]
-                            self.dtdz[e, k, j, i] = temp_mat_inv[2, 2]
 
         # Get area stuff only if mesh is 3D
         # Remember that the area described by two vectors is given by the norm of its cross product
@@ -187,115 +182,84 @@ class Coef:
         # Where we calculate the jacobian determinant
         # and then multiply with weights
         if msh.gdim > 2 and get_area:
-            d1 = np.zeros((3), dtype=self.dtype)
-            d2 = np.zeros((3), dtype=self.dtype)
+            
             self.area = np.zeros((msh.nelv, 6, msh.ly, msh.lx), dtype=self.dtype)
             self.nx = np.zeros((msh.nelv, 6, msh.ly, msh.lx), dtype=self.dtype)
             self.ny = np.zeros((msh.nelv, 6, msh.ly, msh.lx), dtype=self.dtype)
             self.nz = np.zeros((msh.nelv, 6, msh.ly, msh.lx), dtype=self.dtype)
-
+        
             # ds x dt
-            for e in range(0, msh.nelv):
-                for k in range(0, msh.lz):
-                    for j in range(0, msh.ly):
-                        weight = self.w[j] * self.w[k]
+            # For facet 1
 
-                        # For facet 1
-                        d1[0] = self.dxds[e, k, j, 0]
-                        d1[1] = self.dyds[e, k, j, 0]
-                        d1[2] = self.dzds[e, k, j, 0]
-                        d2[0] = self.dxdt[e, k, j, 0]
-                        d2[1] = self.dydt[e, k, j, 0]
-                        d2[2] = self.dzdt[e, k, j, 0]
-                        cross = np.cross(d1, d2)
-                        norm = np.linalg.norm(cross)
-                        self.area[e, 0, k, j] = norm * weight
-                        self.nx[e, 0, k, j] = -cross[0] / norm
-                        self.ny[e, 0, k, j] = -cross[1] / norm
-                        self.nz[e, 0, k, j] = -cross[2] / norm
-
-                        # For facet 2
-                        d1[0] = self.dxds[e, k, j, msh.lx - 1]
-                        d1[1] = self.dyds[e, k, j, msh.lx - 1]
-                        d1[2] = self.dzds[e, k, j, msh.lx - 1]
-                        d2[0] = self.dxdt[e, k, j, msh.lx - 1]
-                        d2[1] = self.dydt[e, k, j, msh.lx - 1]
-                        d2[2] = self.dzdt[e, k, j, msh.lx - 1]
-                        cross = np.cross(d1, d2)
-                        norm = np.linalg.norm(cross)
-                        self.area[e, 1, k, j] = norm * weight
-                        self.nx[e, 1, k, j] = cross[0] / norm
-                        self.ny[e, 1, k, j] = cross[1] / norm
-                        self.nz[e, 1, k, j] = cross[2] / norm
-
+            d1 = np.stack((self.dxds[:,:,:,0], self.dyds[:,:,:,0], self.dzds[:,:,:,0]), axis=3)
+            d2 = np.stack((self.dxdt[:,:,:,0], self.dydt[:,:,:,0], self.dzdt[:,:,:,0]), axis=3)
+            cross = np.cross(d1, d2, axis=3) # so this is (nelv, k, j, 3)
+            norm = np.linalg.norm(cross, axis=3)
+            weight = np.outer(self.w, self.w).reshape((1, msh.lz, msh.ly))
+            self.area[:, 0, :, :] = norm * weight
+            self.nx[:, 0, :, :] = -cross[..., 0] / norm
+            self.ny[:, 0, :, :] = -cross[..., 1] / norm
+            self.nz[:, 0, :, :] = -cross[..., 2] / norm
+            
+            # For facet 2
+            d1 = np.stack((self.dxds[:,:,:,-1], self.dyds[:,:,:,-1], self.dzds[:,:,:,-1]), axis=3)
+            d2 = np.stack((self.dxdt[:,:,:,-1], self.dydt[:,:,:,-1], self.dzdt[:,:,:, -1]), axis=3)
+            cross = np.cross(d1, d2, axis=3)
+            norm = np.linalg.norm(cross, axis=3)
+            self.area[:, 1, :, :] = norm * weight
+            self.nx[:, 1, :, :] = cross[..., 0] / norm
+            self.ny[:, 1, :, :] = cross[..., 1] / norm
+            self.nz[:, 1, :, :] = cross[..., 2] / norm
+            
             # dr x dt
-            for e in range(0, msh.nelv):
-                for k in range(0, msh.lz):
-                    for i in range(0, msh.lx):
-                        weight = self.w[i] * self.w[k]
-
-                        # For facet 3
-                        d1[0] = self.dxdr[e, k, 0, i]
-                        d1[1] = self.dydr[e, k, 0, i]
-                        d1[2] = self.dzdr[e, k, 0, i]
-                        d2[0] = self.dxdt[e, k, 0, i]
-                        d2[1] = self.dydt[e, k, 0, i]
-                        d2[2] = self.dzdt[e, k, 0, i]
-                        cross = np.cross(d1, d2)
-                        norm = np.linalg.norm(cross)
-                        self.area[e, 2, k, i] = norm * weight
-                        self.nx[e, 2, k, i] = cross[0] / norm
-                        self.ny[e, 2, k, i] = cross[1] / norm
-                        self.nz[e, 2, k, i] = cross[2] / norm
-
-                        # For facet 4
-                        d1[0] = self.dxdr[e, k, msh.ly - 1, i]
-                        d1[1] = self.dydr[e, k, msh.ly - 1, i]
-                        d1[2] = self.dzdr[e, k, msh.ly - 1, i]
-                        d2[0] = self.dxdt[e, k, msh.ly - 1, i]
-                        d2[1] = self.dydt[e, k, msh.ly - 1, i]
-                        d2[2] = self.dzdt[e, k, msh.ly - 1, i]
-                        cross = np.cross(d1, d2)
-                        norm = np.linalg.norm(cross)
-                        self.area[e, 3, k, i] = norm * weight
-                        self.nx[e, 3, k, i] = -cross[0] / norm
-                        self.ny[e, 3, k, i] = -cross[1] / norm
-                        self.nz[e, 3, k, i] = -cross[2] / norm
-
+            # For facet 3
+            d1 = np.stack((self.dxdr[:,:,0,:], self.dydr[:,:,0,:], self.dzdr[:,:,0,:]), axis=2)
+            d2 = np.stack((self.dxdt[:,:,0,:], self.dydt[:,:,0,:], self.dzdt[:,:,0,:]), axis=2)
+            cross = np.cross(d1, d2, axis=2).transpose((0, 1, 3, 2)) # Put the result in the last axis
+            # After the permutation, the shape is (nelv, k, i, 3)
+            norm = np.linalg.norm(cross, axis=3)
+            weight = np.outer(self.w, self.w).reshape((1, msh.lz, msh.ly))
+            self.area[:, 2, :, :] = norm * weight
+            self.nx[:, 2, :, :] = cross[..., 0] / norm
+            self.ny[:, 2, :, :] = cross[..., 1] / norm
+            self.nz[:, 2, :, :] = cross[..., 2] / norm
+            
+            # For facet 4
+            d1 = np.stack((self.dxdr[:,:,-1,:], self.dydr[:,:,-1,:], self.dzdr[:,:,-1,:]), axis=2)
+            d2 = np.stack((self.dxdt[:,:,-1,:], self.dydt[:,:,-1,:], self.dzdt[:,:,-1,:]), axis=2)
+            cross = np.cross(d1, d2, axis=2).transpose((0, 1, 3, 2)) # Put the result in the last axis
+            norm = np.linalg.norm(cross, axis=3)
+            weight = np.outer(self.w, self.w).reshape((1, msh.lz, msh.ly))
+            self.area[:, 3, :, :] = norm * weight
+            self.nx[:, 3, :, :] = -cross[..., 0] / norm
+            self.ny[:, 3, :, :] = -cross[..., 1] / norm
+            self.nz[:, 3, :, :] = -cross[..., 2] / norm
+            
             # dr x ds
-            for e in range(0, msh.nelv):
-                for j in range(0, msh.ly):
-                    for i in range(0, msh.lx):
-                        weight = self.w[j] * self.w[i]
-
-                        # For facet 5
-                        d1[0] = self.dxdr[e, 0, j, i]
-                        d1[1] = self.dydr[e, 0, j, i]
-                        d1[2] = self.dzdr[e, 0, j, i]
-                        d2[0] = self.dxds[e, 0, j, i]
-                        d2[1] = self.dyds[e, 0, j, i]
-                        d2[2] = self.dzds[e, 0, j, i]
-                        cross = np.cross(d1, d2)
-                        norm = np.linalg.norm(cross)
-                        self.area[e, 4, j, i] = norm * weight
-                        self.nx[e, 4, j, i] = -cross[0] / norm
-                        self.ny[e, 4, j, i] = -cross[1] / norm
-                        self.nz[e, 4, j, i] = -cross[2] / norm
-
-                        # For facet 6
-                        d1[0] = self.dxdr[e, msh.lz - 1, j, i]
-                        d1[1] = self.dydr[e, msh.lz - 1, j, i]
-                        d1[2] = self.dzdr[e, msh.lz - 1, j, i]
-                        d2[0] = self.dxds[e, msh.lz - 1, j, i]
-                        d2[1] = self.dyds[e, msh.lz - 1, j, i]
-                        d2[2] = self.dzds[e, msh.lz - 1, j, i]
-                        cross = np.cross(d1, d2)
-                        norm = np.linalg.norm(cross)
-                        self.area[e, 5, j, i] = norm * weight
-                        self.nx[e, 5, j, i] = cross[0] / norm
-                        self.ny[e, 5, j, i] = cross[1] / norm
-                        self.nz[e, 5, j, i] = cross[2] / norm
-
+            # For facet 5
+            d1 = np.stack((self.dxdr[:,0,:,:], self.dydr[:,0,:,:], self.dzdr[:,0,:,:]), axis=1)
+            d2 = np.stack((self.dxds[:,0,:,:], self.dyds[:,0,:,:], self.dzds[:,0,:,:]), axis=1)
+            cross = np.cross(d1, d2, axis=1).transpose((0, 2, 3, 1)) # Put the result in the last axis
+            # after the transpose it is (nelv, j, i, 3)
+            norm = np.linalg.norm(cross, axis=3)
+            weight = np.outer(self.w, self.w).reshape((1, msh.lz, msh.ly))
+            self.area[:, 4, :, :] = norm * weight
+            self.nx[:, 4, :, :] = -cross[..., 0] / norm
+            self.ny[:, 4, :, :] = -cross[..., 1] / norm
+            self.nz[:, 4, :, :] = -cross[..., 2] / norm
+            
+            # For facet 6
+            d1 = np.stack((self.dxdr[:,-1,:,:], self.dydr[:,-1,:,:], self.dzdr[:,-1,:,:]), axis=1)
+            d2 = np.stack((self.dxds[:,-1,:,:], self.dyds[:,-1,:,:], self.dzds[:,-1,:,:]), axis=1)
+            cross = np.cross(d1, d2, axis=1).transpose((0, 2, 3, 1)) # Put the result in the last axis
+            # after the transpose it is (nelv, j, i, 3)
+            norm = np.linalg.norm(cross, axis=3)
+            weight = np.outer(self.w, self.w).reshape((1, msh.lz, msh.ly))
+            self.area[:, 5, :, :] = norm * weight
+            self.nx[:, 5, :, :] = -cross[..., 0] / norm
+            self.ny[:, 5, :, :] = -cross[..., 1] / norm
+            self.nz[:, 5, :, :] = -cross[..., 2] / norm
+                    
         if comm.Get_rank() == 0:
             print(f"coef data is of type: {self.B.dtype}")
 
@@ -1148,3 +1112,46 @@ def apply_operators_3d(dr, ds, dt, x):
     temp = dt @ temp.reshape(dt.shape[1], (int(temp.size / dt.shape[1])))
 
     return temp.reshape(-1, 1)
+
+def invert_jac(jac):
+    """
+    Invert the jacobian matrix on all points.
+
+    Works on any array that ends in a 3x3 matrix in last axes.
+
+    Parameters
+    ----------
+    jac : ndarray
+        Jacobian matrix. Shape should be (nelv, lz, ly, lx, 3, 3).
+
+    Returns
+    -------
+    ndarray
+        Inverted jacobian matrix. Shape is the same as the input jacobian.
+    """
+
+    jac_inv = np.zeros_like(jac)
+
+    a = jac[..., 0, 0]
+    b = jac[..., 0, 1]
+    c = jac[..., 0, 2]
+    d = jac[..., 1, 0]
+    e = jac[..., 1, 1]
+    f = jac[..., 1, 2]
+    g = jac[..., 2, 0]
+    h = jac[..., 2, 1]
+    i = jac[..., 2, 2]
+
+    det = a * (e * i - f * h) - b * (d * i - f * g) + c * (d * h - e * g)
+
+    jac_inv[..., 0, 0] = (e * i - f * h) / det
+    jac_inv[..., 0, 1] = (c * h - b * i) / det
+    jac_inv[..., 0, 2] = (b * f - c * e) / det
+    jac_inv[..., 1, 0] = (f * g - d * i) / det
+    jac_inv[..., 1, 1] = (a * i - c * g) / det
+    jac_inv[..., 1, 2] = (c * d - a * f) / det
+    jac_inv[..., 2, 0] = (d * h - e * g) / det
+    jac_inv[..., 2, 1] = (b * g - a * h) / det
+    jac_inv[..., 2, 2] = (a * e - b * d) / det
+
+    return jac_inv
