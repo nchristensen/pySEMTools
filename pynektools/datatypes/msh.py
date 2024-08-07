@@ -2,6 +2,7 @@
 
 import numpy as np
 from pympler import asizeof
+from ..monitoring.logger import Logger
 
 NoneType = type(None)
 
@@ -73,6 +74,7 @@ class Mesh:
         self, comm, data=None, x=None, y=None, z=None, create_connectivity=True
     ):
 
+        self.log = Logger(comm=comm, module_name="Mesh")
         self.create_connectivity_bool = create_connectivity
 
         if not isinstance(data, NoneType):
@@ -86,8 +88,7 @@ class Mesh:
             self.init_from_coords(comm, x, y, z)
 
         else:
-            if comm.rank == 0:
-                print("Initializing empty Mesh object.")
+            self.log.write("info", "Initializing empty Mesh object.")
 
     def __memory_usage__(self, comm):
         """
@@ -165,16 +166,16 @@ class Mesh:
         None
             Nothing is returned, the attributes are set in the object.
         """
-
-        if comm.rank == 0:
-            print("Initializing Mesh object from HexaData object.")
+        self.log.tic()
+        self.log.write("info", "Initializing Mesh object from HexaData object.")
 
         self.x, self.y, self.z = get_coordinates_from_hexadata(data)
 
         self.init_common(comm)
 
-        if comm.rank == 0:
-            print(f"msh data is of type: {self.x.dtype}")
+        self.log.write("info", "Mesh object initialized.")
+        self.log.write("info", f"Mesh data is of type: {self.x.dtype}")
+        self.log.toc()
 
     def init_from_coords(self, comm, x, y, z):
         """
@@ -199,8 +200,8 @@ class Mesh:
             Nothing is returned, the attributes are set in the object.
         """
 
-        if comm.rank == 0:
-            print("Initializing Mesh object from x,y,z ndarrays.")
+        self.log.tic()
+        self.log.write("info", "Initializing Mesh object from x,y,z ndarrays.")
 
         self.x = x
         self.y = y
@@ -208,8 +209,9 @@ class Mesh:
 
         self.init_common(comm)
 
-        if comm.rank == 0:
-            print(f"msh data is of type: {self.x.dtype}")
+        self.log.write("info", "Mesh object initialized.")
+        self.log.write("info", f"Mesh data is of type: {self.x.dtype}")
+        self.log.toc()
 
     def init_common(self, comm):
         """
@@ -227,6 +229,8 @@ class Mesh:
         None
             Nothing is returned, the attributes are set in the object.
         """
+
+        self.log.write("info", "Initializing common attributes.")
 
         self.lx = self.x.shape[
             3
@@ -263,6 +267,9 @@ class Mesh:
     def create_connectivity(self):
 
         if self.create_connectivity_bool:
+
+            self.log.write("info", "Creating connectivity")
+
             if self.lz > 1:
                 z_ind = [0, self.lz - 1]
             else:
