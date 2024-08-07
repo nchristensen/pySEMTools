@@ -67,7 +67,7 @@ class Coef:
     >>> coef = Coef(msh, comm)
     """
     
-    def __init__(self, msh, comm, get_area= True, apply_1d_operators = True):
+    def __init__(self, msh, comm, get_area= False, apply_1d_operators = True):
 
         if comm.Get_rank() == 0:
             print("Initializing coef object")
@@ -158,20 +158,22 @@ class Coef:
             temp_mat_inv = invert_jac(temp_mat)
 
         # Fill the components of the Jacobian inverse
-        self.drdx = temp_mat_inv[..., 0, 0]
-        self.drdy = temp_mat_inv[..., 0, 1]
+        # The copy here is so that is not a reference
+        # so it appears as a new object in memory
+        self.drdx = temp_mat_inv[..., 0, 0].copy()
+        self.drdy = temp_mat_inv[..., 0, 1].copy()
         if msh.gdim > 2:
-            self.drdz = temp_mat_inv[..., 0, 2]
+            self.drdz = temp_mat_inv[..., 0, 2].copy()
 
-        self.dsdx = temp_mat_inv[..., 1, 0]
-        self.dsdy = temp_mat_inv[..., 1, 1]
+        self.dsdx = temp_mat_inv[..., 1, 0].copy()
+        self.dsdy = temp_mat_inv[..., 1, 1].copy()
         if msh.gdim > 2:
-            self.dsdz = temp_mat_inv[..., 1, 2]
+            self.dsdz = temp_mat_inv[..., 1, 2].copy()
 
         if msh.gdim > 2:
-            self.dtdx = temp_mat_inv[..., 2, 0]
-            self.dtdy = temp_mat_inv[..., 2, 1]
-            self.dtdz = temp_mat_inv[..., 2, 2]
+            self.dtdx = temp_mat_inv[..., 2, 0].copy()
+            self.dtdy = temp_mat_inv[..., 2, 1].copy()
+            self.dtdz = temp_mat_inv[..., 2, 2].copy()
 
 
         # Get area stuff only if mesh is 3D
@@ -356,16 +358,16 @@ class Coef:
         elif self.apply_1d_operators:
             if direction == 'r':
                 if self.gdim == 2:
-                    return self.dudrst_1d_operator(field, self.dr, np.eye(ly))
+                    return self.dudrst_1d_operator(field, self.dr, np.eye(ly, dtype=self.dtype))
                 elif self.gdim == 3:
-                    return self.dudrst_1d_operator(field, self.dr, np.eye(ly), np.eye(lz))
+                    return self.dudrst_1d_operator(field, self.dr, np.eye(ly, dtype=self.dtype), np.eye(lz, dtype=self.dtype))
             elif direction == 's':
                 if self.gdim == 2:
-                    return self.dudrst_1d_operator(field, np.eye(lx), self.ds)
+                    return self.dudrst_1d_operator(field, np.eye(lx, dtype=self.dtype), self.ds)
                 elif self.gdim == 3:
-                    return self.dudrst_1d_operator(field, np.eye(lx), self.ds, np.eye(lz))
+                    return self.dudrst_1d_operator(field, np.eye(lx, dtype=self.dtype), self.ds, np.eye(lz, dtype=self.dtype))
             elif direction == 't':
-                return self.dudrst_1d_operator(field, np.eye(lx), np.eye(ly), self.dt)
+                return self.dudrst_1d_operator(field, np.eye(lx, dtype=self.dtype), np.eye(ly, dtype=self.dtype), self.dt)
             else:
                 raise ValueError("Invalid direction. Should be 'r', 's', or 't'")
 
@@ -397,21 +399,40 @@ class Coef:
         lx = field.shape[3]  # This is not a mistake. This is how the data is read
         ly = field.shape[2]
         lz = field.shape[1]
+        lxyz = lx * ly * lz
 
-        dudrst = np.zeros_like(field, dtype=field.dtype)
+        # ==================================================
+        # Using loops
+        #dudrst = np.zeros_like(field, dtype=field.dtype)
+        #for e in range(0, nelv):
+        #    tmp = field[e, :, :, :].reshape(-1, 1)
+        #    dtmp = dr @ tmp
+        #    dudrst[e, :, :, :] = dtmp.reshape((lz, ly, lx))
+        # ==================================================
+        
+        # Using einsum
+        field_shape = field.shape
+        operator_shape = dr.shape
+        field_shape_as_columns = (field_shape[0], field_shape[1] * field_shape[2] * field_shape[3], 1)
 
-        for e in range(0, nelv):
-            tmp = field[e, :, :, :].reshape(-1, 1)
-            dtmp = dr @ tmp
-            dudrst[e, :, :, :] = dtmp.reshape((lz, ly, lx))
+        # Reshape the field in palce
+        field.shape = field_shape_as_columns
+
+        # Calculate the derivative applying the 3D operator broadcasting with einsum
+        dudrst = np.einsum('ejk, ekm -> ejm', dr.reshape(1, operator_shape[0], operator_shape[1]), field)
+
+        # Reshape the field back to its original shape
+        field.shape = field_shape
+        dudrst.shape = field_shape
 
         return dudrst
 
     def dudrst_1d_operator(self, field, dr, ds, dt=None):
         """
-        Perform derivative with respect to reference coordinate r.
+        Perform derivative applying the 1d operators provided as inputs.
 
-        This method uses derivation matrices from the lagrange polynomials at the GLL points.
+        This method uses the 1D operators to apply the derivative. To apply derivative in r.
+        you mush provide the 1d differenciation matrix in that direction and identity in the others.
 
         Parameters
         ----------
@@ -436,19 +457,46 @@ class Coef:
         --------
         Assuming you have a Coef object
 
-        >>> dxdr = coef.dudrst(x, coef.dr)
+        >>> dxdr = coef.dudrst(x, coef.dr, np.eye(ly, dtype=coef.dtype), np.eye(lz, dtype=coef.dtype))
         """
         nelv = field.shape[0]
         lx = field.shape[3]  # This is not a mistake. This is how the data is read
         ly = field.shape[2]
         lz = field.shape[1]
+        lxyz = lx * ly * lz
 
-        dudrst = np.zeros_like(field, dtype=field.dtype)
+        # ==================================================
+        # Using loops
+        #dudrst = np.zeros_like(field, dtype=field.dtype)
+        #for e in range(0, nelv):
+        #    tmp = field[e, :, :, :].reshape(-1, 1)
+        #    dtmp = apply_1d_operators(tmp, dr, ds, dt, use_broadcast=False)
+        #    dudrst[e, :, :, :] = dtmp.reshape((lz, ly, lx))
+        # ==================================================
 
-        for e in range(0, nelv):
-            tmp = field[e, :, :, :].reshape(-1, 1)
-            dtmp = apply_1d_operators(tmp, dr, ds, dt)
-            dudrst[e, :, :, :] = dtmp.reshape((lz, ly, lx))
+        # we will use an einsum implementation that expects fields in this form:
+        # (nelv, lz, ly, lx) -> (nelv, 1 , lxyz, 1)
+        field_shape = field.shape
+        operator_shape = dr.shape
+        field_shape_as_columns = (field_shape[0], 1, field_shape[1] * field_shape[2] * field_shape[3], 1)
+
+        # Reshape the field in palce
+        field.shape = field_shape_as_columns
+        # Reshape the operators to comply with that shape
+        dr.shape = (1, 1, operator_shape[0], operator_shape[1])
+        ds.shape = (1, 1, operator_shape[0], operator_shape[1])
+        if not isinstance(dt, type(None)): dt.shape = (1, 1, operator_shape[0], operator_shape[1])
+
+        # In the operation, we broadcast in the first two axis.
+        # the last two axis are treated as matrices that are multiplied.
+        dudrst = apply_1d_operators(field, dr, ds, dt)
+
+        # Reshape everything back to its supposed shape
+        field.shape = field_shape
+        dr.shape = operator_shape
+        ds.shape = operator_shape
+        if not isinstance(dt, type(None)): dt.shape = operator_shape
+        dudrst.shape = field_shape
 
         return dudrst
 
@@ -1069,14 +1117,20 @@ def nonlinear_index(linear_index_, lx, ly, lz):
     return indices
 
 
-def apply_1d_operators(x, dr, ds, dt=None):
+def apply_1d_operators(x, dr, ds, dt=None, use_broadcast=True):
 
-    if not isinstance(dt, type(None)):
-        return apply_operators_3d(dr, ds, dt, x)
+    if use_broadcast:
+        if not isinstance(dt, type(None)):
+            return apply_operators_3d(dr, ds, dt, x)
+        else:
+            return apply_operators_2d(dr, ds, x)
     else:
-        return apply_operators_2d(dr, ds, x)
+        if not isinstance(dt, type(None)):
+            return apply_operators_3d_no_broadcast(dr, ds, dt, x)
+        else:
+            return apply_operators_2d_no_broadcast(dr, ds, x)
 
-def apply_operators_2d(dr, ds, x):
+def apply_operators_2d_no_broadcast(dr, ds, x):
     """This function applies operators the same way as they are applied in NEK5000
     The only difference is that it is reversed, as this is
     python and we decided to leave that arrays as is"""
@@ -1089,7 +1143,7 @@ def apply_operators_2d(dr, ds, x):
 
     return temp.reshape(-1, 1)
 
-def apply_operators_3d(dr, ds, dt, x):
+def apply_operators_3d_no_broadcast(dr, ds, dt, x):
     """This function applies operators the same way as they are applied in NEK5000
     The only difference is that it is reversed, as this is
     python and we decided to leave that arrays as is"""
@@ -1112,6 +1166,107 @@ def apply_operators_3d(dr, ds, dt, x):
     temp = dt @ temp.reshape(dt.shape[1], (int(temp.size / dt.shape[1])))
 
     return temp.reshape(-1, 1)
+
+def apply_operators_2d(dr, ds, x):
+    """
+
+    This function applies operators the same way as they are applied in NEK5000
+
+    The only difference is that it is reversed, as
+
+    this is python and we decided to leave that arrays as is
+
+    this function is more readable in sem.py, where tensor optimization is not used.
+
+    """
+
+    dshape = dr.shape
+    xshape = x.shape
+    xsize = xshape[2] * xshape[3]
+
+    # Reshape the operator in the r direction
+    drt = dr.transpose(
+        0, 1, 3, 2
+    )  # This is just the transpose of the operator, leaving the first dimensions unaltered
+    drt_s0 = drt.shape[2]
+    # drt_s1 = drt.shape[3]
+    # Reshape the field to be consistent
+    xreshape = x.reshape((xshape[0], xshape[1], int(xsize / drt_s0), drt_s0))
+    # Apply the operator with einsum
+    temp = np.einsum("ijkl,ijlm->ijkm", xreshape, drt)
+
+    # Reshape the arrays as needed
+    tempsize = temp.shape[2] * temp.shape[3]
+    ds_s0 = ds.shape[2]
+    ds_s1 = ds.shape[3]
+
+    # Apply in s direction
+
+    temp = temp.reshape((xshape[0], xshape[1], ds_s1, int(tempsize / ds_s1)))
+    temp = np.einsum("ijkl,ijlm->ijkm", ds, temp)
+    
+    # Reshape to proper size
+    tempshape = temp.shape
+    tempsize = temp.shape[2] * temp.shape[3]
+
+    return temp.reshape((tempshape[0], tempshape[1], tempsize, 1)).copy()
+
+def apply_operators_3d(dr, ds, dt, x):
+    """
+
+    This function applies operators the same way as they are applied in NEK5000
+
+    The only difference is that it is reversed, as
+
+    this is python and we decided to leave that arrays as is
+
+    this function is more readable in sem.py, where tensor optimization is not used.
+
+    """
+
+    dshape = dr.shape
+    xshape = x.shape
+    xsize = xshape[2] * xshape[3]
+
+    # Reshape the operator in the r direction
+    drt = dr.transpose(
+        0, 1, 3, 2
+    )  # This is just the transpose of the operator, leaving the first dimensions unaltered
+    drt_s0 = drt.shape[2]
+    # drt_s1 = drt.shape[3]
+    # Reshape the field to be consistent
+    xreshape = x.reshape((xshape[0], xshape[1], int(xsize / drt_s0), drt_s0))
+    # Apply the operator with einsum
+    temp = np.einsum("ijkl,ijlm->ijkm", xreshape, drt)
+
+    # Reshape the arrays as needed
+    tempsize = temp.shape[2] * temp.shape[3]
+    ds_s0 = ds.shape[2]
+    ds_s1 = ds.shape[3]
+
+    # Apply in s direction
+    temp = temp.reshape(
+        (xshape[0], xshape[1], ds_s1, ds_s1, int(tempsize / (ds_s1**2)))
+    )
+    temp = np.einsum(
+        "ijklm,ijkmn->ijkln", ds.reshape((dshape[0], dshape[1], 1, ds_s0, ds_s1)), temp
+    )
+
+    # Reshape the arrays as needed
+    tempsize = temp.shape[2] * temp.shape[3] * temp.shape[4]
+    # dt_s0 = dt.shape[2]
+    dt_s1 = dt.shape[3]
+
+    # Apply in t direction
+
+    temp = temp.reshape((xshape[0], xshape[1], dt_s1, int(tempsize / dt_s1)))
+    temp = np.einsum("ijkl,ijlm->ijkm", dt, temp)
+
+    # Reshape to proper size
+    tempshape = temp.shape
+    tempsize = temp.shape[2] * temp.shape[3]
+
+    return temp.reshape((tempshape[0], tempshape[1], tempsize, 1)).copy()
 
 def invert_jac(jac):
     """
