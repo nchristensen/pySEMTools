@@ -13,8 +13,11 @@ class CustomFormatter(logging.Formatter):
     red = "\x1b[31;20m"
     bold_red = "\x1b[31;1m"
     reset = "\x1b[0m"
+    #formatt = (
+    #    "%(asctime)s - %(name)s - %(levelname)s - %(message)s (%(filename)s:%(lineno)d)"
+    #)
     formatt = (
-        "%(asctime)s - %(name)s - %(levelname)s - %(message)s (%(filename)s:%(lineno)d)"
+        "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
     )
 
     FORMATS = {
@@ -34,9 +37,12 @@ class CustomFormatter(logging.Formatter):
 class Logger:
     """Class that takes charge of logging messages during POD execution"""
 
-    def __init__(self, level: None, comm: None, module_name=None):
+    def __init__(self, level = None, comm = None, module_name=None):
 
-        self.level = level
+        if isinstance(level, type(None)):
+            level = logging.DEBUG
+        else:   
+            self.level = level
         self.comm = comm
 
         # Instanciate
@@ -47,11 +53,13 @@ class Logger:
         logger.setLevel(level)
 
         # create console handler with a higher log level
-        ch = logging.StreamHandler(sys.stdout)
-        ch.setLevel(level)
-        ch.setFormatter(CustomFormatter())
+        if not logger.handlers:
+            ch = logging.StreamHandler(sys.stdout)
+            ch.setLevel(level)
+            ch.setFormatter(CustomFormatter())
+            logger.addHandler(ch)
 
-        logger.addHandler(ch)
+        logger.propagate = False
 
         self.log = logger
 
@@ -59,6 +67,9 @@ class Logger:
         """Method that writes messages in the log"""
         comm = self.comm
         rank = comm.Get_rank()
+        
+        if level == "debug_all":
+            self.log.debug(message)
 
         if level == "debug":
             if rank == 0:

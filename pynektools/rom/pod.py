@@ -3,7 +3,7 @@
 import logging
 from .svd import SVD as spSVD_c
 from .math_ops import MathOps as math_ops_c
-from .logger import Logger as logger_c
+from ..monitoring.logger import Logger as logger_c
 
 
 NoneType = type(None)
