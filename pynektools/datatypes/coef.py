@@ -658,31 +658,40 @@ class Coef:
         # THIS STEP IS ALREADY DONE IF YOU CALCULATED THE INVERSE WITH NUMPY
         # Here we multiply the derivative in reference element with the respective
         # row of the jacobian
+
+        # ==================================================
+        # Using loops
+        # if self.gdim > 2:
+        #    for e in range(0, nelv):
+        #        for k in range(0, lz):
+        #            for j in range(0, ly):
+        #                for i in range(0, lx):
+        #                    # dudxyz[e,k,j,i] = self.jac_inv[e, k, j, i] *
+        #                    # (dfdr[e, k, j, i] *drdx[e, k, j, i]  + dfds[e, k, j, i] *
+        #                    # dsdx[e, k, j, i]  + dfdt[e, k, j, i] *dtdx[e, k, j, i] )
+        #                    dudxyz[e, k, j, i] = (
+        #                        dfdr[e, k, j, i] * drdx[e, k, j, i]
+        #                        + dfds[e, k, j, i] * dsdx[e, k, j, i]
+        #                        + dfdt[e, k, j, i] * dtdx[e, k, j, i]
+        #                    )
+        # else:
+        #    for e in range(0, nelv):
+        #        for k in range(0, lz):
+        #            for j in range(0, ly):
+        #                for i in range(0, lx):
+        #                    # dudxyz[e,k,j,i] = self.jac_inv[e, k, j, i] *
+        #                    # ( dfdr[e, k, j, i] * drdx[e, k, j, i] +
+        #                    # dfds[e, k, j, i] * dsdx[e, k, j, i] )
+        #                    dudxyz[e, k, j, i] = (
+        #                        dfdr[e, k, j, i] * drdx[e, k, j, i]
+        #                        + dfds[e, k, j, i] * dsdx[e, k, j, i]
+        #                    )
+        # ==================================================
+
         if self.gdim > 2:
-            for e in range(0, nelv):
-                for k in range(0, lz):
-                    for j in range(0, ly):
-                        for i in range(0, lx):
-                            # dudxyz[e,k,j,i] = self.jac_inv[e, k, j, i] *
-                            # (dfdr[e, k, j, i] *drdx[e, k, j, i]  + dfds[e, k, j, i] *
-                            # dsdx[e, k, j, i]  + dfdt[e, k, j, i] *dtdx[e, k, j, i] )
-                            dudxyz[e, k, j, i] = (
-                                dfdr[e, k, j, i] * drdx[e, k, j, i]
-                                + dfds[e, k, j, i] * dsdx[e, k, j, i]
-                                + dfdt[e, k, j, i] * dtdx[e, k, j, i]
-                            )
+            dudxyz = dfdr * drdx + dfds * dsdx + dfdt * dtdx
         else:
-            for e in range(0, nelv):
-                for k in range(0, lz):
-                    for j in range(0, ly):
-                        for i in range(0, lx):
-                            # dudxyz[e,k,j,i] = self.jac_inv[e, k, j, i] *
-                            # ( dfdr[e, k, j, i] * drdx[e, k, j, i] +
-                            # dfds[e, k, j, i] * dsdx[e, k, j, i] )
-                            dudxyz[e, k, j, i] = (
-                                dfdr[e, k, j, i] * drdx[e, k, j, i]
-                                + dfds[e, k, j, i] * dsdx[e, k, j, i]
-                            )
+            dudxyz = dfdr * drdx + dfds * dsdx
 
         return dudxyz
 
