@@ -3,7 +3,6 @@
 from math import pi
 import numpy as np
 from pympler import asizeof
-from memory_profiler import profile
 
 
 class Coef:
