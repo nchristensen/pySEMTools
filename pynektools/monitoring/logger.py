@@ -2,8 +2,8 @@
 
 import logging
 import sys
+import os
 from mpi4py.MPI import Wtime as time
-
 
 # Modified from https://stackoverflow.com/questions/384076/how-can-i-color-python-logging-output
 class CustomFormatter(logging.Formatter):
@@ -19,16 +19,30 @@ class CustomFormatter(logging.Formatter):
     # )
     formatt = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
 
-    FORMATS = {
+    FORMATS_colored = {
         logging.DEBUG: grey + formatt + reset,
         logging.INFO: grey + formatt + reset,
         logging.WARNING: yellow + formatt + reset,
         logging.ERROR: red + formatt + reset,
         logging.CRITICAL: bold_red + formatt + reset,
     }
+    
+    FORMATS_no_color = {
+        logging.DEBUG: formatt,
+        logging.INFO: formatt,
+        logging.WARNING: formatt,
+        logging.ERROR: formatt,
+        logging.CRITICAL: formatt,
+    }
 
     def format(self, record):
-        log_fmt = self.FORMATS.get(record.levelno)
+
+        # Check if output is redirected to a file
+        use_colors = False
+        if use_colors:
+            log_fmt = self.FORMATS_colored.get(record.levelno)
+        else:
+            log_fmt = self.FORMATS_no_color.get(record.levelno)
         formatter = logging.Formatter(log_fmt)
         return formatter.format(record)
 

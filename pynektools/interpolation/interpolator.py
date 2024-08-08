@@ -8,6 +8,7 @@ from tqdm import tqdm
 from mpi4py import MPI  # for the timer
 from .mpi_ops import gather_in_root, scatter_from_root
 from .point_interpolator.point_interpolator_factory import get_point_interpolator
+from ..monitoring.logger import Logger
 
 NoneType = type(None)
 
@@ -30,6 +31,9 @@ class Interpolator:
         max_elems=1,
         use_autograd=False,
     ):
+        self.log = Logger(comm=comm, module_name="Interpolator")
+        self.log.write("info", "Initializing Interpolator object")
+        self.log.tic()
 
         self.x = x
         self.y = y
@@ -41,6 +45,7 @@ class Interpolator:
         self.max_elems = max_elems
 
         # Determine which point interpolator to use
+        self.log.write("info", "Initializing point interpolator: {}".format(point_interpolator_type))
         self.ei = get_point_interpolator(
             point_interpolator_type,
             x.shape[1],
@@ -50,18 +55,20 @@ class Interpolator:
         )
 
         # Determine which buffer to use
+        self.log.write("info", "Allocating buffers in point interpolator")
         self.r = self.ei.alloc_result_buffer(dtype="double")
         self.s = self.ei.alloc_result_buffer(dtype="double")
         self.t = self.ei.alloc_result_buffer(dtype="double")
         self.test_interp = self.ei.alloc_result_buffer(dtype="double")
 
         # Print what you are using
-        if comm.Get_rank() == 0 and not isinstance(self.r, int):
+        try:
+            dev = self.r.device
+        except AttributeError:
+            dev = "cpu"
+        
+        self.log.write("info", f"Using device: {dev}")
 
-            try:
-                print(f"Using device: {self.r.device}")
-            except AttributeError:
-                print(f"Using device: cpu")
 
         self.progress_bar = progress_bar
 
@@ -108,6 +115,9 @@ class Interpolator:
         self.search_radious = None
         self.bin_to_rank_map = None
 
+        self.log.write("info", "Interpolator initialized")
+        self.log.toc()
+
     def set_up_global_tree(
         self,
         comm,
@@ -117,12 +127,11 @@ class Interpolator:
     ):
 
         if find_points_comm_pattern == "collective":
-            print(f"Communication pattern selected does not need global tree")
+            self.log.write("info", "Communication pattern selected does not need global tree")
 
         elif find_points_comm_pattern == "point_to_point":
             self.global_tree_type = global_tree_type
-            if comm.Get_rank() == 0:
-                print(f"Using global_tree of type: {global_tree_type}")
+            self.log.write("info", f"Using global_tree of type: {global_tree_type}")
             if global_tree_type == "rank_bbox":
                 self.set_up_global_tree_rank_bbox_(
                     comm, global_tree_nbins=global_tree_nbins
@@ -134,9 +143,12 @@ class Interpolator:
 
     def set_up_global_tree_rank_bbox_(self, comm, global_tree_nbins=None):
 
+        self.log.tic()
+
         size = comm.Get_size()
 
         # Find the bounding box of the rank to create a global but "sparse" kdtree
+        self.log.write("info", "Finding bounding boxes for each rank")
         rank_bbox = np.zeros((1, 6), dtype=np.double)
         rank_bbox[0, 0] = np.min(self.x)
         rank_bbox[0, 1] = np.max(self.x)
@@ -173,23 +185,27 @@ class Interpolator:
         comm.Allgather([rank_bbox_max_dist, MPI.DOUBLE], [global_max_dist, MPI.DOUBLE])
         global_centroids = global_centroids.reshape((size, 3))
         # Create a tree with the rank centroids
+        self.log.write("info", "Creating global KD tree with rank centroids")
         self.global_tree = KDTree(global_centroids)
         self.search_radious = np.max(global_max_dist)
 
+        self.log.toc()
+
     def set_up_global_tree_domain_binning_(self, comm, global_tree_nbins=None):
+
+        self.log.tic()
 
         if isinstance(global_tree_nbins, NoneType):
             global_tree_nbins = comm.Get_size()
-            if comm.Get_rank() == 0:
-                print(f"nbins not provided, using {global_tree_nbins} as default")
+            self.log.write("info", f"nbins not provided, using {global_tree_nbins} as default")
 
         bin_size = global_tree_nbins
 
-        if comm.Get_rank() == 0:
-            print(f"Using global bin mesh of size {bin_size}")
+        self.log.write("info", f"Using global bin mesh of size {bin_size}")
 
         # Find the values that delimit a cubic boundin box
         # for the whole domain
+        self.log.write("info", "Finding bounding box tha delimits the whole domain")
         rank_bbox = np.zeros((1, 6), dtype=np.double)
         rank_bbox[0, 0] = np.min(self.x)
         rank_bbox[0, 1] = np.max(self.x)
@@ -227,6 +243,7 @@ class Interpolator:
         ny = int(np.round(np.sqrt((ratioy / sum_ratios) * remaining)))
         nz = int(bin_size / (nx * ny))
 
+        self.log.write("info", "Creating global bin mesh")
         # create bin linear mesh
         bin_x = np.linspace(domain_min_x, domain_max_x, nx + 1)
         bin_y = np.linspace(domain_min_y, domain_max_y, ny + 1)
@@ -245,10 +262,12 @@ class Interpolator:
         bin_mesh_centroids = np.array([xx.flatten(), yy.flatten(), zz.flatten()]).T
 
         # Create the global tree to make searches in the bin mesh
+        self.log.write("info", "Creating global KD tree with bin mesh centroids")
         self.global_tree = KDTree(bin_mesh_centroids)
 
         # For this rank, determine which points are in which
         # bin mesh cell
+        self.log.write("info", "Create map from sem mesh to bin mesh")
         mesh_to_bin = self.global_tree.query_ball_point(
             x=np.array([self.x.flatten(), self.y.flatten(), self.z.flatten()]).T,
             r=(search_radious) * (1 + 1e-6),
@@ -259,15 +278,21 @@ class Interpolator:
             return_length=False,
         )
 
+        self.log.write("info", "Create map from bin mesh to rank")
         self.bin_to_rank_map = domain_binning_map_bin_to_rank(
             mesh_to_bin, nx, ny, nz, comm
         )
         self.search_radious = search_radious
 
+        self.log.toc()
+
     def scatter_probes_from_io_rank(self, io_rank, comm):
         """Scatter the probes from the rank that is used to read them - rank0 by default"""
         rank = comm.Get_rank()
         size = comm.Get_size()
+
+        self.log.write("info", "Scattering probes")
+        self.log.tic()
 
         # Check how many probes should be in each rank with a load balanced linear distribution
         probe_partition_sendcount = np.zeros((size), dtype=np.intc)
@@ -351,10 +376,15 @@ class Interpolator:
             self.test_pattern, probe_partition_sendcount, io_rank, np.double, comm
         )
 
+        self.log.toc()
+
         return
 
     def gather_probes_to_io_rank(self, io_rank, comm):
         """Gather the probes to the rank that is used to read them - rank0 by default"""
+
+        self.log.write("info", "Gathering probes")
+        self.log.tic()
 
         root = io_rank
         sendbuf = self.probe_partition.reshape((self.probe_partition.size))
@@ -386,6 +416,8 @@ class Interpolator:
         if not isinstance(recvbuf, NoneType):
             self.test_pattern[:] = recvbuf[:]
 
+        self.log.toc()
+
         return
 
     def find_points(
@@ -398,7 +430,7 @@ class Interpolator:
     ):
         """Public method to dins points across ranks and elements"""
         if comm.Get_rank() == 0:
-            print(f"Using communication pattern: {find_points_comm_pattern}")
+            self.log.write("info", "using communication pattern: {}".format(find_points_comm_pattern))
 
         if find_points_comm_pattern == "collective":
             self.find_points_collective_(
@@ -858,11 +890,12 @@ class Interpolator:
         rank = comm.Get_rank()
         self.rank = rank
 
-        if rank == 0:
-            print(f"Finding points. start")
+        self.log.write("info", "Finding points - start")
+        self.log.tic()
         start_time = MPI.Wtime()
 
         # First each rank finds their bounding box
+        self.log.write("info", "Finding bounding box of sem mesh")
         self.my_bbox = get_bbox_from_coordinates(self.x, self.y, self.z)
 
         if use_kdtree:
@@ -872,6 +905,7 @@ class Interpolator:
             )
 
             # Build a KDtree with my information
+            self.log.write("info", "Creating KD tree with local bbox centroids")
             self.my_tree = KDTree(self.my_bbox_centroids)
 
         # nelv = self.x.shape[0]
@@ -879,6 +913,7 @@ class Interpolator:
 
         # Get candidate ranks from a global kd tree
         # These are the destination ranks
+        self.log.write("info", "Obtaining candidate ranks and sources")
         my_dest = get_candidate_ranks(self, comm)
 
         # Get a global array with the candidates in all other
@@ -912,6 +947,7 @@ class Interpolator:
 
         # Check how many buffers to create to recieve points
         # from other ranks that think this rank is a candidate
+        self.log.write("info", "Create buffers to hold data from other ranks")
         n_buff = len(my_source)
         # Create buffer for data from other ranks
         buff_probes = []
@@ -962,6 +998,7 @@ class Interpolator:
             )  # test interpolation holder
 
         # Set the request to Recieve the data from the other ranks that have me as a candidate
+        self.log.write("info", "Send data to candidates and recieve from sources")
         req_list_r = []
         for source_index in range(0, len(my_source)):
             source = my_source[source_index]
@@ -1024,6 +1061,7 @@ class Interpolator:
                 req.wait()
 
         # Set the information for the coordinate search in this rank
+        self.log.write("info", "Find rst coordinates for the points")
         mesh_info = {}
         mesh_info["x"] = self.x
         mesh_info["y"] = self.y
@@ -1070,6 +1108,7 @@ class Interpolator:
             ] = self.ei.find_rst(probes_info, mesh_info, settings, buffers=buffers)
 
         # Set the request to Recieve back the data that I have sent to my candidates
+        self.log.write("info", "Send data to sources and recieve from candidates")
         oreq_list_r = []
         for source_index in range(0, len(my_dest)):
             source = my_dest[source_index]
@@ -1134,6 +1173,7 @@ class Interpolator:
 
         # Now loop trhough all the points in the buffers that
         # have been sent back and determine which point was found
+        self.log.write("info", "Determine which points were found and find best candidate")
         for point in range(0, n_not_found):
 
             # These are the error code and test patterns for
@@ -1186,8 +1226,8 @@ class Interpolator:
                 self.err_code_partition[j] = 0
 
         comm.Barrier()
-        if rank == 0:
-            print(f"Finding points. finished. time(s): {MPI.Wtime() - start_time}")
+        self.log.write("info", "Finding points. finished")
+        self.log.toc()
 
         return
 
@@ -1286,6 +1326,8 @@ class Interpolator:
     def interpolate_field_from_rst(self, sampled_field):
         """Interpolate the field from the rst coordinates found"""
 
+        self.log.write("info", "Interpolating field from rst coordinates")
+        self.log.tic()
         # Probes info
         probes_info = {}
         probes_info["probes"] = self.my_probes
@@ -1303,6 +1345,8 @@ class Interpolator:
             sampled_field=sampled_field,
             settings=settings,
         )
+        
+        self.log.toc()
 
         return sampled_field_at_probe
 
@@ -1449,7 +1493,6 @@ def get_candidate_ranks(self, comm):
     """
 
     if self.global_tree_type == "rank_bbox":
-
         candidate_ranks_per_point = self.global_tree.query_ball_point(
             x=self.probe_partition,
             r=self.search_radious * (1 + 1e-6),

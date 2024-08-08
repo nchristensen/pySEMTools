@@ -71,7 +71,9 @@ def test_probes():
     point_int = "single_point_legendre"
     #point_int = "multiple_point_legendre_numpy"
     #point_int = "multiple_point_legendre_torch"
-    probes = Probes(comm, probes=xyz, msh=msh, point_interpolator_type=point_int, find_points_comm_pattern="point_to_point", global_tree_type="rank_bbox")    
+    global_tree_type = "rank_bbox"
+    #global_tree_type = "domain_binning"
+    probes = Probes(comm, probes=xyz, msh=msh, point_interpolator_type=point_int, find_points_comm_pattern="point_to_point", global_tree_type=global_tree_type)    
 
     # Interpolate the data
     probes.interpolate_from_field_list(0, [msh.x, msh.y, msh.z], comm, write_data=False)
@@ -80,9 +82,6 @@ def test_probes():
     if comm.Get_rank() == 0: 
 
         passed = np.allclose(probes.interpolated_fields[:,1:], xyz, atol=1e-7)
-
-        print(passed)
-
 
     #mm.object_memory_usage(comm, probes, "Probes")
     #mm.object_memory_usage_per_attribute(comm, probes, "Probes")

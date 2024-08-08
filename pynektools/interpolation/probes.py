@@ -6,6 +6,7 @@ import numpy as np
 from ..io.ppymech.neksuite import preadnek
 from .interpolator import Interpolator
 from .mpi_ops import gather_in_root
+from ..monitoring.logger import Logger
 
 NoneType = type(None)
 
@@ -140,9 +141,16 @@ class Probes:
     ):
 
         rank = comm.Get_rank()
+        self.log = Logger(comm=comm, module_name="Probes")
+
+        self.log.tic()
+        self.log.write("info", "Initializing Probes object")
 
         # Open input file
         if not isinstance(filename, NoneType):
+
+            self.log.write("info", f"Reading input file: {filename}")
+
             f = open(filename, "r")
             params_file = json.loads(f.read())
             params_file_str = json.dumps(params_file, indent=4)
@@ -150,6 +158,9 @@ class Probes:
             self.output_data = self.IoData(params_file["case"]["IO"]["output_data"])
             self.params_file = params_file
         else:
+            
+            self.log.write("info", f"No input file provided. Using default values")
+            
             default_output = {}
             default_output["dataPath"] = "./"
             default_output["casename"] = "interpolated_fields.csv"
@@ -157,9 +168,11 @@ class Probes:
             self.output_data = self.IoData(default_output)
 
         if isinstance(probes, NoneType):
+            
             self.probes_data = self.IoData(params_file["case"]["IO"]["probe_data"])
             # Read probes
             probe_fname = self.probes_data.dataPath + self.probes_data.casename
+            self.log.write("info", "Reading probes from {} in rank 0".format(probe_fname))
             if rank == 0:
                 file = open(probe_fname)
                 self.probes = np.array(list(csv.reader(file)), dtype=np.double)
@@ -167,6 +180,7 @@ class Probes:
                 self.probes = None
         else:
             # Assign probes to the required shape
+            self.log.write("info", "Probes provided as keyword argument. Assigning in rank 0")
             if rank == 0:
                 self.probes = probes
             else:
@@ -183,16 +197,19 @@ class Probes:
                 + "0.f"
                 + str(self.mesh_data.index).zfill(5)
             )
-            mesh_data = preadnek(msh_fld_fname, comm)
+            self.log.write("info", "Reading mesh from {}".format(msh_fld_fname))
+            mesh_data = preadnek(msh_fld_fname, comm) 
             self.x, self.y, self.z = get_coordinates_from_hexadata(mesh_data)
             del mesh_data
 
         else:
+            self.log.write("info", "Mesh provided as keyword argument")
             self.x = msh.x
             self.y = msh.y
             self.z = msh.z
 
         # Initialize the interpolator
+        self.log.write("info", "Initializing interpolator")
         self.itp = Interpolator(
             self.x,
             self.y,
@@ -206,14 +223,15 @@ class Probes:
         )
 
         # Set up the global tree
+        self.log.write("info", "Setting up global tree")
         self.itp.set_up_global_tree(comm, find_points_comm_pattern=find_points_comm_pattern,global_tree_type=global_tree_type, global_tree_nbins=global_tree_nbins)
 
         # Scatter the probes to all ranks
+        self.log.write("info", "Scattering probes to all ranks")
         self.itp.scatter_probes_from_io_rank(0, comm)
 
         # Find where the point in each rank should be
-        if comm.Get_rank() == 0:
-            print("finding points")
+        self.log.write("info", "Finding points")
         self.itp.find_points(
             comm,
             find_points_comm_pattern=find_points_comm_pattern,
@@ -221,14 +239,12 @@ class Probes:
         )
 
         # Gather probes to rank 0 again
+        self.log.write("info", "Gathering probes to rank 0 after search")
         self.itp.gather_probes_to_io_rank(0, comm)
-        if comm.Get_rank() == 0:
-            print("found data")
 
         # Redistribute the points
+        self.log.write("info", "Redistributing probes to found owners")
         self.itp.redistribute_probes_to_owners_from_io_rank(0, comm)
-        if comm.Get_rank() == 0:
-            print("redistributed data")
 
         self.output_fname = self.output_data.dataPath + self.output_data.casename
         if write_coords:
@@ -253,6 +269,7 @@ class Probes:
                         header.append(f'{field_type_list[i]}{field_index_list[i]}')
                 
                 ## Write the coordinates
+                self.log.write("info", "Writing probe coordinates to {}".format(self.output_fname))
                 write_csv(self.output_fname, self.probes, "w", header = header)
 
                 # Write out a file with the points with warnings
@@ -293,6 +310,7 @@ class Probes:
                     + self.output_data.casename[:-4]
                     + ".json"
                 )
+                self.log.write("info", "Writing points with warnings to {}".format(json_output_fname))
                 with open(json_output_fname, "w") as outfile:
                     outfile.write(params_file_str)
 
@@ -304,6 +322,9 @@ class Probes:
         self.number_of_fields = None
         self.my_interpolated_fields = None
         self.interpolated_fields = None
+
+        self.log.write("info", "Probes object initialized")
+        self.log.toc()
 
     def read_fld_file(self, file_number, comm):
         """
@@ -344,8 +365,7 @@ class Probes:
             + str(self.fld_data.index + file_number).zfill(5)
         )
 
-        if comm.Get_rank() == 0:
-            print(f"Reading file: {fld_fname}")
+        self.log.write("info", "Reading file: {}".format(fld_fname))
         fld_data = preadnek(fld_fname, comm)
 
         return fld_data
@@ -376,6 +396,9 @@ class Probes:
         >>> fld_data = probes.read_fld_file(0, comm)
         >>> probes.interpolate_from_hexadata_and_writecsv(fld_data, comm)
         """
+
+        self.log.write("info", "Interpolating fields from hexadata object")
+
         self.fld_data = self.IoData(self.params_file["case"]["IO"]["fld_data"])
         self.list_of_fields = self.params_file["case"]["interpolate_fields"][
             "field_type"
@@ -405,15 +428,12 @@ class Probes:
                 fld_data, self.list_of_fields[i], self.list_of_qoi[i]
             )
 
+            self.log.write("info", f"Interpolating field: {self.list_of_fields[i]}:{self.list_of_qoi[i]}")
             if mode == "rst":
                 self.my_interpolated_fields[:, i + 1] = (
                     self.itp.interpolate_field_from_rst(field)[:]
                 )
-
-            print(
-                f"Rank: {comm.Get_rank()}, interpolated field: {self.list_of_fields[i]}:{self.list_of_qoi[i]}"
-            )
-
+            
         # Write to the csv file
         root = 0
         sendbuf = self.my_interpolated_fields.reshape(
@@ -438,6 +458,7 @@ class Probes:
             self.interpolated_fields[self.itp.sort_by_rank] = tmp
 
             # Write data in the csv file
+            self.log.write("info", f"Writing interpolated fields to {self.output_fname}")
             write_csv(self.output_fname, self.interpolated_fields, "a")
 
     def interpolate_from_field_list(self, t, field_list, comm, write_data=True):
@@ -471,6 +492,8 @@ class Probes:
         Remember: the first column of this attribute is always the time t given.
         """
 
+        self.log.write("info", "Interpolating fields from field list")
+
         self.number_of_fields = len(field_list)
 
         # Allocate interpolated fields
@@ -490,12 +513,10 @@ class Probes:
         i = 0
         for field in field_list:
 
+            self.log.write("info", f"Interpolating field {i}")
             self.my_interpolated_fields[:, i + 1] = self.itp.interpolate_field_from_rst(
                 field
-            )[:]
-
-            if comm.Get_rank() == 0:
-                print(f"Rank: {comm.Get_rank()}, interpolated field: {i}")
+            )[:] 
 
             i += 1
 
@@ -522,6 +543,7 @@ class Probes:
 
             # Write data in the csv file
             if write_data:
+                self.log.write("info", f"Writing interpolated fields to {self.output_fname}")
                 write_csv(self.output_fname, self.interpolated_fields, "a")
 
 
@@ -572,8 +594,8 @@ def write_csv(fname, data, mode, header = None):
 
     """
 
-    string = "writing .csv file as " + fname
-    print(string)
+    #string = "writing .csv file as " + fname
+    #print(string)
 
     # open file
     outfile = open(fname, mode)
