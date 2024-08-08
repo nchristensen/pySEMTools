@@ -67,6 +67,8 @@ def test_read_data_single():
         if not passed3:
             break
         for j in range(len(fld1.fields[key])):
+            if not passed3:
+                break
             t1 = np.allclose(fld1.fields[key][j], fld2.fields[key][j])
             t2 = np.allclose(fld1.fields[key][j], fld3.fields[key][j])
             t3 = np.allclose(fld2.fields[key][j], fld3.fields[key][j])
@@ -121,6 +123,8 @@ def test_read_data_double():
         if not passed3:
             break
         for j in range(len(fld1.fields[key])):
+            if not passed3:
+                break
             t1 = np.allclose(fld1.fields[key][j], fld2.fields[key][j])
             t2 = np.allclose(fld1.fields[key][j], fld3.fields[key][j])
             t3 = np.allclose(fld2.fields[key][j], fld3.fields[key][j])
@@ -164,6 +168,8 @@ def test_write_data_single():
         if not passed3:
             break
         for j in range(len(fld1.fields[key])):
+            if not passed3:
+                break
             t1 = np.allclose(fld1.fields[key][j], fld2.fields[key][j])
             passed3 = np.all([t1])
       
@@ -204,6 +210,8 @@ def test_write_data_double():
         if not passed3:
             break
         for j in range(len(fld1.fields[key])):
+            if not passed3:
+                break
             t1 = np.allclose(fld1.fields[key][j], fld2.fields[key][j])
             passed3 = np.all([t1])
       
