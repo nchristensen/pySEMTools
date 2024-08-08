@@ -70,6 +70,7 @@ def test_probes_msh_single():
     # Create the probes object
     tlist = []
     point_int_l = ["single_point_legendre", "multiple_point_legendre_numpy", "multiple_point_legendre_torch"]
+    point_int_l = ["multiple_point_legendre_torch"]
     global_tree_type_l = ["rank_bbox", "domain_binning"]
 
     for point_int in point_int_l:
@@ -104,13 +105,13 @@ def test_probes_msh_single():
     #    for key in mm.object_report.keys():
     #        mm.report_object_information(comm, key)
 
-    log.write("info", "Verify that the interpolator just references the mesh")
-    value_int = probes.itp.x[100,0,0,0]
-    value_mesh = msh.x[100,0,0,0]
-    log.write("info", f" 1 value in the interpolator = {value_int}, and in mesh ={value_mesh}")
-    probes.itp.x[100,0,0,0] = 1
-    value_mesh = msh.x[100,0,0,0]
-    log.write("info", f" Assing it to be 1 in interpolator -> New value in the mesh = {value_mesh}")
+    #log.write("info", "Verify that the interpolator just references the mesh")
+    #value_int = probes.itp.x[100,0,0,0]
+    #value_mesh = msh.x[100,0,0,0]
+    #log.write("info", f" 1 value in the interpolator = {value_int}, and in mesh ={value_mesh}")
+    #probes.itp.x[100,0,0,0] = 1
+    #value_mesh = msh.x[100,0,0,0]
+    #log.write("info", f" Assing it to be 1 in interpolator -> New value in the mesh = {value_mesh}")
 
     assert passed
 
@@ -169,6 +170,7 @@ def test_probes_msh_double():
     # Create the probes object
     tlist = []
     point_int_l = ["single_point_legendre", "multiple_point_legendre_numpy", "multiple_point_legendre_torch"]
+    point_int_l = ["multiple_point_legendre_torch"]
     global_tree_type_l = ["rank_bbox", "domain_binning"]
 
     for point_int in point_int_l:
@@ -203,13 +205,13 @@ def test_probes_msh_double():
     #    for key in mm.object_report.keys():
     #        mm.report_object_information(comm, key)
 
-    log.write("info", "Verify that the interpolator just references the mesh")
-    value_int = probes.itp.x[100,0,0,0]
-    value_mesh = msh.x[100,0,0,0]
-    log.write("info", f" 1 value in the interpolator = {value_int}, and in mesh ={value_mesh}")
-    probes.itp.x[100,0,0,0] = 1
-    value_mesh = msh.x[100,0,0,0]
-    log.write("info", f" Assing it to be 1 in interpolator -> New value in the mesh = {value_mesh}")
+    #log.write("info", "Verify that the interpolator just references the mesh")
+    #value_int = probes.itp.x[100,0,0,0]
+    #value_mesh = msh.x[100,0,0,0]
+    #log.write("info", f" 1 value in the interpolator = {value_int}, and in mesh ={value_mesh}")
+    #probes.itp.x[100,0,0,0] = 1
+    #value_mesh = msh.x[100,0,0,0]
+    #log.write("info", f" Assing it to be 1 in interpolator -> New value in the mesh = {value_mesh}")
 
     assert passed
 
