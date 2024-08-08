@@ -944,8 +944,7 @@ class Interpolator:
             [not_found_in_this_rank, MPI.INT], [not_found_in_all_ranks, MPI.INT]
         )  # This allgather can be changed with point2point
 
-        if DEBUG:
-            print(f"rank: {rank}, nsources: {len(my_source)}, ndest: {len(my_dest)}")
+        self.log.write("debug_all", f"rank: {rank}, nsources: {len(my_source)}, ndests: {len(my_dest)}")
 
         # Check how many buffers to create to recieve points
         # from other ranks that think this rank is a candidate
