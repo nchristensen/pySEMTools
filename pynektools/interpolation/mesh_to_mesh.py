@@ -37,7 +37,7 @@ class PRefiner:
         self.nelv = msh.nelv
 
         if isinstance(self.dtype, type(None)):
-            dtype = msh.dtype
+            dtype = msh.x.dtype
         else:
             dtype = self.dtype
         

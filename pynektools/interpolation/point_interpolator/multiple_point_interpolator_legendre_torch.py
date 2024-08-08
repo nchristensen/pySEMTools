@@ -394,7 +394,7 @@ class LegendreInterpolator(MultiplePointInterpolator):
         return (x, y, z, [ortho_basis_rj, ortho_basis_sj, ortho_basis_tj])
 
     def find_rst_from_xyz(
-        self, rj, sj, tj, tol=np.finfo(np.double).eps * 10, max_iterations=50
+        self, rj, sj, tj, tol=np.finfo(np.double).eps * 10, max_iterations=500
     ):
 
         if self.optimizer == "newton":
@@ -978,8 +978,8 @@ class LegendreInterpolator(MultiplePointInterpolator):
                         err_code[real_list[better_test]] = not_found_code
                         test_pattern[real_list[better_test]] = test_error[better_test]
 
-                    if len(set_as_found) > 0:
-                        err_code[real_list[set_as_found]] = 1
+                    #if len(set_as_found) > 0:
+                    #    err_code[real_list[set_as_found]] = 1
 
                 else:
 

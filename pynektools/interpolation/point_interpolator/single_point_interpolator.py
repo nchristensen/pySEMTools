@@ -48,7 +48,7 @@ class SinglePointInterpolator(ABC):
         self.z_e_hat = None
 
     def find_rst_from_xyz(
-        self, xj, yj, zj, tol=np.finfo(np.double).eps * 10, max_iterations=55
+        self, xj, yj, zj, tol=np.finfo(np.double).eps * 10, max_iterations=500
     ):
         """Find the rst coordinates from the xyz coordinates using the newton method"""
         self.point_inside_element = False
