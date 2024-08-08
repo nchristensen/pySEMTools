@@ -10,10 +10,11 @@ from ..datatypes.msh import Mesh as msh_c
 class PRefiner:
     """Class to perform p-refinement on a sem mesh"""
 
-    def __init__(self, n_old=8, n_new=8):
+    def __init__(self, n_old=8, n_new=8, dtype=None):
 
         # Order of the element
         self.n = n_new
+        self.dtype = dtype
 
         # Initialize the element interpolators
         self.ei_old = element_interpolator_c(n_old)
@@ -35,10 +36,15 @@ class PRefiner:
             self.lz = self.n
         self.nelv = msh.nelv
 
+        if isinstance(self.dtype, type(None)):
+            dtype = msh.x.dtype
+        else:
+            dtype = self.dtype
+        
         # Allocate the new coordinates
-        x = np.zeros((msh.nelv, self.lz, self.ly, self.lx))
-        y = np.zeros((msh.nelv, self.lz, self.ly, self.lx))
-        z = np.zeros((msh.nelv, self.lz, self.ly, self.lx))
+        x = np.zeros((msh.nelv, self.lz, self.ly, self.lx), dtype=dtype)
+        y = np.zeros((msh.nelv, self.lz, self.ly, self.lx), dtype=dtype)
+        z = np.zeros((msh.nelv, self.lz, self.ly, self.lx), dtype=dtype)
 
         # Loop over the elements and perform the interpolation
         x_gll = self.ei_new.x_gll
@@ -65,11 +71,16 @@ class PRefiner:
         """Interpolate any field that was in the old mesh onto the refined/coarsened one"""
         # check the number of fields to interpolate
         number_of_fields = len(field_list)
+        
+        if isinstance(self.dtype, type(None)):
+            dtype = field_list[0].dtype
+        else:
+            dtype = self.dtype
 
         # Allocate the result of the interpolation
         interpolated_fields = []
         for _ in range(0, number_of_fields):
-            interpolated_fields.append(np.zeros((self.nelv, self.lz, self.ly, self.lx)))
+            interpolated_fields.append(np.zeros((self.nelv, self.lz, self.ly, self.lx), dtype=dtype))
 
         # Get the RST coordinates of the new points
         x_gll = self.ei_new.x_gll
