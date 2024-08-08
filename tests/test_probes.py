@@ -26,7 +26,7 @@ def test_probes_msh_single():
     msh_og = Mesh(comm=comm, create_connectivity=False)
 
     # Read the data
-    fname = "../examples/data/rbc0.f00001"
+    fname = "examples/data/rbc0.f00001"
     pynekread(fname, comm, data_dtype=ddtype, msh=msh_og)
 
     # Create a Coarser mesh to make it easier
@@ -125,7 +125,7 @@ def test_probes_msh_double():
     msh_og = Mesh(comm=comm, create_connectivity=False)
 
     # Read the data
-    fname = "../examples/data/rbc0.f00001"
+    fname = "examples/data/rbc0.f00001"
     pynekread(fname, comm, data_dtype=ddtype, msh=msh_og)
 
     # Create a Coarser mesh to make it easier

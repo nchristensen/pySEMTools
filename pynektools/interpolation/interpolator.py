@@ -376,6 +376,7 @@ class Interpolator:
             self.test_pattern, probe_partition_sendcount, io_rank, np.double, comm
         )
 
+        self.log.write("info", "done")
         self.log.toc()
 
         return
@@ -416,6 +417,7 @@ class Interpolator:
         if not isinstance(recvbuf, NoneType):
             self.test_pattern[:] = recvbuf[:]
 
+        self.log.write("info", "done")
         self.log.toc()
 
         return
@@ -1226,7 +1228,7 @@ class Interpolator:
                 self.err_code_partition[j] = 0
 
         comm.Barrier()
-        self.log.write("info", "Finding points. finished")
+        self.log.write("info", "Finding points - finished")
         self.log.toc()
 
         return
