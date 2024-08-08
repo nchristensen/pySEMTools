@@ -201,7 +201,7 @@ class LegendreInterpolator(MultiplePointInterpolator):
         return x, y, z
 
     def find_rst_from_xyz(
-        self, xj, yj, zj, tol=np.finfo(np.double).eps * 10, max_iterations=500
+        self, xj, yj, zj, tol=np.finfo(np.double).eps * 10, max_iterations=50
     ):
         """
 
@@ -230,10 +230,17 @@ class LegendreInterpolator(MultiplePointInterpolator):
         self.iterations = 0
         self.eps_rst[:npoints, :nelems, :, :] = 1
 
+        #create an integer array to store the number of iterations that it took for each point
+        iterations_per_point = np.zeros_like(xj, dtype=np.int32)
+        iterations_per_point[:,:,:,:] = max_iterations
+        
         while (
             np.any(np.linalg.norm(self.eps_rst[:npoints, :nelems], axis=(2, 3)) > tol)
             and self.iterations < max_iterations
         ):
+            
+            points_found = np.linalg.norm(self.eps_rst[:npoints, :nelems], axis=(2, 3)) <= tol
+            iterations_per_point[points_found] = self.iterations
 
             # Update the guess
             self.rstj[:npoints, :nelems, 0, 0] = self.rj[:npoints, :nelems, 0, 0]
@@ -287,8 +294,10 @@ class LegendreInterpolator(MultiplePointInterpolator):
             npoints, nelems, 1, 1
         )
 
+        t4 = iterations_per_point < max_iterations
+
         # Pointwise comparison
-        self.point_inside_element[:npoints, :nelems, :, :] = t1 & t2 & t3
+        self.point_inside_element[:npoints, :nelems, :, :] = t1 & t2 & t3 & t4
 
         return (
             self.rj[:npoints, :nelems],

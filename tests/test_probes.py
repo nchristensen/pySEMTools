@@ -70,13 +70,12 @@ def test_probes_msh_single():
     # Create the probes object
     tlist = []
     point_int_l = ["single_point_legendre", "multiple_point_legendre_numpy", "multiple_point_legendre_torch"]
-    point_int_l = ["multiple_point_legendre_torch"]
     global_tree_type_l = ["rank_bbox", "domain_binning"]
 
     for point_int in point_int_l:
         for global_tree_type in global_tree_type_l:
             # Create the probes object
-            log.write("info", f"Creating probes with point_int = {point_int} and global_tree_type = {global_tree_type}")
+            log.write("warning", f"Creating probes with point_int = {point_int} and global_tree_type = {global_tree_type}")
             log.tic()
             probes = Probes(comm, probes=xyz, msh=msh, point_interpolator_type=point_int, find_points_comm_pattern="point_to_point", global_tree_type=global_tree_type)    
 
@@ -88,7 +87,7 @@ def test_probes_msh_single():
 
                 passed = np.allclose(probes.interpolated_fields[:,1:], xyz, atol=1e-7)
 
-            log.write("info", f"Test passed = {passed}")
+            log.write("warning", f"Test passed = {passed}")
             log.toc()
             tlist.append(passed)
  
@@ -176,7 +175,7 @@ def test_probes_msh_double():
     for point_int in point_int_l:
         for global_tree_type in global_tree_type_l:
             # Create the probes object
-            log.write("info", f"Creating probes with point_int = {point_int} and global_tree_type = {global_tree_type}")
+            log.write("warning", f"Creating probes with point_int = {point_int} and global_tree_type = {global_tree_type}")
             log.tic()
             probes = Probes(comm, probes=xyz, msh=msh, point_interpolator_type=point_int, find_points_comm_pattern="point_to_point", global_tree_type=global_tree_type)    
 
@@ -188,7 +187,7 @@ def test_probes_msh_double():
 
                 passed = np.allclose(probes.interpolated_fields[:,1:], xyz, atol=1e-7)
 
-            log.write("info", f"Test passed = {passed}")
+            log.write("warning", f"Test passed = {passed}")
             log.toc()
             tlist.append(passed)
  

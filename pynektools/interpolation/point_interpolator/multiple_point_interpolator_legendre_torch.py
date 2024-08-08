@@ -394,7 +394,7 @@ class LegendreInterpolator(MultiplePointInterpolator):
         return (x, y, z, [ortho_basis_rj, ortho_basis_sj, ortho_basis_tj])
 
     def find_rst_from_xyz(
-        self, rj, sj, tj, tol=np.finfo(np.double).eps * 10, max_iterations=500
+        self, rj, sj, tj, tol=np.finfo(np.double).eps * 10, max_iterations=50
     ):
 
         if self.optimizer == "newton":
@@ -442,12 +442,20 @@ class LegendreInterpolator(MultiplePointInterpolator):
         self.iterations = 0
         self.eps_rst[:npoints, :nelems, :, :] = 1
 
+        #create an integer array to store the number of iterations that it took for each point
+        iterations_per_point = torch.zeros(npoints, nelems, 1, 1, dtype=torch.int32, device=device)
+        iterations_per_point[:,:,:,:] = max_iterations
+
         while (
             torch.any(torch.norm(self.eps_rst[:npoints, :nelems], dim=(2, 3)) > tol)
             and self.iterations < max_iterations
         ):
 
             with torch.no_grad():
+                
+                points_found = torch.norm(self.eps_rst[:npoints, :nelems], dim=(2, 3)) <= tol
+                iterations_per_point[points_found] = self.iterations
+            
                 # Update the guess
                 self.rstj[:npoints, :nelems, 0, 0] = self.rj[:npoints, :nelems, 0, 0]
                 self.rstj[:npoints, :nelems, 1, 0] = self.sj[:npoints, :nelems, 0, 0]
@@ -504,8 +512,10 @@ class LegendreInterpolator(MultiplePointInterpolator):
                 npoints, nelems, 1, 1
             )
 
+            t4 = iterations_per_point < max_iterations
+
             # Pointwise comparison
-            self.point_inside_element[:npoints, :nelems, :, :] = t1 & t2 & t3
+            self.point_inside_element[:npoints, :nelems, :, :] = t1 & t2 & t3 & t4
 
         return (
             self.rj[:npoints, :nelems].detach(),
