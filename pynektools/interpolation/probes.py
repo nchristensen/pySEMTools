@@ -314,6 +314,19 @@ class Probes:
                 with open(json_output_fname, "w") as outfile:
                     outfile.write(params_file_str)
 
+                nfound = len(np.where(self.itp.err_code == 1)[0])
+                nnotfound = len(np.where(self.itp.err_code == 0)[0])
+                nwarning = len(np.where(self.itp.err_code == -10)[0])
+                self.log.write("info", f"Found {nfound} points, {nnotfound} not found, {nwarning} with warnings")
+
+                if nwarning > 0:
+                    self.log.write("warning", "There are points with warnings. Check the warning file to see them (error code -10)")
+                    self.log.write("warning", "There are points with warnings. If test pattern is small, you can trust the interpolation")
+
+                if nnotfound > 0:
+                    self.log.write("error", "Some points were not found. Check the warning file to see them (error code 0)")
+                    self.log.write("error", "Some points were not found. The result from their interpolation will be 0")
+
         ## init dummy variables
         self.fld_data = None
         self.list_of_fields = None

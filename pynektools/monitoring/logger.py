@@ -56,18 +56,17 @@ class Logger:
 
         if isinstance(level, type(None)):
             level = logging.INFO
-        else:
-            self.level = level
-        self.comm = comm
-
         if DEBUG:
             level = logging.DEBUG
+
+        self.comm = comm
 
         # Instanciate
         if module_name:
             logger = logging.getLogger(module_name)
         else:
             logger = logging.getLogger(__name__)
+        
         logger.setLevel(level)
 
         # create console handler with a higher log level
