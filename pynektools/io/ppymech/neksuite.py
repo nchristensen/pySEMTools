@@ -532,7 +532,7 @@ def pynekread(filename, comm, data_dtype=np.double, msh=None, fld=None):
             mpi_offset += ioh.glb_nelv * 1 * ioh.lxyz * ioh.fld_data_size
 
     if not isinstance(fld, type(None)):
-        fld.time = header.time
+        fld.t = header.time
         fld.update_vars()
 
     fh.Close()
@@ -854,7 +854,7 @@ def pynekwrite(filename, comm, msh=None, fld=None, wdsz=4, istep=0, write_mesh=T
     pres_fields = fld.pres_fields
     temp_fields = fld.temp_fields
     scal_fields = fld.scal_fields
-    time = fld.time
+    time = fld.t
     lx = msh.lx
     ly = msh.ly
     lz = msh.lz

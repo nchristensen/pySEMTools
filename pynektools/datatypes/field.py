@@ -170,6 +170,17 @@ class Field:
             f"Velocity fields: {self.vel_fields}, Pressure fields: {self.pres_fields}, Temperature fields: {self.temp_fields}, Scalar fields: {self.scal_fields}",
         )
 
+    def clear(self):
+        self.log.write("info", "Clearing field variables")
+        self.fields["vel"] = []
+        self.fields["pres"] = []
+        self.fields["temp"] = []
+        self.fields["scal"] = []
+        self.t = 0.0
+        self.vel_fields = 0
+        self.pres_fields = 0
+        self.temp_fields = 0
+        self.scal_fields = 0
 
 def get_field_from_hexadata(data, prefix, qoi):
     """
