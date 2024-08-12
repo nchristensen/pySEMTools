@@ -4,8 +4,8 @@ import json
 import os
 import numpy as np
 from ..monitoring.logger import Logger
-
-
+import glob
+from pymech.neksuite.field import read_header
 
 def index_files_from_log(comm, logpath="", logname="", progress_reports=50):
 
@@ -179,6 +179,93 @@ def index_files_from_log(comm, logpath="", logname="", progress_reports=50):
         logger.write("info", f"Writing {file} file index")
         logger.tic()
         with open(path + file + "_index.json", "w") as outfile:
+            outfile.write(json.dumps(files[file], indent=4))
+        logger.toc()
+
+    del logger
+
+
+def index_files_from_folder(comm, folder_path = "", run_start_time = 0, stat_start_time = 0):
+
+    if folder_path == "":
+        folder_path = os.getcwd() + "/"
+
+    if folder_path[-1] != "/":
+        folder_path = folder_path + "/"
+
+    logger = Logger(comm=comm, module_name="file_index_from_folder")
+
+    logger.write("info", f"Reading folder: {folder_path}")
+
+    # Get all files in the folder that are fields
+    files_in_folder = glob.glob(folder_path + "*0.f*")
+
+    added_files = []
+    for i in range(0, len(files_in_folder)):
+        files_in_folder[i] = os.path.basename(files_in_folder[i])
+        
+        ftype = files_in_folder[i].split(".")[0][:-1] + ".fld"
+        if ftype not in added_files:
+            added_files.append(ftype)
+
+    for ftype in added_files:
+        logger.write("info", f"Found files with {ftype} pattern")
+        
+    print(
+        "========================================================================================="
+    )
+ 
+    files = {}
+    files_index = {}
+    files_last_sample = {}
+    for ftype in added_files:
+        files[ftype] = dict()
+        files[ftype]["simulation_start_time"] = run_start_time
+        files_index[ftype] = 0
+
+    for i, file_in_folder in enumerate(files_in_folder):
+
+        logger.write("info", f"Indexing file: {file_in_folder}")
+
+        ftype = files_in_folder[i].split(".")[0][:-1] + ".fld"
+
+        files[ftype][files_index[ftype]] = dict()
+        files[ftype][files_index[ftype]]["fname"] = file_in_folder
+        files[ftype][files_index[ftype]]["path"] = os.path.abspath(folder_path + file_in_folder)
+
+        # Determine the time from the header
+        header = read_header(files[ftype][files_index[ftype]]["path"])
+        current_time = header.time
+
+        files[ftype][files_index[ftype]]["time"] = current_time
+
+        if files_index[ftype] == 0:
+            if ( "stat" in ftype or "mean" in ftype): 
+                files[ftype][files_index[ftype]]["time_previous_output"] = stat_start_time
+            else: 
+                files[ftype][files_index[ftype]]["time_previous_output"] = run_start_time 
+        else:
+            files[ftype][files_index[ftype]]["time_previous_output"] = files[ftype][files_index[ftype]-1]["time"]
+
+        files[ftype][files_index[ftype]]["time_interval"] = current_time - files[ftype][files_index[ftype]]["time_previous_output"]
+                    
+        for key in files[ftype][files_index[ftype]].keys():
+            logger.write(
+                "info", f"{key}: {files[ftype][files_index[ftype]][key]}"
+            )
+
+        files_index[ftype] += 1
+            
+        print(
+            "========================================================================================="
+        )
+
+    logger.write("info", "Check finished")
+
+    for file in added_files:
+        logger.write("info", f"Writing {file} file index")
+        logger.tic()
+        with open(folder_path + file + "_index.json", "w") as outfile:
             outfile.write(json.dumps(files[file], indent=4))
         logger.toc()
 
