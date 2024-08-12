@@ -532,7 +532,7 @@ def pynekread(filename, comm, data_dtype=np.double, msh=None, fld=None):
             mpi_offset += ioh.glb_nelv * 1 * ioh.lxyz * ioh.fld_data_size
 
     if not isinstance(fld, type(None)):
-        fld.time = header.time
+        fld.t = header.time
         fld.update_vars()
 
     fh.Close()
@@ -842,6 +842,10 @@ def pynekwrite(filename, comm, msh=None, fld=None, wdsz=4, istep=0, write_mesh=T
     >>> from pynektools.io.ppymech.neksuite import pwritenek
     >>> pynekwrite('field00001.fld', comm, msh = msh, fld=fld)
     """
+    
+    log = Logger(comm=comm, module_name="pynekwrite")
+    log.tic()
+    log.write("info", "Writing file: {}".format(filename))
 
     mpi_int_size = MPI.INT.Get_size()
     mpi_real_size = MPI.REAL.Get_size()
@@ -854,7 +858,7 @@ def pynekwrite(filename, comm, msh=None, fld=None, wdsz=4, istep=0, write_mesh=T
     pres_fields = fld.pres_fields
     temp_fields = fld.temp_fields
     scal_fields = fld.scal_fields
-    time = fld.time
+    time = fld.t
     lx = msh.lx
     ly = msh.ly
     lz = msh.lz
@@ -926,6 +930,9 @@ def pynekwrite(filename, comm, msh=None, fld=None, wdsz=4, istep=0, write_mesh=T
 
     # Write the coordinates
     if ioh.pos_variables > 0:
+
+        log.write("info", "Writing coordinate data")
+
         x = msh.x
         y = msh.y
         z = msh.z
@@ -937,6 +944,9 @@ def pynekwrite(filename, comm, msh=None, fld=None, wdsz=4, istep=0, write_mesh=T
 
     # Write the velocity
     if ioh.vel_variables > 0:
+    
+        log.write("info", "Writing velocity data")
+        
         u = fld.fields["vel"][0]
         v = fld.fields["vel"][1]
         if len(fld.fields["vel"]) > 2:
@@ -953,6 +963,8 @@ def pynekwrite(filename, comm, msh=None, fld=None, wdsz=4, istep=0, write_mesh=T
     # Write pressure
     if ioh.pres_variables > 0:
 
+        log.write("info", "Writing pressure data")
+
         p = fld.fields["pres"][0]
         byte_offset = mpi_offset + ioh.offset_el * 1 * ioh.lxyz * ioh.fld_data_size
         fld_file_write_field(fh, byte_offset, p, ioh)
@@ -961,14 +973,19 @@ def pynekwrite(filename, comm, msh=None, fld=None, wdsz=4, istep=0, write_mesh=T
     # Write Temperature
     if ioh.temp_variables > 0:
 
+        log.write("info", "Writing temperature data")
+
         t = fld.fields["temp"][0]
         byte_offset = mpi_offset + ioh.offset_el * 1 * ioh.lxyz * ioh.fld_data_size
         fld_file_write_field(fh, byte_offset, t, ioh)
         mpi_offset += ioh.glb_nelv * 1 * ioh.lxyz * ioh.fld_data_size
 
     # Write scalars
+    ii = 0
     for var in range(0, ioh.scalar_variables):
-
+        if ii == 0:  # Only print once
+            log.write("info", "Writing scalar data")
+            ii += 1
         s = fld.fields["scal"][var]
         byte_offset = mpi_offset + ioh.offset_el * 1 * ioh.lxyz * ioh.fld_data_size
         fld_file_write_field(fh, byte_offset, s, ioh)
@@ -984,6 +1001,8 @@ def pynekwrite(filename, comm, msh=None, fld=None, wdsz=4, istep=0, write_mesh=T
 
     # ================== Metadata
     if ioh.gdim > 2:
+            
+        log.write("info", "Writing metadata")
 
         # Write the coordinates
         if ioh.pos_variables > 0:
@@ -1040,5 +1059,10 @@ def pynekwrite(filename, comm, msh=None, fld=None, wdsz=4, istep=0, write_mesh=T
             fld.fields[key][i].shape = field_shape
 
     fh.Close()
+    
+    log.write("info", "File written")
+    log.toc()
+
+    del log
 
     return

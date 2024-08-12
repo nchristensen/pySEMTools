@@ -1,10 +1,12 @@
-'''Functions for indexing of files'''
+"""Functions for indexing of files"""
+
 import re
 import json
 import os
 import numpy as np
 from ..monitoring.logger import Logger
-
+import glob
+from pymech.neksuite.field import read_header
 
 
 def index_files_from_log(comm, logpath="", logname="", progress_reports=50):
@@ -18,7 +20,7 @@ def index_files_from_log(comm, logpath="", logname="", progress_reports=50):
 
     logger.write("info", f"Reading file: {path + logname}")
     logger.tic()
-    logfile = open(logname, "r")
+    logfile = open(path + logname, "r")
     log = logfile.readlines()
     number_of_lines = len(log)
     logfile.close()
@@ -40,14 +42,27 @@ def index_files_from_log(comm, logpath="", logname="", progress_reports=50):
     for i, line in enumerate(log):
 
         if np.mod(i, report_interval) == 0:
-            logger.write("info", f"read up to line: {i}, out of {number_of_lines}")
+            if comm.Get_rank() == 0:
+                print(
+                    "========================================================================================="
+                )
+            logger.write(
+                "info",
+                f"read up to line: {i}, out of {number_of_lines} <-> {i/number_of_lines*100}%",
+            )
+            if comm.Get_rank() == 0:
+                print(
+                    "========================================================================================="
+                )
 
         if not read_first_time_step:
 
             for key, pattern in file_patterns.items():
                 match = pattern.search(line)
                 if match:
-                    added_files.append(match.group("value").strip())
+                    add_file = match.group("value").strip()
+                    if add_file not in added_files:
+                        added_files.append(add_file)
 
         # Find the first time step
         if "Time-step" in line and not read_first_time_step:
@@ -81,16 +96,28 @@ def index_files_from_log(comm, logpath="", logname="", progress_reports=50):
 
         if "Writer output" in line and read_first_time_step:
 
-            print(
-                "========================================================================================="
-            )
+            if comm.Get_rank() == 0:
+                print(
+                    "========================================================================================="
+                )
 
             for file in added_files:
                 files_found[file] = False
 
             writer_output_block = log[i : i + lines_to_check]
 
+            # Check if this output block contains another output
             for j, next_line in enumerate(writer_output_block):
+                if "Writer output" in next_line and j > 0:
+                    k = j
+                    break
+                else:
+                    k = 10000
+
+            for j, next_line in enumerate(writer_output_block):
+
+                if j >= k:
+                    break
 
                 for file in added_files:
                     if " " + file in next_line:
@@ -126,9 +153,9 @@ def index_files_from_log(comm, logpath="", logname="", progress_reports=50):
             for file in added_files:
                 if files_found[file]:
                     files[file][files_index[file]]["time"] = file_time
-                    files[file][files_index[file]]["last_sample"] = files_last_sample[
-                        file
-                    ]
+                    files[file][files_index[file]]["time_previous_output"] = (
+                        files_last_sample[file]
+                    )
                     files[file][files_index[file]]["time_interval"] = (
                         file_time - files_last_sample[file]
                     )
@@ -142,12 +169,13 @@ def index_files_from_log(comm, logpath="", logname="", progress_reports=50):
                         )
                     files_index[file] += 1
 
-    print(
-        "========================================================================================="
-    )
-    print(
-        "========================================================================================="
-    )
+    if comm.Get_rank() == 0:
+        print(
+            "========================================================================================="
+        )
+        print(
+            "========================================================================================="
+        )
 
     logger.write("info", "Check finished")
 
@@ -156,6 +184,105 @@ def index_files_from_log(comm, logpath="", logname="", progress_reports=50):
         logger.tic()
         with open(path + file + "_index.json", "w") as outfile:
             outfile.write(json.dumps(files[file], indent=4))
+        logger.toc()
+
+    del logger
+
+
+def index_files_from_folder(comm, folder_path="", run_start_time=0, stat_start_time=0):
+
+    if folder_path == "":
+        folder_path = os.getcwd() + "/"
+
+    if folder_path[-1] != "/":
+        folder_path = folder_path + "/"
+
+    logger = Logger(comm=comm, module_name="file_index_from_folder")
+
+    logger.write("info", f"Reading folder: {folder_path}")
+
+    # Get all files in the folder that are fields
+    files_in_folder = sorted(glob.glob(folder_path + "*0.f*"))
+
+    added_files = []
+    for i in range(0, len(files_in_folder)):
+        files_in_folder[i] = os.path.basename(files_in_folder[i])
+
+        ftype = files_in_folder[i].split(".")[0][:-1] + ".fld"
+        if ftype not in added_files:
+            added_files.append(ftype)
+
+    for ftype in added_files:
+        logger.write("info", f"Found files with {ftype} pattern")
+
+    if comm.Get_rank() == 0:
+        print(
+            "========================================================================================="
+        )
+
+    files = {}
+    files_index = {}
+    files_last_sample = {}
+    for ftype in added_files:
+        files[ftype] = dict()
+        files[ftype]["simulation_start_time"] = run_start_time
+        files_index[ftype] = 0
+
+    for i, file_in_folder in enumerate(files_in_folder):
+
+        logger.write("info", f"Indexing file: {file_in_folder}")
+
+        ftype = files_in_folder[i].split(".")[0][:-1] + ".fld"
+
+        files[ftype][files_index[ftype]] = dict()
+        files[ftype][files_index[ftype]]["fname"] = file_in_folder
+        files[ftype][files_index[ftype]]["path"] = os.path.abspath(
+            folder_path + file_in_folder
+        )
+
+        # Determine the time from the header
+        header = read_header(files[ftype][files_index[ftype]]["path"])
+        current_time = header.time
+
+        files[ftype][files_index[ftype]]["time"] = current_time
+
+        if files_index[ftype] == 0:
+            if "stat" in ftype or "mean" in ftype:
+                files[ftype][files_index[ftype]][
+                    "time_previous_output"
+                ] = stat_start_time
+            else:
+                files[ftype][files_index[ftype]][
+                    "time_previous_output"
+                ] = run_start_time
+        else:
+            files[ftype][files_index[ftype]]["time_previous_output"] = files[ftype][
+                files_index[ftype] - 1
+            ]["time"]
+
+        files[ftype][files_index[ftype]]["time_interval"] = (
+            current_time - files[ftype][files_index[ftype]]["time_previous_output"]
+        )
+
+        for key in files[ftype][files_index[ftype]].keys():
+            logger.write("info", f"{key}: {files[ftype][files_index[ftype]][key]}")
+
+        files_index[ftype] += 1
+
+        if comm.Get_rank() == 0:
+            print(
+                "========================================================================================="
+            )
+
+    logger.write("info", "Check finished")
+
+    for file in added_files:
+        logger.write("info", f"Writing {file} file index")
+        logger.tic()
+        if comm.Get_rank() == 0:
+            with open(folder_path + file + "_index.json", "w") as outfile:
+                outfile.write(json.dumps(files[file], indent=4))
+        comm.Barrier()
         logger.toc()
 
     del logger
