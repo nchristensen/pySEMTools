@@ -202,7 +202,8 @@ def index_files_from_folder(comm, folder_path = "", run_start_time = 0, stat_sta
     logger.write("info", f"Reading folder: {folder_path}")
 
     # Get all files in the folder that are fields
-    files_in_folder = glob.glob(folder_path + "*0.f*")
+    files_in_folder = sorted(glob.glob(folder_path + "*0.f*"))
+    print(files_in_folder)
 
     added_files = []
     for i in range(0, len(files_in_folder)):
