@@ -43,13 +43,15 @@ def index_files_from_log(comm, logpath="", logname="", progress_reports=50):
 
 
         if np.mod(i, report_interval) == 0:
-            print(
-                "========================================================================================="
-            )
+            if comm.Get_rank() == 0:
+                print(
+                    "========================================================================================="
+                )
             logger.write("info", f"read up to line: {i}, out of {number_of_lines} <-> {i/number_of_lines*100}%")
-            print(
-                "========================================================================================="
-            )
+            if comm.Get_rank() == 0:
+                print(
+                    "========================================================================================="
+                )
 
         if not read_first_time_step:
 
@@ -94,9 +96,10 @@ def index_files_from_log(comm, logpath="", logname="", progress_reports=50):
 
         if "Writer output" in line and read_first_time_step:
 
-            print(
-                "========================================================================================="
-            )
+            if comm.Get_rank() == 0:
+                print(
+                    "========================================================================================="
+                )
 
             for file in added_files:
                 files_found[file] = False
@@ -166,12 +169,13 @@ def index_files_from_log(comm, logpath="", logname="", progress_reports=50):
                         )
                     files_index[file] += 1
 
-    print(
-        "========================================================================================="
-    )
-    print(
-        "========================================================================================="
-    )
+    if comm.Get_rank() == 0:
+        print(
+            "========================================================================================="
+        )
+        print(
+            "========================================================================================="
+        )
 
     logger.write("info", "Check finished")
 
@@ -211,9 +215,10 @@ def index_files_from_folder(comm, folder_path = "", run_start_time = 0, stat_sta
     for ftype in added_files:
         logger.write("info", f"Found files with {ftype} pattern")
         
-    print(
-        "========================================================================================="
-    )
+    if comm.Get_rank() == 0:
+        print(
+            "========================================================================================="
+        )
  
     files = {}
     files_index = {}
@@ -255,18 +260,21 @@ def index_files_from_folder(comm, folder_path = "", run_start_time = 0, stat_sta
             )
 
         files_index[ftype] += 1
-            
-        print(
-            "========================================================================================="
-        )
+
+        if comm.Get_rank() == 0:    
+            print(
+                "========================================================================================="
+            )
 
     logger.write("info", "Check finished")
 
     for file in added_files:
         logger.write("info", f"Writing {file} file index")
         logger.tic()
-        with open(folder_path + file + "_index.json", "w") as outfile:
-            outfile.write(json.dumps(files[file], indent=4))
+        if comm.Get_rank() == 0:
+            with open(folder_path + file + "_index.json", "w") as outfile:
+                outfile.write(json.dumps(files[file], indent=4))
+        comm.Barrier()
         logger.toc()
 
     del logger

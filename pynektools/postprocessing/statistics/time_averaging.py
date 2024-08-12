@@ -61,8 +61,10 @@ def average_field_files(comm, field_index_name= "", output_folder = "./", output
 
     logger.write("info", f"Writing {output_folder}batches.json batch index")
     logger.tic()
-    with open(output_folder + "batches.json", "w") as outfile:
-        outfile.write(json.dumps(batches, indent=4))
+    if comm.Get_rank() == 0:
+        with open(output_folder + "batches.json", "w") as outfile:
+            outfile.write(json.dumps(batches, indent=4))
+    comm.Barrier()
     logger.toc()
 
     # Read the mesh
@@ -142,9 +144,10 @@ def average_field_files(comm, field_index_name= "", output_folder = "./", output
         batch_mean_field.t = batch_time
         pynekwrite(output_folder + out_fname, comm, fld = batch_mean_field, msh = msh, wdsz=4, istep=batch)        
 
-        if comm.Get_rank() == 0: 
-            print("=================================================================================================")
         
         logger.write("info", f"Processing of batch : {batch} done.")
         logger.toc()
+        
+        if comm.Get_rank() == 0: 
+            print("=================================================================================================")
                 
