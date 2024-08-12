@@ -18,7 +18,7 @@ def index_files_from_log(comm, logpath="", logname="", progress_reports=50):
 
     logger.write("info", f"Reading file: {path + logname}")
     logger.tic()
-    logfile = open(logname, "r")
+    logfile = open(path+logname, "r")
     log = logfile.readlines()
     number_of_lines = len(log)
     logfile.close()
@@ -39,15 +39,28 @@ def index_files_from_log(comm, logpath="", logname="", progress_reports=50):
     read_first_time_step = False
     for i, line in enumerate(log):
 
+
+
+
         if np.mod(i, report_interval) == 0:
-            logger.write("info", f"read up to line: {i}, out of {number_of_lines}")
+            print(
+                "========================================================================================="
+            )
+            logger.write("info", f"read up to line: {i}, out of {number_of_lines} <-> {i/number_of_lines*100}%")
+            print(
+                "========================================================================================="
+            )
 
         if not read_first_time_step:
 
             for key, pattern in file_patterns.items():
                 match = pattern.search(line)
-                if match:
-                    added_files.append(match.group("value").strip())
+                if match: 
+                    add_file = match.group("value").strip()
+                    if add_file not in added_files:
+                        added_files.append(add_file)
+        
+
 
         # Find the first time step
         if "Time-step" in line and not read_first_time_step:
@@ -90,12 +103,23 @@ def index_files_from_log(comm, logpath="", logname="", progress_reports=50):
 
             writer_output_block = log[i : i + lines_to_check]
 
+            # Check if this output block contains another output
             for j, next_line in enumerate(writer_output_block):
+                if ("Writer output" in next_line and j > 0):
+                    k = j
+                    break
+                else:
+                    k = 10000
+
+            for j, next_line in enumerate(writer_output_block):
+
+                if j >= k:
+                    break
 
                 for file in added_files:
                     if " " + file in next_line:
                         files_found[file] = True
-
+                        
                         match = output_number_pattern.search(writer_output_block[j + 1])
                         if match:
                             output_number = int(match.group("value"))
@@ -126,7 +150,7 @@ def index_files_from_log(comm, logpath="", logname="", progress_reports=50):
             for file in added_files:
                 if files_found[file]:
                     files[file][files_index[file]]["time"] = file_time
-                    files[file][files_index[file]]["last_sample"] = files_last_sample[
+                    files[file][files_index[file]]["time_previous_output"] = files_last_sample[
                         file
                     ]
                     files[file][files_index[file]]["time_interval"] = (
