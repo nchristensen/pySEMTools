@@ -351,3 +351,102 @@ def index_files_from_folder(comm, folder_path="", run_start_time=0, stat_start_t
         logger.toc()
 
     del logger
+
+def merge_index_files(comm, index_list = "", output_fname = "", sort_by_time = False):
+    """
+    Merge index files into one.
+
+    Merge index files in multiple locations into one to consolidate information.
+
+    Parameters
+    ----------
+    comm : MPI.COMM
+        MPI communicator.
+    index_list : list
+        List of index files to merge.
+        Providee a list with relative or absolute paths to the index files.
+        Generally, provide the indices in the order you want them to merged.
+        If you want to sort them by time, keep checking the options.
+    output_fname : str
+        Name of the output file.
+        Include also the path. If not provided, the current working directory is used.
+        And a default name "consolidated_index.json" is used.
+    sort_by_time : bool
+        Sort the index files by time. Default is False.
+
+    Returns
+    -------
+    None
+        A merged index file is written.
+    """
+
+    if output_fname == "":
+        output_fname = os.getcwd() + "/consolidated_index.json"
+
+    if not isinstance(index_list, list):
+        raise ValueError("index_list must be a list")
+
+    if len(index_list) == 0:
+        raise ValueError("index_list must contain at least one index file")
+
+    logger = Logger(comm=comm, module_name="merge_index_files")
+
+    logger.write("info", f"Merging index files: {index_list}")
+
+    consolidated_index = {}
+    consolidated_index["simulation_start_time"] = 1e12
+    consolidated_key = 0
+
+    for index_file in index_list:
+
+        logger.write("info", f"Reading index file: {index_file}")
+
+        with open(index_file, "r") as infile:
+            index = json.load(infile)
+
+        for key in index.keys():
+            
+            if key == "simulation_start_time":
+                if index[key] < consolidated_index["simulation_start_time"]:
+                    consolidated_index["simulation_start_time"] = index[key]
+                continue
+            
+            elif index[key]["path"] != "file_not_in_folder":
+                consolidated_index[consolidated_key] = index[key]
+                consolidated_key += 1
+
+    if sort_by_time:
+        logger.write("info", "Sorting index files by time")
+        
+        unsorted_key = []
+        time = []
+        for key in consolidated_index.keys():
+            try:
+                int_key = int(key)
+            except ValueError:
+                continue
+            
+            unsorted_key.append(int(key))
+            time.append(consolidated_index[key]["time"])
+
+        unsorted_key = np.array(unsorted_key)
+
+        sorted_indices = np.argsort(time)
+        sorted_key = unsorted_key[sorted_indices]
+
+        sorted_consolidated_index = {}
+        sorted_consolidated_key = 0
+        sorted_consolidated_index["simulation_start_time"] = consolidated_index["simulation_start_time"]
+
+        for key in sorted_key:
+            sorted_consolidated_index[sorted_consolidated_key] = consolidated_index[key]
+            sorted_consolidated_key += 1
+
+        consolidated_index = sorted_consolidated_index
+
+    logger.write("info", f"Writing consolidated index file: {output_fname}")
+
+    with open(output_fname, "w") as outfile:
+        outfile.write(json.dumps(consolidated_index, indent=4))
+
+    del logger
