@@ -16,6 +16,45 @@ def average_field_files(
     mesh_index="",
     dtype=np.single,
 ):
+    """
+    Average field files in batches of a given time interval.
+
+    Used to average files from a field index.
+
+    Parameters
+    ----------
+    comm : MPI.COMM
+        MPI communicator.
+        
+    field_index_name : str
+        Index file that contains the information of the field files to be averaged.
+        Relative or absule path to the file should be provided.
+    output_folder : str
+        Output folder where the averaged field files will be saved.
+        By default, the same folder as the field_index_name will be used.
+        If a path is provided, that one will be used for all outputs.
+    output_batch_t_len : float
+        Time interval in time units that should be included in each batch.
+        If you want to average all the fields in the index, set this value to a large number.
+        Particularly, a number larger than the sum of all the time intervals in the stat files.
+    mesh_index : int
+        Index of the mesh file in the field_index_name.
+        If not provided, the mesh index will be assumed to be 0.
+        In other words, we assume that the first file in the index contain the mesh information.
+    dtype : np.dtype
+        Precision of the data once is read in memory. Precision in file does not matter.
+        default is np.single.
+
+    Notes
+    -----
+    This function will output the results in single precision and will put the mesh in all outputs by default.
+    Future implementations might include this as an option.
+        
+    Returns
+    -------
+    None
+        Files are written to disk.
+    """
 
     logger = Logger(comm=comm, module_name="average_field_files")
 

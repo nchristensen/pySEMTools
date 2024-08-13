@@ -10,6 +10,35 @@ from pymech.neksuite.field import read_header
 
 
 def index_files_from_log(comm, logpath="", logname="", progress_reports=50):
+    """
+    Idenx files based on the outputs of a neko log file.
+
+    Index files based on a neko log file.
+    
+    Parameters
+    ----------
+    comm : MPI.COMM
+        MPI communicator
+        
+    logpath : str
+        Path to the log file. Optional. If not provided, the current working directory is used.
+    logname : str
+        Name of the log file
+    progress_reports : int
+        Number of progress reports (Default value = 50).
+
+    Returns
+    -------
+    None
+        An index file is written for each output type found in the log.
+
+    Examples
+    --------
+    >>> from mpi4py import MPI
+    >>> from pynektools.postprocessing.file_indexing import index_files_from_log
+    >>> comm = MPI.COMM_WORLD
+    >>> index_files_from_log(comm, logpath="path/to/logfile/", logname="logfile.log", progress_reports=50)    
+    """
 
     logger = Logger(comm=comm, module_name="file_index_from_log")
 
@@ -189,7 +218,40 @@ def index_files_from_log(comm, logpath="", logname="", progress_reports=50):
     del logger
 
 
-def index_files_from_folder(comm, folder_path="", run_start_time=0, stat_start_time=0):
+def index_files_from_folder(comm, folder_path="", run_start_time=0, stat_start_time=0, output_folder = ""):
+    """
+    Index files based on a folder.
+
+    Index all field files in a folder.
+    
+    Parameters
+    ----------
+    comm : MPI.COMM
+        mpi communicator.
+        
+    folder_path : str
+        Path to the folder. Optional. If not provided, the current working directory is used.
+    run_start_time : float
+        Start time of the simulation (Default value = 0). This is used to calculate the intervals.
+        Intervals that use this are any field that does not contain "stat" or "mean" in the name.
+    stat_start_time : float
+        Start time of the statistics (Default value = 0). This is used to calculate the intervals.
+        Intervals that use this are any field that contains "stat" or "mean" in the name.
+    output_folder : str
+        Path to the output folder. Optional. If not provided, the same folder as the input folder is used.
+
+    Returns
+    -------
+    None
+        An index file is written for each output type found in the folder.
+
+    Examples
+    --------
+    >>> from mpi4py import MPI
+    >>> from pynektools.postprocessing.file_indexing import index_files_from_folder
+    >>> comm = MPI.COMM_WORLD
+    >>> index_files_from_folder(comm, folder_path="path/to/folder/", run_start_time=0, stat_start_time=0, output_folder = "")
+    """
 
     if folder_path == "":
         folder_path = os.getcwd() + "/"
@@ -276,13 +338,115 @@ def index_files_from_folder(comm, folder_path="", run_start_time=0, stat_start_t
 
     logger.write("info", "Check finished")
 
+    if output_folder == "":
+        output_folder = folder_path
+
     for file in added_files:
         logger.write("info", f"Writing {file} file index")
         logger.tic()
         if comm.Get_rank() == 0:
-            with open(folder_path + file + "_index.json", "w") as outfile:
+            with open(output_folder + file + "_index.json", "w") as outfile:
                 outfile.write(json.dumps(files[file], indent=4))
         comm.Barrier()
         logger.toc()
+
+    del logger
+
+def merge_index_files(comm, index_list = "", output_fname = "", sort_by_time = False):
+    """
+    Merge index files into one.
+
+    Merge index files in multiple locations into one to consolidate information.
+
+    Parameters
+    ----------
+    comm : MPI.COMM
+        MPI communicator.
+    index_list : list
+        List of index files to merge.
+        Providee a list with relative or absolute paths to the index files.
+        Generally, provide the indices in the order you want them to merged.
+        If you want to sort them by time, keep checking the options.
+    output_fname : str
+        Name of the output file.
+        Include also the path. If not provided, the current working directory is used.
+        And a default name "consolidated_index.json" is used.
+    sort_by_time : bool
+        Sort the index files by time. Default is False.
+
+    Returns
+    -------
+    None
+        A merged index file is written.
+    """
+
+    if output_fname == "":
+        output_fname = os.getcwd() + "/consolidated_index.json"
+
+    if not isinstance(index_list, list):
+        raise ValueError("index_list must be a list")
+
+    if len(index_list) == 0:
+        raise ValueError("index_list must contain at least one index file")
+
+    logger = Logger(comm=comm, module_name="merge_index_files")
+
+    logger.write("info", f"Merging index files: {index_list}")
+
+    consolidated_index = {}
+    consolidated_index["simulation_start_time"] = 1e12
+    consolidated_key = 0
+
+    for index_file in index_list:
+
+        logger.write("info", f"Reading index file: {index_file}")
+
+        with open(index_file, "r") as infile:
+            index = json.load(infile)
+
+        for key in index.keys():
+            
+            if key == "simulation_start_time":
+                if index[key] < consolidated_index["simulation_start_time"]:
+                    consolidated_index["simulation_start_time"] = index[key]
+                continue
+            
+            elif index[key]["path"] != "file_not_in_folder":
+                consolidated_index[consolidated_key] = index[key]
+                consolidated_key += 1
+
+    if sort_by_time:
+        logger.write("info", "Sorting index files by time")
+        
+        unsorted_key = []
+        time = []
+        for key in consolidated_index.keys():
+            try:
+                int_key = int(key)
+            except ValueError:
+                continue
+            
+            unsorted_key.append(int(key))
+            time.append(consolidated_index[key]["time"])
+
+        unsorted_key = np.array(unsorted_key)
+
+        sorted_indices = np.argsort(time)
+        sorted_key = unsorted_key[sorted_indices]
+
+        sorted_consolidated_index = {}
+        sorted_consolidated_key = 0
+        sorted_consolidated_index["simulation_start_time"] = consolidated_index["simulation_start_time"]
+
+        for key in sorted_key:
+            sorted_consolidated_index[sorted_consolidated_key] = consolidated_index[key]
+            sorted_consolidated_key += 1
+
+        consolidated_index = sorted_consolidated_index
+
+    logger.write("info", f"Writing consolidated index file: {output_fname}")
+
+    with open(output_fname, "w") as outfile:
+        outfile.write(json.dumps(consolidated_index, indent=4))
 
     del logger
