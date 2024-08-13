@@ -10,6 +10,35 @@ from pymech.neksuite.field import read_header
 
 
 def index_files_from_log(comm, logpath="", logname="", progress_reports=50):
+    """
+    Idenx files based on the outputs of a neko log file.
+
+    Index files based on a neko log file.
+    
+    Parameters
+    ----------
+    comm : MPI.COMM
+        MPI communicator
+        
+    logpath : str
+        Path to the log file. Optional. If not provided, the current working directory is used.
+    logname : str
+        Name of the log file
+    progress_reports : int
+        Number of progress reports (Default value = 50).
+
+    Returns
+    -------
+    None
+        An index file is written for each output type found in the log.
+
+    Examples
+    --------
+    >>> from mpi4py import MPI
+    >>> from pynektools.postprocessing.file_indexing import index_files_from_log
+    >>> comm = MPI.COMM_WORLD
+    >>> index_files_from_log(comm, logpath="path/to/logfile/", logname="logfile.log", progress_reports=50)    
+    """
 
     logger = Logger(comm=comm, module_name="file_index_from_log")
 
@@ -190,6 +219,39 @@ def index_files_from_log(comm, logpath="", logname="", progress_reports=50):
 
 
 def index_files_from_folder(comm, folder_path="", run_start_time=0, stat_start_time=0, output_folder = ""):
+    """
+    Index files based on a folder.
+
+    Index all field files in a folder.
+    
+    Parameters
+    ----------
+    comm : MPI.COMM
+        mpi communicator.
+        
+    folder_path : str
+        Path to the folder. Optional. If not provided, the current working directory is used.
+    run_start_time : float
+        Start time of the simulation (Default value = 0). This is used to calculate the intervals.
+        Intervals that use this are any field that does not contain "stat" or "mean" in the name.
+    stat_start_time : float
+        Start time of the statistics (Default value = 0). This is used to calculate the intervals.
+        Intervals that use this are any field that contains "stat" or "mean" in the name.
+    output_folder : str
+        Path to the output folder. Optional. If not provided, the same folder as the input folder is used.
+
+    Returns
+    -------
+    None
+        An index file is written for each output type found in the folder.
+
+    Examples
+    --------
+    >>> from mpi4py import MPI
+    >>> from pynektools.postprocessing.file_indexing import index_files_from_folder
+    >>> comm = MPI.COMM_WORLD
+    >>> index_files_from_folder(comm, folder_path="path/to/folder/", run_start_time=0, stat_start_time=0, output_folder = "")
+    """
 
     if folder_path == "":
         folder_path = os.getcwd() + "/"
