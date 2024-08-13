@@ -189,7 +189,7 @@ def index_files_from_log(comm, logpath="", logname="", progress_reports=50):
     del logger
 
 
-def index_files_from_folder(comm, folder_path="", run_start_time=0, stat_start_time=0):
+def index_files_from_folder(comm, folder_path="", run_start_time=0, stat_start_time=0, output_folder = ""):
 
     if folder_path == "":
         folder_path = os.getcwd() + "/"
@@ -276,11 +276,14 @@ def index_files_from_folder(comm, folder_path="", run_start_time=0, stat_start_t
 
     logger.write("info", "Check finished")
 
+    if output_folder == "":
+        output_folder = folder_path
+
     for file in added_files:
         logger.write("info", f"Writing {file} file index")
         logger.tic()
         if comm.Get_rank() == 0:
-            with open(folder_path + file + "_index.json", "w") as outfile:
+            with open(output_folder + file + "_index.json", "w") as outfile:
                 outfile.write(json.dumps(files[file], indent=4))
         comm.Barrier()
         logger.toc()
