@@ -1,7 +1,6 @@
 """ Module that contains msh class, which contains relevant data on the domain"""
 
 import numpy as np
-from pympler import asizeof
 from ..monitoring.logger import Logger
 
 NoneType = type(None)
@@ -89,64 +88,6 @@ class Mesh:
 
         else:
             self.log.write("info", "Initializing empty Mesh object.")
-
-    def __memory_usage__(self, comm):
-        """
-        Print the memory usage of the object.
-
-        This function is used to print the memory usage of the object.
-
-        Parameters
-        ----------
-        comm : Comm
-            MPI communicator object.
-
-        Returns
-        -------
-        None
-
-        """
-        memory_usage = asizeof.asizeof(self) / (1024**2)  # Convert bytes to MB
-        print(f"Rank: {comm.Get_rank()} - Memory usage of Mesh: {memory_usage} MB")
-
-    def __memory_usage_per_attribute__(self, comm, print_data=True):
-        """
-        Store and print the memory usage of each attribute of the object.
-
-        This function is used to print the memory usage of each attribute of the object.
-        The results are stored in the mem_per_attribute attribute.
-
-        Parameters
-        ----------
-        comm : Comm
-            MPI communicator object.
-        print_data : bool, optional
-            If True, the memory usage of each attribute will be printed.
-
-        Returns
-        -------
-        None
-
-        """
-        attributes = dir(self)
-        non_callable_attributes = [
-            attr
-            for attr in attributes
-            if not callable(getattr(self, attr)) and not attr.startswith("__")
-        ]
-        size_per_attribute = [
-            asizeof.asizeof(getattr(self, attr)) / (1024**2)
-            for attr in non_callable_attributes
-        ]  # Convert bytes to MB
-
-        self.mem_per_attribute = dict()
-        for i, attr in enumerate(non_callable_attributes):
-            self.mem_per_attribute[attr] = size_per_attribute[i]
-
-            if print_data:
-                print(
-                    f"Rank: {comm.Get_rank()} - Memory usage of msh attr - {attr}: {size_per_attribute[i]} MB"
-                )
 
     def init_from_data(self, comm, data):
         """

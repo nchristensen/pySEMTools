@@ -1,7 +1,6 @@
 """ Contians class that contains information associated to fields"""
 
 import numpy as np
-from pympler import asizeof
 from ..monitoring.logger import Logger
 
 NoneType = type(None)
@@ -119,26 +118,6 @@ class Field:
             self.log.toc()
         else:
             self.log.write("info", "Initializing empty Field object")
-
-    def __memory_usage__(self, comm):
-        """
-        Print the memory usage of the object.
-
-        This function is used to print the memory usage of the object.
-
-        Parameters
-        ----------
-        comm : Comm
-            MPI communicator object.
-
-        Returns
-        -------
-        None
-
-        """
-
-        memory_usage = asizeof.asizeof(self) / (1024**2)  # Convert bytes to MB
-        print(f"Rank: {comm.Get_rank()} - Memory usage of Field: {memory_usage} MB")
 
     def update_vars(self):
         """
