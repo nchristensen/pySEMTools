@@ -26,7 +26,7 @@ NoneType = type(None)
 def test_read_data_single():
 
     # Read the original mesh data
-    fname = 'examples/data/rbc0.f00001'
+    fname = 'examples/data/mixlay0.f00001'
     
     ddtype = np.single
     create_connectivity = True
@@ -82,7 +82,7 @@ def test_read_data_single():
 def test_read_data_double():
 
     # Read the original mesh data
-    fname = 'examples/data/rbc0.f00001'
+    fname = 'examples/data/mixlay0.f00001'
     
     ddtype = np.double
     create_connectivity = True
@@ -138,8 +138,8 @@ def test_read_data_double():
 def test_write_data_single():
 
     # Read the original mesh data
-    fname = 'examples/data/rbc0.f00001'
-    fname2 = 'examples/data/rbc0.f00004'
+    fname = 'examples/data/mixlay0.f00001'
+    fname2 = 'examples/data/mixlay0.f00004'
     
     ddtype = np.single
     create_connectivity = True
@@ -182,8 +182,8 @@ def test_write_data_single():
 def test_write_data_double():
 
     # Read the original mesh data
-    fname = 'examples/data/rbc0.f00001'
-    fname2 = 'examples/data/rbc0.f00004'
+    fname = 'examples/data/mixlay0.f00001'
+    fname2 = 'examples/data/mixlay0.f00004'
     
     ddtype = np.double
     create_connectivity = True
@@ -225,8 +225,8 @@ def test_write_data_double():
 def test_write_data_single_no_mesh():
 
     # Read the original mesh data
-    fname = 'examples/data/rbc0.f00001'
-    fname2 = 'examples/data/rbc0.f00002'
+    fname = 'examples/data/mixlay0.f00001'
+    fname2 = 'examples/data/mixlay0.f00002'
     
     ddtype = np.single
     create_connectivity = True
@@ -258,8 +258,8 @@ def test_write_data_single_no_mesh():
 def test_write_data_double_no_mesh():
 
     # Read the original mesh data
-    fname = 'examples/data/rbc0.f00001'
-    fname2 = 'examples/data/rbc0.f00002'
+    fname = 'examples/data/mixlay0.f00001'
+    fname2 = 'examples/data/mixlay0.f00002'
     
     ddtype = np.double
     create_connectivity = True

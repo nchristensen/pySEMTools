@@ -15,6 +15,9 @@ def average_field_files(
     output_batch_t_len=50,
     mesh_index="",
     dtype=np.single,
+    rel_tol=0.05,
+    output_word_size=4,
+    write_mesh = True,
 ):
     """
     Average field files in batches of a given time interval.
@@ -44,6 +47,16 @@ def average_field_files(
     dtype : np.dtype
         Precision of the data once is read in memory. Precision in file does not matter.
         default is np.single.
+    rel_tol : float
+        Relative tolerance to consider when dividing the files into batches.
+        A 5% (5e-2) tolerance is used by default.
+    output_word_size : int
+        Word size of the output files. Default is 4 bytes, i.e. single precision.
+        The other option is 8 bytes, i.e. double precision.
+    write_mesh : bool
+        Write the mesh in the output files. Default is True.
+        If False, the mesh will anyway be written in the first file.
+        of the outputs. I.e., batch 0.
 
     Notes
     -----
@@ -87,7 +100,7 @@ def average_field_files(
 
         # Add to the current batch
         if current_batch_t_len + file_t_interval <= output_batch_t_len * (
-            1 + 5e-2
+            1 + rel_tol
         ):  # Add a 5% tolerance
             create_new_batch = False
         else:
@@ -126,7 +139,7 @@ def average_field_files(
         logger.write("warning", "Mesh index not provided")
         logger.write(
             "warning",
-            "Provide the mesh_index keywork with an index to a file that contiains the mesh",
+            "Provide the mesh_index keyword with an index to a file that contiains the mesh",
         )
         logger.write("warning", "we assume that the mesh index is 0")
         mesh_index = 0
@@ -216,13 +229,18 @@ def average_field_files(
 
         # Set the time to be the cummulative time of the batch
         batch_mean_field.t = batch_time
+        if batch == 0:
+            write_coords = True
+        else:
+            write_coords = write_mesh
         pynekwrite(
             output_folder + out_fname,
             comm,
             fld=batch_mean_field,
             msh=msh,
-            wdsz=4,
+            wdsz=output_word_size,
             istep=batch,
+            write_mesh=write_coords,
         )
 
         logger.write("info", f"Processing of batch : {batch} done.")

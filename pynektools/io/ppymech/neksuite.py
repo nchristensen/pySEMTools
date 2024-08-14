@@ -478,7 +478,10 @@ def pynekread(filename, comm, data_dtype=np.double, msh=None, fld=None):
             w = np.zeros(ioh.nelv * ioh.lxyz, dtype=ioh.pynek_dtype)
 
             fld_file_read_vector_field(fh, byte_offset, ioh, x=u, y=v, z=w)
-            fld.fields["vel"].extend([u, v, w])
+            if ioh.gdim == 3:
+                fld.fields["vel"].extend([u, v, w])
+            elif ioh.gdim == 2:
+                fld.fields["vel"].extend([u, v])
 
             mpi_offset += ioh.glb_nelv * ioh.gdim * ioh.lxyz * ioh.fld_data_size
         else:
@@ -853,7 +856,10 @@ def pynekwrite(filename, comm, msh=None, fld=None, wdsz=4, istep=0, write_mesh=T
     mpi_character_size = MPI.CHARACTER.Get_size()
 
     # associate inputs
-    msh_fields = msh.gdim
+    if write_mesh:
+        msh_fields = msh.gdim
+    else:
+        msh_fields = 0
     vel_fields = fld.vel_fields
     pres_fields = fld.pres_fields
     temp_fields = fld.temp_fields
@@ -929,7 +935,7 @@ def pynekwrite(filename, comm, msh=None, fld=None, wdsz=4, istep=0, write_mesh=T
     field_shape = (ioh.nelv, ioh.lz, ioh.ly, ioh.lx)
 
     # Write the coordinates
-    if ioh.pos_variables > 0:
+    if (ioh.pos_variables and write_mesh) > 0:
 
         log.write("info", "Writing coordinate data")
 
@@ -1005,7 +1011,7 @@ def pynekwrite(filename, comm, msh=None, fld=None, wdsz=4, istep=0, write_mesh=T
         log.write("info", "Writing metadata")
 
         # Write the coordinates
-        if ioh.pos_variables > 0:
+        if (ioh.pos_variables and write_mesh) > 0:
 
             x = msh.x
             y = msh.y
