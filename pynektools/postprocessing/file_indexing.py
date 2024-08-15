@@ -218,7 +218,7 @@ def index_files_from_log(comm, logpath="", logname="", progress_reports=50):
     del logger
 
 
-def index_files_from_folder(comm, folder_path="", run_start_time=0, stat_start_time=0, output_folder = ""):
+def index_files_from_folder(comm, folder_path="", run_start_time=0, stat_start_time=0, output_folder = "", file_type = ""):
     """
     Index files based on a folder.
 
@@ -239,6 +239,9 @@ def index_files_from_folder(comm, folder_path="", run_start_time=0, stat_start_t
         Intervals that use this are any field that contains "stat" or "mean" in the name.
     output_folder : str
         Path to the output folder. Optional. If not provided, the same folder as the input folder is used.
+    file_type: list
+        A list with type of file that should be indexed. If empty, all files are indexed.
+        An example is: ["field.fld", "stats.fld"]
 
     Returns
     -------
@@ -266,17 +269,45 @@ def index_files_from_folder(comm, folder_path="", run_start_time=0, stat_start_t
     # Get all files in the folder that are fields
     files_in_folder = sorted(glob.glob(folder_path + "*0.f*"))
 
+    if len(files_in_folder) < 1:
+        logger.write("warning", "No *0.f* files in the folder")
+
     added_files = []
     for i in range(0, len(files_in_folder)):
         files_in_folder[i] = os.path.basename(files_in_folder[i])
 
         ftype = files_in_folder[i].split(".")[0][:-1] + ".fld"
-        if ftype not in added_files:
-            added_files.append(ftype)
+
+        # Detetmine if only some indices should be check
+        if not isinstance(file_type, list):
+            if ftype not in added_files:
+                added_files.append(ftype)
+        else:
+            if ftype not in added_files and ftype in file_type:
+                added_files.append(ftype)
 
     for ftype in added_files:
         logger.write("info", f"Found files with {ftype} pattern")
+        
+    if isinstance(file_type, list) and len(added_files) < 1:
+        logger.write("warning", f"No files with pattern {file_type} found")
 
+    # Do a test to see if the file type exist and if one wants to overwrite it
+    remove = []
+    for ftype in added_files:
+        index_fname = folder_path+ftype+"_index.json"
+        file_exists = os.path.exists(index_fname)
+        if file_exists:
+            logger.write("warning", f"File {index_fname} exists. Overwrite?")
+            overwrite = input("input: [yes/no] ")
+            if overwrite == "no":
+                remove.append(ftype)
+    
+    added_files = [nm for nm in added_files if nm not in remove]
+
+    for ftype in added_files:
+        logger.write("info", f"Writing index for {ftype} pattern")
+ 
     if comm.Get_rank() == 0:
         print(
             "========================================================================================="
@@ -292,9 +323,12 @@ def index_files_from_folder(comm, folder_path="", run_start_time=0, stat_start_t
 
     for i, file_in_folder in enumerate(files_in_folder):
 
-        logger.write("info", f"Indexing file: {file_in_folder}")
-
         ftype = files_in_folder[i].split(".")[0][:-1] + ".fld"
+
+        if ftype not in added_files:
+            continue
+        
+        logger.write("info", f"Indexing file: {file_in_folder}")
 
         files[ftype][files_index[ftype]] = dict()
         files[ftype][files_index[ftype]]["fname"] = file_in_folder
@@ -399,10 +433,14 @@ def merge_index_files(comm, index_list = "", output_fname = "", sort_by_time = F
 
     for index_file in index_list:
 
-        logger.write("info", f"Reading index file: {index_file}")
+        try:
+            with open(index_file, "r") as infile:
+                index = json.load(infile)
+        except FileNotFoundError:
+            logger.write("warning", f"Expected file {index_file} but it does not exist. skipping it")
+            continue
 
-        with open(index_file, "r") as infile:
-            index = json.load(infile)
+        logger.write("info", f"Reading index file: {index_file}")
 
         for key in index.keys():
             
@@ -446,7 +484,20 @@ def merge_index_files(comm, index_list = "", output_fname = "", sort_by_time = F
 
     logger.write("info", f"Writing consolidated index file: {output_fname}")
 
-    with open(output_fname, "w") as outfile:
-        outfile.write(json.dumps(consolidated_index, indent=4))
+
+    write_index = True
+    file_exists = os.path.exists(output_fname)
+    if file_exists:
+        logger.write("warning", f"File {output_fname} exists. Overwrite?")
+        overwrite = input("[yes/no] ")
+
+        if overwrite == "no":
+            write_index = False
+            logger.write("warning", f"Skipping writing index {output_fname}")
+        
+
+    if write_index:
+        with open(output_fname, "w") as outfile:
+            outfile.write(json.dumps(consolidated_index, indent=4))
 
     del logger
