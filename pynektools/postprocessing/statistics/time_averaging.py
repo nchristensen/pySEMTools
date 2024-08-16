@@ -123,13 +123,13 @@ def average_field_files(
 
     logger.write(
         "info",
-        f"Finished dividing files into batches.  Writing batch information into {output_folder}batches.json",
+        f"Finished dividing files into batches.",
     )
 
-    logger.write("info", f"Writing {output_folder}batches.json batch index")
+    logger.write("info", f"Writing {output_folder}batches_{os.path.basename(field_index_name)} batch index")
     logger.tic()
     if comm.Get_rank() == 0:
-        with open(output_folder + "batches.json", "w") as outfile:
+        with open(output_folder + "batches_" + os.path.basename(field_index_name), "w") as outfile:
             outfile.write(json.dumps(batches, indent=4))
     comm.Barrier()
     logger.toc()
