@@ -141,8 +141,15 @@ def average_field_files(
             "warning",
             "Provide the mesh_index keyword with an index to a file that contiains the mesh",
         )
-        logger.write("warning", "we assume that the mesh index is 0")
-        mesh_index = 0
+    
+        for i, key in enumerate(file_index.keys()):
+            try:
+                int_key = int(key)
+            except ValueError:
+                continue
+            mesh_index = key
+            logger.write("warning", f"we assume that the mesh index correspond to {mesh_index}")
+            break
 
     logger.write("info", f"Reading mesh from file {mesh_index} in {field_index_name}")
     logger.write("info", f"Reading mesh in precision:  {dtype}")
