@@ -520,10 +520,9 @@ def pynekread(filename, comm, data_dtype=np.double, msh=None, fld=None):
     # Read scalars
     ii = 0
     for var in range(0, ioh.scalar_variables):
-        if ii == 0:  # Only print once
-            log.write("info", "Reading scalar data")
-            ii += 1
         if not isinstance(fld, type(None)):
+            log.write("info", f"Reading scalar {var} data")
+
             byte_offset = mpi_offset + ioh.offset_el * 1 * ioh.lxyz * ioh.fld_data_size
 
             s = np.zeros(ioh.nelv * ioh.lxyz, dtype=ioh.pynek_dtype)
