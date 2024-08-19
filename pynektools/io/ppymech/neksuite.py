@@ -545,6 +545,192 @@ def pynekread(filename, comm, data_dtype=np.double, msh=None, fld=None):
     del log
     return
 
+def pynekread_field(filename, comm, data_dtype=np.double, key=""):
+    """
+    Read nek file and returs a pynekobject (Parallel).
+
+    Main function for readinf nek type fld filed.
+
+    Parameters
+    ----------
+    filename : str
+        The filename of the fld file.
+
+    comm : Comm
+        MPI communicator.
+
+    data_dtype : str
+        The data type of the data in the file. (Default value = "float64").
+
+    key : str
+        The key of the field to read.
+        Typically "vel", "pres", "temp" or "scal_1", "scal_2", etc.
+
+    Returns
+    -------
+    list
+        The data read from the file in a list.
+    """
+
+    log = Logger(comm=comm, module_name="pynekread_field")
+    log.tic()
+    log.write("info", "Reading file: {}".format(filename))
+
+    key_prefix = key.split("_")[0]
+    try: 
+        key_suffix = int(key.split("_")[1])
+    except IndexError:
+        key_suffix = 0
+
+    log.write("info", f"Reading field: {key}")
+
+    mpi_int_size = MPI.INT.Get_size()
+    mpi_real_size = MPI.REAL.Get_size()
+    # mpi_double_size = MPI.DOUBLE.Get_size()
+    mpi_character_size = MPI.CHARACTER.Get_size()
+
+    # Read the header
+    header = read_header(filename)
+
+    # Initialize the io helper
+    ioh = IoHelper(header, pynek_dtype=data_dtype)
+
+    # Find the appropiate partitioning of the file
+    # ioh.element_mapping(comm)
+    ioh.element_mapping_load_balanced_linear(comm)
+
+    # allocate temporal arrays
+    log.write("info", "Allocating temporal arrays")
+    ioh.allocate_temporal_arrays()
+
+    ## Create the pymech hexadata object
+    # data = HexaData(
+    #    header.nb_dims, ioh.nelv, header.orders, header.nb_vars, 0, dtype=data_dtype
+    # )
+    # data.time = header.time
+    # data.istep = header.istep
+    # data.wdsz = header.wdsz
+    # data.endian = sys.byteorder
+
+    # Open the file
+    fh = MPI.File.Open(comm, filename, MPI.MODE_RDONLY)
+
+    # Read the test pattern
+    mpi_offset = 132 * mpi_character_size
+    test_pattern = np.zeros(1, dtype=np.single)
+    fh.Read_at_all(mpi_offset, test_pattern, status=None)
+
+    # Read the indices?
+    mpi_offset += mpi_real_size
+    idx = np.zeros(ioh.nelv, dtype=np.intc)
+    byte_offset = mpi_offset + ioh.offset_el * mpi_int_size
+    fh.Read_at_all(byte_offset, idx, status=None)
+    # data.elmap = idx
+    mpi_offset += ioh.glb_nelv * mpi_int_size
+
+    # Read the coordinates
+    if ioh.pos_variables > 0:
+
+        if key_prefix == "pos":
+            byte_offset = (
+                mpi_offset + ioh.offset_el * ioh.gdim * ioh.lxyz * ioh.fld_data_size
+            )
+            log.write("info", "Reading coordinate data")
+            x = np.zeros(ioh.nelv * ioh.lxyz, dtype=ioh.pynek_dtype)
+            y = np.zeros(ioh.nelv * ioh.lxyz, dtype=ioh.pynek_dtype)
+            z = np.zeros(ioh.nelv * ioh.lxyz, dtype=ioh.pynek_dtype)
+            fld_file_read_vector_field(fh, byte_offset, ioh, x=x, y=y, z=z)
+
+            mpi_offset += ioh.glb_nelv * ioh.gdim * ioh.lxyz * ioh.fld_data_size
+        else:
+            mpi_offset += ioh.glb_nelv * ioh.gdim * ioh.lxyz * ioh.fld_data_size
+
+    # Read the velocity
+    if ioh.vel_variables > 0:
+        if key_prefix == "vel":
+            byte_offset = (
+                mpi_offset + ioh.offset_el * ioh.gdim * ioh.lxyz * ioh.fld_data_size
+            )
+
+            log.write("info", "Reading velocity data")
+            u = np.zeros(ioh.nelv * ioh.lxyz, dtype=ioh.pynek_dtype)
+            v = np.zeros(ioh.nelv * ioh.lxyz, dtype=ioh.pynek_dtype)
+            w = np.zeros(ioh.nelv * ioh.lxyz, dtype=ioh.pynek_dtype)
+            fld_file_read_vector_field(fh, byte_offset, ioh, x=u, y=v, z=w)
+
+            mpi_offset += ioh.glb_nelv * ioh.gdim * ioh.lxyz * ioh.fld_data_size
+        else:
+            mpi_offset += ioh.glb_nelv * ioh.gdim * ioh.lxyz * ioh.fld_data_size
+
+    # Read pressure
+    if ioh.pres_variables > 0:
+        if key_prefix == "pres":
+            byte_offset = mpi_offset + ioh.offset_el * 1 * ioh.lxyz * ioh.fld_data_size
+
+            log.write("info", "Reading pressure data")
+            p = np.zeros(ioh.nelv * ioh.lxyz, dtype=ioh.pynek_dtype)
+
+            fld_file_read_field(fh, byte_offset, ioh, x=p)
+
+            mpi_offset += ioh.glb_nelv * 1 * ioh.lxyz * ioh.fld_data_size
+        else:
+            mpi_offset += ioh.glb_nelv * 1 * ioh.lxyz * ioh.fld_data_size
+
+    # Read temperature
+    if ioh.temp_variables > 0:
+        if key_prefix == "temp":
+            byte_offset = mpi_offset + ioh.offset_el * 1 * ioh.lxyz * ioh.fld_data_size
+
+            log.write("info", "Reading temperature data")
+            t = np.zeros(ioh.nelv * ioh.lxyz, dtype=ioh.pynek_dtype)
+
+            fld_file_read_field(fh, byte_offset, ioh, x=t)
+
+            mpi_offset += ioh.glb_nelv * 1 * ioh.lxyz * ioh.fld_data_size
+        else:
+            mpi_offset += ioh.glb_nelv * 1 * ioh.lxyz * ioh.fld_data_size
+
+    # Read scalars
+    if ioh.scalar_variables > 0:
+        if key_prefix == "scal":
+            var = int(key_suffix)
+            log.write("info", f"Reading scalar {var} data")
+            
+            if var >= ioh.scalar_variables:
+                raise ValueError(f"Scalar {var} does not exist in the file.")
+
+            mpi_offset += (ioh.glb_nelv * 1 * ioh.lxyz * ioh.fld_data_size) * var
+
+            byte_offset = mpi_offset + ioh.offset_el * 1 * ioh.lxyz * ioh.fld_data_size
+
+            s = np.zeros(ioh.nelv * ioh.lxyz, dtype=ioh.pynek_dtype)
+            fld_file_read_field(fh, byte_offset, ioh, x=s)
+
+            mpi_offset += ioh.glb_nelv * 1 * ioh.lxyz * ioh.fld_data_size
+        else:
+            mpi_offset += ioh.glb_nelv * 1 * ioh.lxyz * ioh.fld_data_size
+
+    fh.Close()
+
+    log.write("info", "File read")
+    log.toc()
+
+    del log
+
+    if key_prefix == "pos":
+        return [x, y, z]
+    elif key_prefix == "vel" and ioh.gdim == 3:
+        return [u, v, w]
+    elif key_prefix == "vel" and ioh.gdim == 2:
+        return [u, v]
+    elif key_prefix == "pres":
+        return [p]
+    elif key_prefix == "temp":
+        return [t]
+    elif key_prefix == "scal":
+        return [s]
+    else:
+        raise ValueError(f"Key {key} not recognized.")        
 
 # @profile
 def pwritenek(filename, data, comm):
