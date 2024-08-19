@@ -228,7 +228,7 @@ class FieldRegistry(Field):
         super().__init__(comm, data=data)
         
         self.registry = {}
-        self.scal_field_names = []
+        self.scal_fields_names = []
 
         self.update_vars()
 
@@ -263,7 +263,7 @@ class FieldRegistry(Field):
         super().clear()
 
         self.registry = {}
-
+        self.scal_fields_names = []
 
     def rename_registry_key(self, old_key="", new_key=""):
         """
@@ -360,11 +360,11 @@ class FieldRegistry(Field):
                 prefix = "temp"
             else:
                 prefix = "scal"
-                self.scal_field_names.append(field_name)
+                self.scal_fields_names.append(field_name)
             
             if field.dtype != dtype:
                 self.log.write("warning", f"Field {field_name} has dtype {field.dtype} but expected {dtype}")
-                self.log.write("warning", f"Fiel {field_name} will be casted to {dtype}")
+                self.log.write("warning", f"Field {field_name} will be casted to {dtype}")
                 #cast it
                 field = field.astype(dtype)
 
