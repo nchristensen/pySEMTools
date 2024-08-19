@@ -12,11 +12,12 @@ comm = MPI.COMM_WORLD
 # Import general modules
 import numpy as np
 # Import relevant modules
-from pynektools.io.ppymech.neksuite import preadnek, pwritenek, pynekread, pynekwrite
+from pynektools.io.ppymech.neksuite import preadnek, pwritenek, pynekread, pynekwrite, pynekread_field
 from pymech.neksuite import readnek, writenek
 from pynektools.datatypes.msh import Mesh as msh_c
 from pynektools.datatypes.msh import get_coordinates_from_hexadata
 from pynektools.datatypes.field import Field as field_c
+from pynektools.datatypes.field import FieldRegistry
 import os
 
 NoneType = type(None)
@@ -44,6 +45,13 @@ def test_read_data_single():
     fld3 = field_c(comm)
     pynekread(fname, comm, msh = msh3, fld=fld3)
 
+    fld4 = FieldRegistry(comm)
+    fld4.add_field(comm, field_name="u", file_type="fld", file_name=fname, file_key="vel_0", dtype=ddtype)
+    fld4.add_field(comm, field_name="v", file_type="fld", file_name=fname, file_key="vel_1", dtype=ddtype)
+    fld4.add_field(comm, field_name="w", file_type="fld", file_name=fname, file_key="vel_2", dtype=ddtype)
+    fld4.add_field(comm, field_name="t", file_type="fld", file_name=fname, file_key="temp", dtype=ddtype)
+    fld4.add_field(comm, field_name="p", file_type="fld", file_name=fname, file_key="pres", dtype=ddtype)
+
     #compare the objects
     t1 = np.allclose(msh1.x, msh2.x)
     t2 = np.allclose(msh1.y, msh2.y)
@@ -72,7 +80,10 @@ def test_read_data_single():
             t1 = np.allclose(fld1.fields[key][j], fld2.fields[key][j])
             t2 = np.allclose(fld1.fields[key][j], fld3.fields[key][j])
             t3 = np.allclose(fld2.fields[key][j], fld3.fields[key][j])
-            passed3 = np.all([t1, t2, t3])
+            t4 = np.allclose(fld1.fields[key][j], fld4.fields[key][j])
+            t5 = np.allclose(fld2.fields[key][j], fld4.fields[key][j])
+            t6 = np.allclose(fld3.fields[key][j], fld4.fields[key][j])
+            passed3 = np.all([t1, t2, t3, t4, t5, t6])
 
       
     assert np.all([passed1, passed2, passed3])
@@ -99,6 +110,13 @@ def test_read_data_double():
     msh3 = msh_c(comm, create_connectivity=create_connectivity)
     fld3 = field_c(comm)
     pynekread(fname, comm, msh = msh3, fld=fld3)
+    
+    fld4 = FieldRegistry(comm)
+    fld4.add_field(comm, field_name="u", file_type="fld", file_name=fname, file_key="vel_0", dtype=ddtype)
+    fld4.add_field(comm, field_name="v", file_type="fld", file_name=fname, file_key="vel_1", dtype=ddtype)
+    fld4.add_field(comm, field_name="w", file_type="fld", file_name=fname, file_key="vel_2", dtype=ddtype)
+    fld4.add_field(comm, field_name="t", file_type="fld", file_name=fname, file_key="temp", dtype=ddtype)
+    fld4.add_field(comm, field_name="p", file_type="fld", file_name=fname, file_key="pres", dtype=ddtype)
 
     #compare the objects
     t1 = np.allclose(msh1.x, msh2.x)
@@ -128,7 +146,10 @@ def test_read_data_double():
             t1 = np.allclose(fld1.fields[key][j], fld2.fields[key][j])
             t2 = np.allclose(fld1.fields[key][j], fld3.fields[key][j])
             t3 = np.allclose(fld2.fields[key][j], fld3.fields[key][j])
-            passed3 = np.all([t1, t2, t3])
+            t4 = np.allclose(fld1.fields[key][j], fld4.fields[key][j])
+            t5 = np.allclose(fld2.fields[key][j], fld4.fields[key][j])
+            t6 = np.allclose(fld3.fields[key][j], fld4.fields[key][j])
+            passed3 = np.all([t1, t2, t3, t4, t5, t6])
 
       
     assert np.all([passed1, passed2, passed3])
