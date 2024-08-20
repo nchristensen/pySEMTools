@@ -1087,6 +1087,8 @@ class Interpolator:
         # Now find the rst coordinates for the points stored in each of the buffers
         for source_index in range(0, len(my_source)):
 
+            self.log.write("debug", f"Processing batch: {source_index} out of {len(my_source)}")
+
             probes_info = {}
             probes_info["probes"] = buff_probes[source_index]
             probes_info["probes_rst"] = buff_probes_rst[source_index]
