@@ -144,14 +144,14 @@ class Field:
         self.temp_fields = len(self.fields["temp"])
         self.scal_fields = len(self.fields["scal"])
 
-        self.log.write("info", "Field variables updated")
+        self.log.write("debug", "Field variables updated")
         self.log.write(
-            "info",
+            "debug",
             f"Velocity fields: {self.vel_fields}, Pressure fields: {self.pres_fields}, Temperature fields: {self.temp_fields}, Scalar fields: {self.scal_fields}",
         )
 
     def clear(self):
-        self.log.write("info", "Clearing field variables")
+        self.log.write("debug", "Clearing field variables")
         self.fields["vel"] = []
         self.fields["pres"] = []
         self.fields["temp"] = []
@@ -332,17 +332,17 @@ class FieldRegistry(Field):
                 return
 
             if file_type == "fld":
-
-                self.log.write("info", f"Reading field {file_name} from file")
-
-                field_list = pynekread_field(file_name, comm, data_dtype=dtype, key=file_key)
-
+                
                 key_prefix = file_key.split("_")[0]
                 try:
                     key_suffix = int(file_key.split("_")[1])
                 except IndexError:
-                    self.log.write("warning", f"File key {file_key} has not suffix (key: prefix_sufix). Assuming suffix 0")
+                    self.log.write("warning", f"File key {file_key} has no suffix (key: prefix_sufix). Assuming suffix 0")
                     key_suffix = 0
+
+                self.log.write("debug", f"Reading field {file_name} from file")
+
+                field_list = pynekread_field(file_name, comm, data_dtype=dtype, key=file_key)
 
                 if key_prefix == "vel" or key_prefix == "pos":
                     field = field_list[key_suffix]

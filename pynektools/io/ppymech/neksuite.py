@@ -238,11 +238,11 @@ def preadnek(filename, comm, data_dtype=np.double):
     ioh.element_mapping_load_balanced_linear(comm)
 
     # allocate temporal arrays
-    log.write("info", "Allocating temporal arrays")
+    log.write("debug", "Allocating temporal arrays")
     ioh.allocate_temporal_arrays()
 
     # Create the pymech hexadata object
-    log.write("info", "Creating HexaData object")
+    log.write("debug", "Creating HexaData object")
     data = HexaData(
         header.nb_dims, ioh.nelv, header.orders, header.nb_vars, 0, dtype=data_dtype
     )
@@ -272,7 +272,7 @@ def preadnek(filename, comm, data_dtype=np.double):
         byte_offset = (
             mpi_offset + ioh.offset_el * ioh.gdim * ioh.lxyz * ioh.fld_data_size
         )
-        log.write("info", "Reading coordinate data")
+        log.write("debug", "Reading coordinate data")
         x = np.zeros(ioh.nelv * ioh.lxyz, dtype=ioh.pynek_dtype)
         y = np.zeros(ioh.nelv * ioh.lxyz, dtype=ioh.pynek_dtype)
         z = np.zeros(ioh.nelv * ioh.lxyz, dtype=ioh.pynek_dtype)
@@ -289,7 +289,7 @@ def preadnek(filename, comm, data_dtype=np.double):
             mpi_offset + ioh.offset_el * ioh.gdim * ioh.lxyz * ioh.fld_data_size
         )
 
-        log.write("info", "Reading velocity data")
+        log.write("debug", "Reading velocity data")
         if "x" not in locals():
             x = np.zeros(ioh.nelv * ioh.lxyz, dtype=ioh.pynek_dtype)
         if "y" not in locals():
@@ -311,7 +311,7 @@ def preadnek(filename, comm, data_dtype=np.double):
     if ioh.pres_variables > 0:
         byte_offset = mpi_offset + ioh.offset_el * 1 * ioh.lxyz * ioh.fld_data_size
 
-        log.write("info", "Reading pressure data")
+        log.write("debug", "Reading pressure data")
         if "x" not in locals():
             x = np.zeros(ioh.nelv * ioh.lxyz, dtype=ioh.pynek_dtype)
 
@@ -324,7 +324,7 @@ def preadnek(filename, comm, data_dtype=np.double):
     # Read temperature
     if ioh.temp_variables > 0:
         byte_offset = mpi_offset + ioh.offset_el * 1 * ioh.lxyz * ioh.fld_data_size
-        log.write("info", "Reading temperature data")
+        log.write("debug", "Reading temperature data")
         if "x" not in locals():
             x = np.zeros(ioh.nelv * ioh.lxyz, dtype=ioh.pynek_dtype)
         t = x
@@ -337,7 +337,7 @@ def preadnek(filename, comm, data_dtype=np.double):
     ii = 0
     for var in range(0, ioh.scalar_variables):
         if ii == 0:  # Only print once
-            log.write("info", "Reading scalar data")
+            log.write("debug", "Reading scalar data")
             ii += 1
 
         byte_offset = mpi_offset + ioh.offset_el * 1 * ioh.lxyz * ioh.fld_data_size
@@ -351,7 +351,7 @@ def preadnek(filename, comm, data_dtype=np.double):
 
     fh.Close()
 
-    log.write("info", "File read")
+    log.write("debug", "File read")
     log.toc()
 
     del log
@@ -418,7 +418,7 @@ def pynekread(filename, comm, data_dtype=np.double, msh=None, fld=None):
     ioh.element_mapping_load_balanced_linear(comm)
 
     # allocate temporal arrays
-    log.write("info", "Allocating temporal arrays")
+    log.write("debug", "Allocating temporal arrays")
     ioh.allocate_temporal_arrays()
 
     ## Create the pymech hexadata object
@@ -453,7 +453,7 @@ def pynekread(filename, comm, data_dtype=np.double, msh=None, fld=None):
             byte_offset = (
                 mpi_offset + ioh.offset_el * ioh.gdim * ioh.lxyz * ioh.fld_data_size
             )
-            log.write("info", "Reading coordinate data")
+            log.write("debug", "Reading coordinate data")
             x = np.zeros(ioh.nelv * ioh.lxyz, dtype=ioh.pynek_dtype)
             y = np.zeros(ioh.nelv * ioh.lxyz, dtype=ioh.pynek_dtype)
             z = np.zeros(ioh.nelv * ioh.lxyz, dtype=ioh.pynek_dtype)
@@ -472,7 +472,7 @@ def pynekread(filename, comm, data_dtype=np.double, msh=None, fld=None):
                 mpi_offset + ioh.offset_el * ioh.gdim * ioh.lxyz * ioh.fld_data_size
             )
 
-            log.write("info", "Reading velocity data")
+            log.write("debug", "Reading velocity data")
             u = np.zeros(ioh.nelv * ioh.lxyz, dtype=ioh.pynek_dtype)
             v = np.zeros(ioh.nelv * ioh.lxyz, dtype=ioh.pynek_dtype)
             w = np.zeros(ioh.nelv * ioh.lxyz, dtype=ioh.pynek_dtype)
@@ -492,7 +492,7 @@ def pynekread(filename, comm, data_dtype=np.double, msh=None, fld=None):
         if not isinstance(fld, type(None)):
             byte_offset = mpi_offset + ioh.offset_el * 1 * ioh.lxyz * ioh.fld_data_size
 
-            log.write("info", "Reading pressure data")
+            log.write("debug", "Reading pressure data")
             p = np.zeros(ioh.nelv * ioh.lxyz, dtype=ioh.pynek_dtype)
 
             fld_file_read_field(fh, byte_offset, ioh, x=p)
@@ -507,7 +507,7 @@ def pynekread(filename, comm, data_dtype=np.double, msh=None, fld=None):
         if not isinstance(fld, type(None)):
             byte_offset = mpi_offset + ioh.offset_el * 1 * ioh.lxyz * ioh.fld_data_size
 
-            log.write("info", "Reading temperature data")
+            log.write("debug", "Reading temperature data")
             t = np.zeros(ioh.nelv * ioh.lxyz, dtype=ioh.pynek_dtype)
 
             fld_file_read_field(fh, byte_offset, ioh, x=t)
@@ -521,7 +521,7 @@ def pynekread(filename, comm, data_dtype=np.double, msh=None, fld=None):
     ii = 0
     for var in range(0, ioh.scalar_variables):
         if not isinstance(fld, type(None)):
-            log.write("info", f"Reading scalar {var} data")
+            log.write("debug", f"Reading scalar {var} data")
 
             byte_offset = mpi_offset + ioh.offset_el * 1 * ioh.lxyz * ioh.fld_data_size
 
@@ -539,7 +539,7 @@ def pynekread(filename, comm, data_dtype=np.double, msh=None, fld=None):
 
     fh.Close()
 
-    log.write("info", "File read")
+    log.write("debug", "File read")
     log.toc()
 
     del log
@@ -574,7 +574,6 @@ def pynekread_field(filename, comm, data_dtype=np.double, key=""):
 
     log = Logger(comm=comm, module_name="pynekread_field")
     log.tic()
-    log.write("info", "Reading file: {}".format(filename))
 
     key_prefix = key.split("_")[0]
     try: 
@@ -582,7 +581,7 @@ def pynekread_field(filename, comm, data_dtype=np.double, key=""):
     except IndexError:
         key_suffix = 0
 
-    log.write("info", f"Reading field: {key}")
+    log.write("info", f"Reading field: {key} from file: {filename}")
 
     mpi_int_size = MPI.INT.Get_size()
     mpi_real_size = MPI.REAL.Get_size()
@@ -600,7 +599,7 @@ def pynekread_field(filename, comm, data_dtype=np.double, key=""):
     ioh.element_mapping_load_balanced_linear(comm)
 
     # allocate temporal arrays
-    log.write("info", "Allocating temporal arrays")
+    log.write("debug", "Allocating temporal arrays")
     ioh.allocate_temporal_arrays()
 
     ## Create the pymech hexadata object
@@ -635,7 +634,7 @@ def pynekread_field(filename, comm, data_dtype=np.double, key=""):
             byte_offset = (
                 mpi_offset + ioh.offset_el * ioh.gdim * ioh.lxyz * ioh.fld_data_size
             )
-            log.write("info", "Reading coordinate data")
+            log.write("debug", "Reading coordinate data")
             x = np.zeros(ioh.nelv * ioh.lxyz, dtype=ioh.pynek_dtype)
             y = np.zeros(ioh.nelv * ioh.lxyz, dtype=ioh.pynek_dtype)
             z = np.zeros(ioh.nelv * ioh.lxyz, dtype=ioh.pynek_dtype)
@@ -652,7 +651,7 @@ def pynekread_field(filename, comm, data_dtype=np.double, key=""):
                 mpi_offset + ioh.offset_el * ioh.gdim * ioh.lxyz * ioh.fld_data_size
             )
 
-            log.write("info", "Reading velocity data")
+            log.write("debug", "Reading velocity data")
             u = np.zeros(ioh.nelv * ioh.lxyz, dtype=ioh.pynek_dtype)
             v = np.zeros(ioh.nelv * ioh.lxyz, dtype=ioh.pynek_dtype)
             w = np.zeros(ioh.nelv * ioh.lxyz, dtype=ioh.pynek_dtype)
@@ -667,7 +666,7 @@ def pynekread_field(filename, comm, data_dtype=np.double, key=""):
         if key_prefix == "pres":
             byte_offset = mpi_offset + ioh.offset_el * 1 * ioh.lxyz * ioh.fld_data_size
 
-            log.write("info", "Reading pressure data")
+            log.write("debug", "Reading pressure data")
             p = np.zeros(ioh.nelv * ioh.lxyz, dtype=ioh.pynek_dtype)
 
             fld_file_read_field(fh, byte_offset, ioh, x=p)
@@ -681,7 +680,7 @@ def pynekread_field(filename, comm, data_dtype=np.double, key=""):
         if key_prefix == "temp":
             byte_offset = mpi_offset + ioh.offset_el * 1 * ioh.lxyz * ioh.fld_data_size
 
-            log.write("info", "Reading temperature data")
+            log.write("debug", "Reading temperature data")
             t = np.zeros(ioh.nelv * ioh.lxyz, dtype=ioh.pynek_dtype)
 
             fld_file_read_field(fh, byte_offset, ioh, x=t)
@@ -694,7 +693,7 @@ def pynekread_field(filename, comm, data_dtype=np.double, key=""):
     if ioh.scalar_variables > 0:
         if key_prefix == "scal":
             var = int(key_suffix)
-            log.write("info", f"Reading scalar {var} data")
+            log.write("debug", f"Reading scalar {var} data")
             
             if var >= ioh.scalar_variables:
                 raise ValueError(f"Scalar {var} does not exist in the file.")
@@ -712,7 +711,7 @@ def pynekread_field(filename, comm, data_dtype=np.double, key=""):
 
     fh.Close()
 
-    log.write("info", "File read")
+    log.write("debug", "File read")
     log.toc()
 
     del log
@@ -1122,7 +1121,7 @@ def pynekwrite(filename, comm, msh=None, fld=None, wdsz=4, istep=0, write_mesh=T
     # Write the coordinates
     if (ioh.pos_variables and write_mesh) > 0:
 
-        log.write("info", "Writing coordinate data")
+        log.write("debug", "Writing coordinate data")
 
         x = msh.x
         y = msh.y
@@ -1136,7 +1135,7 @@ def pynekwrite(filename, comm, msh=None, fld=None, wdsz=4, istep=0, write_mesh=T
     # Write the velocity
     if ioh.vel_variables > 0:
     
-        log.write("info", "Writing velocity data")
+        log.write("debug", "Writing velocity data")
         
         u = fld.fields["vel"][0]
         v = fld.fields["vel"][1]
@@ -1154,7 +1153,7 @@ def pynekwrite(filename, comm, msh=None, fld=None, wdsz=4, istep=0, write_mesh=T
     # Write pressure
     if ioh.pres_variables > 0:
 
-        log.write("info", "Writing pressure data")
+        log.write("debug", "Writing pressure data")
 
         p = fld.fields["pres"][0]
         byte_offset = mpi_offset + ioh.offset_el * 1 * ioh.lxyz * ioh.fld_data_size
@@ -1164,7 +1163,7 @@ def pynekwrite(filename, comm, msh=None, fld=None, wdsz=4, istep=0, write_mesh=T
     # Write Temperature
     if ioh.temp_variables > 0:
 
-        log.write("info", "Writing temperature data")
+        log.write("debug", "Writing temperature data")
 
         t = fld.fields["temp"][0]
         byte_offset = mpi_offset + ioh.offset_el * 1 * ioh.lxyz * ioh.fld_data_size
@@ -1175,7 +1174,7 @@ def pynekwrite(filename, comm, msh=None, fld=None, wdsz=4, istep=0, write_mesh=T
     ii = 0
     for var in range(0, ioh.scalar_variables):
         if ii == 0:  # Only print once
-            log.write("info", "Writing scalar data")
+            log.write("debug", "Writing scalar data")
             ii += 1
         s = fld.fields["scal"][var]
         byte_offset = mpi_offset + ioh.offset_el * 1 * ioh.lxyz * ioh.fld_data_size
@@ -1193,7 +1192,7 @@ def pynekwrite(filename, comm, msh=None, fld=None, wdsz=4, istep=0, write_mesh=T
     # ================== Metadata
     if ioh.gdim > 2:
             
-        log.write("info", "Writing metadata")
+        log.write("debug", "Writing metadata")
 
         # Write the coordinates
         if (ioh.pos_variables and write_mesh) > 0:
@@ -1251,7 +1250,7 @@ def pynekwrite(filename, comm, msh=None, fld=None, wdsz=4, istep=0, write_mesh=T
 
     fh.Close()
     
-    log.write("info", "File written")
+    log.write("debug", "File written")
     log.toc()
 
     del log

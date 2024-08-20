@@ -50,6 +50,8 @@ def tke_budgets_cartesian(comm, msh_fname= "", mean_fname = "", stats_fname=""):
     coef = Coef(msh, comm)
 
     # Get reynolds stress
+    logger.write("info", "Obtaining Reynolds stress tensor")
+    logger.tic()
     fld.add_field(comm, field_name="U", file_type="fld", file_name=mean_fname, file_key="vel_0", dtype=np.single)
     fld.add_field(comm, field_name="V", file_type="fld", file_name=mean_fname, file_key="vel_1", dtype=np.single)
     fld.add_field(comm, field_name="W", file_type="fld", file_name=mean_fname, file_key="vel_2", dtype=np.single)
@@ -62,6 +64,7 @@ def tke_budgets_cartesian(comm, msh_fname= "", mean_fname = "", stats_fname=""):
 
     logger.write("info", "Calculating components of Reynolds stress tensor")
     logger.write("info", "Note that density is not multiplied in the calculation")
+    
     u_u_ = fld.registry["uu"] - fld.registry["U"] * fld.registry["U"]
     v_v_ = fld.registry["vv"] - fld.registry["V"] * fld.registry["V"]
     w_w_ = fld.registry["ww"] - fld.registry["W"] * fld.registry["W"]
@@ -79,5 +82,7 @@ def tke_budgets_cartesian(comm, msh_fname= "", mean_fname = "", stats_fname=""):
     fld.add_field(comm, field_name="u_v_", field = u_v_, dtype=np.single)
     fld.add_field(comm, field_name="u_w_", field = u_w_, dtype=np.single)
     fld.add_field(comm, field_name="v_w_", field = v_w_, dtype=np.single)
-    print(fld.scal_fields_names)
     pynekwrite(fname, comm, msh = msh, fld = fld, wdsz=4, write_mesh=True)
+    
+    logger.write("info", "Obtaining Reynolds stress tensor: done")
+    logger.toc()

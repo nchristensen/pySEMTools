@@ -80,10 +80,10 @@ class Logger:
 
         self.log = logger
 
-        if DEBUG:
-            self.write("warning", "Debug mode activated - This will produce a lot of output.")
-            self.write("warning", "Options where all ranks write are followed by a comm barrier.")
-            self.write("warning", "bad for performance. Do not use debug mode in production.")
+        #if DEBUG:
+        #    self.write("warning", "Debug mode activated - This will produce a lot of output.")
+        #    self.write("warning", "Options where all ranks write are followed by a comm barrier.")
+        #    self.write("warning", "bad for performance. Do not use debug mode in production.")
 
     def tic(self):
         """
@@ -111,8 +111,10 @@ class Logger:
         rank = comm.Get_rank()
 
         if level == "debug_all":
-            self.log.debug(message)
-            comm.Barrier()
+            #self.log.debug(message)
+            #comm.Barrier()
+            if rank == 0:
+                self.log.debug("This debug message type is not implemented yet.")
 
         if level == "debug":
             if rank == 0:
