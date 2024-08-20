@@ -255,7 +255,7 @@ def preadnek(filename, comm, data_dtype=np.double):
     fh = MPI.File.Open(comm, filename, MPI.MODE_RDONLY)
 
     # Read the test pattern
-    mpi_offset = 132 * mpi_character_size
+    mpi_offset = np.int64(132 * mpi_character_size)
     test_pattern = np.zeros(1, dtype=np.single)
     fh.Read_at_all(mpi_offset, test_pattern, status=None)
 
@@ -434,7 +434,7 @@ def pynekread(filename, comm, data_dtype=np.double, msh=None, fld=None):
     fh = MPI.File.Open(comm, filename, MPI.MODE_RDONLY)
 
     # Read the test pattern
-    mpi_offset = 132 * mpi_character_size
+    mpi_offset = np.int64(132 * mpi_character_size)
     test_pattern = np.zeros(1, dtype=np.single)
     fh.Read_at_all(mpi_offset, test_pattern, status=None)
 
@@ -615,7 +615,7 @@ def pynekread_field(filename, comm, data_dtype=np.double, key=""):
     fh = MPI.File.Open(comm, filename, MPI.MODE_RDONLY)
 
     # Read the test pattern
-    mpi_offset = 132 * mpi_character_size
+    mpi_offset = np.int64(132 * mpi_character_size)
     test_pattern = np.zeros(1, dtype=np.single)
     fh.Read_at_all(mpi_offset, test_pattern, status=None)
 
@@ -805,7 +805,7 @@ def pwritenek(filename, data, comm):
     fh = MPI.File.Open(comm, filename, amode)
 
     # Write the header
-    mpi_offset = 0
+    mpi_offset = np.int64(0)
     fh.Write_all(h.as_bytestring())
     mpi_offset += 132 * mpi_character_size
 
@@ -1097,7 +1097,7 @@ def pynekwrite(filename, comm, msh=None, fld=None, wdsz=4, istep=0, write_mesh=T
     fh = MPI.File.Open(comm, filename, amode)
 
     # Write the header
-    mpi_offset = 0
+    mpi_offset = np.int64(0)
     fh.Write_all(h.as_bytestring())
     mpi_offset += 132 * mpi_character_size
 
