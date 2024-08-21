@@ -104,8 +104,6 @@ def space_average_field_files(
     logger.write("info", f"Initializing coefficients")
     coef = Coef(msh, comm, get_area=False)
 
-    #homogeneus_dir = "z"
-
     if homogeneous_dir == "z":
         direction = 1
     elif homogeneous_dir == "y":
@@ -301,7 +299,7 @@ def space_average_field_files(
         tmp1 = np.zeros((u.shape[0], 1, u.shape[2], u.shape[3]), dtype=dtype)
 
 
-def average_field_in_dir_local(avrg_field = None, field = None, coef = None, elem_to_unique_map = None, dir = 1):
+def average_field_in_dir_local(avrg_field = None, field = None, coef = None, elem_to_unique_map = None, direction = 1):
     """
     Average the field in the specified direction.
 
@@ -341,9 +339,9 @@ def average_field_in_dir_local(avrg_field = None, field = None, coef = None, ele
     for i in range(0, avrg_field.shape[0]):
 
         # Averaging weights
-        if dir == 1:
+        if direction == 1:
             # Reshape it properly to broadcast along the desired dimensions
-            b = np.sum(np.float64(coef.B[np.where(elem_to_unique_map == i)[0], :, :, :]), axis = (0, dir)).reshape((1, 1, coef.B.shape[2], coef.B.shape[3]))
+            b = np.sum(np.float64(coef.B[np.where(elem_to_unique_map == i)[0], :, :, :]), axis = (0, direction)).reshape((1, 1, coef.B.shape[2], coef.B.shape[3]))
             
         else:
             print("Not implemented")
@@ -352,7 +350,7 @@ def average_field_in_dir_local(avrg_field = None, field = None, coef = None, ele
         weights = coef.B[elem_to_unique_map == i, :, :, :] / b
 
         # Do the weighted sum over the specified direction to get the average
-        avrg_field[i, 0, :, :] = np.sum(np.float64(field[elem_to_unique_map == i, :, :, :])*(weights), axis = (0, dir)) 
+        avrg_field[i, 0, :, :] = np.sum(np.float64(field[elem_to_unique_map == i, :, :, :])*(weights), axis = (0, direction)) 
         rank_weights[i, 0, :, :] = b
 
     return rank_weights
