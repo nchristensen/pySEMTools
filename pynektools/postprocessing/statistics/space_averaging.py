@@ -4,7 +4,7 @@ import os
 
 from ...monitoring.logger import Logger
 from ...datatypes.msh import Mesh
-from ...datatypes.field import Field
+from ...datatypes.field import Field, FieldRegistry
 from ...datatypes.coef import Coef
 from ...io.ppymech.neksuite import preadnek, pwritenek, pynekread, pynekwrite
 from ...comm.router import Router
@@ -54,6 +54,9 @@ def space_average_field_files(
         Write the mesh in the output files. Default is True.
         If False, the mesh will anyway be written in the first file.
         of the outputs. I.e., batch 0.
+    homogeneous_dir : str
+        Direction to average the field. Default is "z".
+        Options are "x", "y", or "z".
 
     Notes
     -----
@@ -171,7 +174,7 @@ def space_average_field_files(
 
     # Average the fileds to test
     rank_weights = average_field_in_dir_local(avrg_field = x_2d, field = xx, coef = coef, elem_to_unique_map = elem_to_unique_map, direction = direction)
-    global_average = average_slice_global(avrg_field = x_2d, el_owner = el_owner, router = rt, rank_weights = rank_weights)
+    global_average, elements_i_own = average_slice_global(avrg_field = x_2d, el_owner = el_owner, router = rt, rank_weights = rank_weights)
     
     _ = average_field_in_dir_local(avrg_field = y_2d, field = yy, coef = coef, elem_to_unique_map = elem_to_unique_map, direction = direction)
     _ = average_slice_global(avrg_field = y_2d, el_owner = el_owner, router = rt, rank_weights = rank_weights)
@@ -180,7 +183,7 @@ def space_average_field_files(
 
     if global_average:
         passed = True
-        for e in range(0, msh.nelv):
+        for e in elements_i_own:
             
             if direction == 1:
                 t1 = np.allclose(x_2d[elem_to_unique_map[e], :, :, :], xx[e, 0, :, :])
@@ -201,7 +204,23 @@ def space_average_field_files(
             logger.write("info", f"Averaging test passed: {passed}")
         else:
             logger.write("error", f"Averaging test passed: {passed}")
-        
+
+    # Create 2d mesh object
+    logger.write("info", f"Creating 2D mesh object on ranks that have them")
+    comm_2d = comm.Split(color=1 if global_average else 0, key=comm.Get_rank())
+    if global_average:
+        x_2d_msh = x_2d[elements_i_own, :, :, :]
+        y_2d_msh = y_2d[elements_i_own, :, :, :]
+        z_2d_msh = np.zeros_like(x_2d_msh)
+        msh_2d = Mesh(comm_2d, create_connectivity=False, x = x_2d_msh, y = y_2d_msh, z = z_2d_msh)
+
+        fld_2d = FieldRegistry(comm_2d)
+        fld_2d.add_field(comm_2d, field_name = "u", field = x_2d_msh, dtype=dtype)
+        fld_2d.add_field(comm_2d, field_name = "v", field = y_2d_msh, dtype=dtype)
+        fld_2d.add_field(comm_2d, field_name = "rank", field = np.ones_like(x_2d_msh)*comm.rank, dtype=dtype)
+        pynekwrite("2dcoordinates0.f00000", comm_2d, msh=msh_2d, fld=fld_2d, wdsz=output_word_size, write_mesh=write_mesh)
+        fld_2d.clear()
+
     import sys
     sys.exit(0)
 
@@ -343,6 +362,9 @@ def average_slice_global(avrg_field = None, el_owner = None, router = None, rank
     -------
     globally_averaged : bool
         If the field was globally averaged or not.
+
+    elements_i_own : list
+        List of sliced elements that the rank owns.
     """
 
     # Identify the destinations
@@ -374,25 +396,37 @@ def average_slice_global(avrg_field = None, el_owner = None, router = None, rank
         unique_rank_weights[i] = unique_rank_weights[i].reshape((-1, avrg_field.shape[1], avrg_field.shape[2], avrg_field.shape[3]))
 
     globally_averaged = False
+    elements_i_own = []
 
     if len(sources) > 0:
 
         for e in range(0, avrg_field.shape[0]):
             
-            elem_data_l = [np.float64(unique_field_data[i][np.where(locations == e)]) for ind, locations in enumerate(unique_locations)]
+            # Consider using list comprehension here
+            elem_data = []
+            elem_weights = []
+            for ind, location in enumerate(unique_locations):
+                if np.any(location == e):
+                    elem_data.append(np.float64(unique_field_data[ind][np.where(location == e)]))
+                    elem_weights.append(unique_rank_weights[ind][np.where(location == e)])
             
-            elem_data = np.array([np.float64(unique_field_data[i][np.where(locations == e)]) for ind, locations in enumerate(unique_locations)])
-            elem_weights = np.array([unique_rank_weights[i][np.where(locations == e)] for ind, locations in enumerate(unique_locations)])
+            elem_data = np.array(elem_data)
+            elem_weights = np.array(elem_weights)
 
+            # If I do not own this element, then just continue
+            if elem_data.size == 0:
+                continue
 
             num = np.sum(elem_data*elem_weights, axis=(0, 1)) 
             den = np.sum(elem_weights, axis=(0, 1))
-            
+             
             avrg_field[e, :, :, :] = num/den
+
+            elements_i_own.append(e)
 
         globally_averaged = True
 
-    return globally_averaged
+    return globally_averaged, elements_i_own
 
 
 def get_el_owner(logger = None, rank_unique_centroids = None, rt = None, dtype = np.single, rel_tol = 0.01):
