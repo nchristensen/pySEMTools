@@ -15,7 +15,7 @@ def space_average_field_files(
     output_folder="./",
     mesh_index="",
     dtype=np.single,
-    rel_tol=0.05,
+    rel_tol=0.01,
     output_word_size=4,
     write_mesh = True,
     homogeneous_dir = "z",
@@ -117,146 +117,108 @@ def space_average_field_files(
 
     logger.write("info", f"Averaging in the direction: {homogeneous_dir}")
     if homogeneous_dir == "z":
- 
-        logger.write("info", f"Identifying unique cross-sections in each rank separately")
-        # Find the centroid of all elements:
-        # First assumption here. We assume that all these values will not change in the z direction
-        # So we pick the first one
-        x_bar =  np.min(msh.x, axis=(2, 3))[:,0]  + (np.max(msh.x, axis=(2, 3))[:, 0] - np.min(msh.x, axis=(2, 3))[:, 0])/2
-        y_bar =  np.min(msh.y, axis=(2, 3))[:,0]  + (np.max(msh.y, axis=(2, 3))[:, 0] - np.min(msh.y, axis=(2, 3))[:, 0])/2
-        centroids = np.zeros((msh.nelv, 2), dtype=dtype)
-        centroids[:, 0] = x_bar
-        centroids[:, 1] = y_bar
- 
-        # Find the unique centroids in the rank
-        rank_unique_centroids = np.unique(centroids, axis=0)
-        
-
-
-        logger.write("info", f"Identifying which rank will take charge of the 2D elements")
-        logger.write("warning", f"This might be slow...")
-        logger.write("warning", f"It might be slower with many ranks...")
-        logger.write("warning", f"Consider using only as many as necesary for data to fit in memory")
-        logger.tic()
-        # Go over all unique centroids in the domain per rank and find which ...
-        # ... rank should take care of averaging the global data and writing out.
-
-        ## Doing with this loop for memory efficiency, rather than creating a big a array
-        ## Consider doing this in bigger batches, rather than point per point.
-        ### Buffer to store each centroid
-        centroid = np.zeros((1, 2), dtype=dtype)
-        ### Buffer to store the rank and element owner of the centroid
-        el_owner = np.zeros((rank_unique_centroids.shape[0], 2), dtype=np.int64)
-        ### In this case, we send our centroid to all ranks
-        destination = [rank for rank in range(0, comm.Get_size())]
-        ### Identify how many unique elements the rank that has the most have.
-        tmp, _ = rt.all_gather(rank_unique_centroids.shape[0], dtype=np.int32)
-        max_unique = np.max(tmp)
-
-        ### Repeat the process for all the unique centroid in the rank
-        for i in range(0, max_unique):
-            ### Use this if statement since some ranks might have more unique centroid than me
-            if i < rank_unique_centroids.shape[0]:
-                centroid[0, 0] = rank_unique_centroids[i, 0]
-                centroid[0, 1] = rank_unique_centroids[i, 1]
-            else:
-                centroid[0,0] = -1e7
-                centroid[0,1] = -1e7
-
-            ### send my centroid to all ranks and recieve the centroids from all others
-            sources, recvbf = rt.all_to_all(destination = destination, data = centroid, dtype=np.single)
-
-            ### Prepare a response array list indicating if I have the centroid that the rank sent. 
-            response = []            
-            for j in range(0, len(recvbf)):
-
-                ### The buffers are always flattened. We know it is a 2D array
-                recvbf[j] = recvbf[j].reshape((-1, 2))
-
-                ### Flag == 0 if I do not have the centroid
-                ### Flag == 1 if I have the centroid with a relative tolerance
-                flag = np.zeros((2), dtype=np.int32)
-                rel_tol = 0.01
-                if np.any(np.all(np.isclose(rank_unique_centroids, recvbf[j], rtol=rel_tol), axis=1)):                        
-                    flag[0] = 1
-                    ### El id of the unique element that holds it
-                    flag[1] = np.where(np.all(np.isclose(rank_unique_centroids, recvbf[j], rtol=rel_tol), axis=1))[0][0]
-
-
-                ### Append the flag to the response list
-                response.append(flag)                    
-
-            ### Now that the rank has checked if it has the centorid, we answer back to the original owners.
-            _ , recvbf = rt.all_to_all(destination = sources, data = response, dtype=np.int32)
- 
-            ### The rank owner of the element will be the lowest index rank that owns it.
-            ### It will take care of averaging the data from all ranks and writing out.
-            for j in range(0, comm.Get_size()):
-                if recvbf[j][0] == 1:
-                    el_owner[i, 0] = j
-                    el_owner[i, 1] = recvbf[j][1]
-                    break            
-        logger.write("info", f"done!")
-        logger.toc()
-        
-
-
-        # Map centroids to unique centroids in this rank
-        logger.write("info", f"Mapping the indices of the original elements to those of the unique elements in the specified direction")
-        elem_to_unique_map = np.zeros((msh.nelv), dtype=np.int64)
-        for i in range(0, msh.nelv):
-            elem_to_unique_map[i] = np.where(np.all(np.isclose(rank_unique_centroids, centroids[i, :], rtol=rel_tol), axis=1))[0][0]
-
-
-        logger.write("info", f"Getting 2D slices")
-        # Create a 2D sem arrays to hold averages
-        x_2d = np.zeros((rank_unique_centroids.shape[0], 1, msh.ly, msh.lx), dtype=dtype)
-        y_2d = np.zeros((rank_unique_centroids.shape[0], 1, msh.ly, msh.lx), dtype=dtype)
-
-        # Average the fileds to test
-        rank_weights = average_field_in_dir_local(avrg_field = x_2d, field = msh.x, coef = coef, elem_to_unique_map = elem_to_unique_map, direction = direction)
-        global_average = average_slice_global(avrg_field = x_2d, el_owner = el_owner, router = rt, rank_weights = rank_weights)
-        
-        _ = average_field_in_dir_local(avrg_field = y_2d, field = msh.y, coef = coef, elem_to_unique_map = elem_to_unique_map, direction = direction)
-        _ = average_slice_global(avrg_field = y_2d, el_owner = el_owner, router = rt, rank_weights = rank_weights)
-
-        logger.write("info", f"Verifying averaging")
-        if global_average:
-            passed = True
-            for e in range(0, msh.nelv):
-                t1 = np.allclose(x_2d[elem_to_unique_map[e], :, :, :], msh.x[e, 0, :, :])
-                t2 = np.allclose(y_2d[elem_to_unique_map[e], :, :, :], msh.y[e, 0, :, :])
-                passed = np.all([t1, t2])
-
-                if not passed:
-                    break
-            
-            if passed:
-                logger.write("info", f"Averaging test passed: {passed}")
-            else:
-                logger.write("error", f"Averaging test passed: {passed}")
-        
+        xx = msh.x
+        yy = msh.y
+        direction = 1
+        ax = (2,3)
+    elif homogeneous_dir == "y":
+        xx = msh.x
+        yy = msh.z
+        direction = 2
+        ax = (1,3)
+    elif homogeneous_dir == "x":
+        xx = msh.y
+        yy = msh.z
+        direction = 3
+        ax = (1,2)
     else:
         logger.write("error", "Direction not implemented")
         return
+ 
+    logger.write("info", f"Identifying unique cross-sections in each rank separately")
+    # Find the centroid of all elements:
+    # First assumption here. We assume that all these values will not change in the z direction
+    # So we pick the first one
+    x_bar =  np.min(xx, axis=ax)[:,0]  + (np.max(xx, axis=ax)[:, 0] - np.min(xx, axis=ax)[:, 0])/2
+    y_bar =  np.min(yy, axis=ax)[:,0]  + (np.max(yy, axis=ax)[:, 0] - np.min(yy, axis=ax)[:, 0])/2
+    centroids = np.zeros((msh.nelv, 2), dtype=dtype)
+    centroids[:, 0] = x_bar
+    centroids[:, 1] = y_bar
 
-        import sys
-        sys.exit(0)
+    # Find the unique centroids in the rank
+    rank_unique_centroids = np.unique(centroids, axis=0)
+    
+    # Get el owners
+    el_owner = get_el_owner(logger = logger, rank_unique_centroids = rank_unique_centroids, rt = rt, dtype = dtype, rel_tol=rel_tol)
 
-        if comm.Get_rank() == 0:
+    # Map centroids to unique centroids in this rank
+    logger.write("info", f"Mapping the indices of the original elements to those of the unique elements in the specified direction")
+    elem_to_unique_map = np.zeros((msh.nelv), dtype=np.int64)
+    for i in range(0, msh.nelv):
+        elem_to_unique_map[i] = np.where(np.all(np.isclose(rank_unique_centroids, centroids[i, :], rtol=rel_tol), axis=1))[0][0]
+
+
+    logger.write("info", f"Getting 2D slices")
+    # Create a 2D sem arrays to hold averages
+    if homogeneous_dir == "z":
+        slice_shape = (rank_unique_centroids.shape[0], 1, msh.ly, msh.lx)
+    elif homogeneous_dir == "y":
+        slice_shape = (rank_unique_centroids.shape[0], 1, msh.lz, msh.lx)
+    elif homogeneous_dir == "x":
+        slice_shape = (rank_unique_centroids.shape[0], 1, msh.lz, msh.ly)
+    x_2d = np.zeros(slice_shape, dtype=dtype)
+    y_2d = np.zeros(slice_shape, dtype=dtype)
+
+    # Average the fileds to test
+    rank_weights = average_field_in_dir_local(avrg_field = x_2d, field = xx, coef = coef, elem_to_unique_map = elem_to_unique_map, direction = direction)
+    global_average = average_slice_global(avrg_field = x_2d, el_owner = el_owner, router = rt, rank_weights = rank_weights)
+    
+    _ = average_field_in_dir_local(avrg_field = y_2d, field = yy, coef = coef, elem_to_unique_map = elem_to_unique_map, direction = direction)
+    _ = average_slice_global(avrg_field = y_2d, el_owner = el_owner, router = rt, rank_weights = rank_weights)
+
+    logger.write("info", f"Verifying averaging")
+
+    if global_average:
+        passed = True
+        for e in range(0, msh.nelv):
             
+            if direction == 1:
+                t1 = np.allclose(x_2d[elem_to_unique_map[e], :, :, :], xx[e, 0, :, :])
+                t2 = np.allclose(y_2d[elem_to_unique_map[e], :, :, :], yy[e, 0, :, :])
+            elif direction == 2:
+                t1 = np.allclose(x_2d[elem_to_unique_map[e], :, :, :], xx[e, :, 0, :])
+                t2 = np.allclose(y_2d[elem_to_unique_map[e], :, :, :], yy[e, :, 0, :])
+            elif direction == 3:
+                t1 = np.allclose(x_2d[elem_to_unique_map[e], :, :, :], xx[e, :, :, 0])
+                t2 = np.allclose(y_2d[elem_to_unique_map[e], :, :, :], yy[e, :, :, 0])
+                 
+            passed = np.all([t1, t2])
 
-            print(msh.x[10, 0, :, :])
-            print(tmp_avrg[elem_to_unique_map[10], 0, :, :])
+            if not passed:
+                break
+        
+        if passed:
+            logger.write("info", f"Averaging test passed: {passed}")
+        else:
+            logger.write("error", f"Averaging test passed: {passed}")
+        
+    import sys
+    sys.exit(0)
 
-            print(msh.x.dtype)
-            print(tmp_avrg.dtype)
+    if comm.Get_rank() == 0:
         
 
-        
-        rank_x_unique = np.zeros((rank_unique_centroids.shape[0], 1, msh.ly, msh.lx), dtype=dtype)
-        rank_y_unique = np.zeros((rank_unique_centroids.shape[0], 1, msh.ly, msh.lx), dtype=dtype)
-        rank_z_unique = np.zeros_like(rank_x_unique)
+        print(msh.x[10, 0, :, :])
+        print(tmp_avrg[elem_to_unique_map[10], 0, :, :])
+
+        print(msh.x.dtype)
+        print(tmp_avrg.dtype)
+    
+
+    
+    rank_x_unique = np.zeros((rank_unique_centroids.shape[0], 1, msh.ly, msh.lx), dtype=dtype)
+    rank_y_unique = np.zeros((rank_unique_centroids.shape[0], 1, msh.ly, msh.lx), dtype=dtype)
+    rank_z_unique = np.zeros_like(rank_x_unique)
 
 
     if comm.Get_rank() == 0:
@@ -340,18 +302,18 @@ def average_field_in_dir_local(avrg_field = None, field = None, coef = None, ele
 
         # Averaging weights
         if direction == 1:
-            # Reshape it properly to broadcast along the desired dimensions
-            b = np.sum(np.float64(coef.B[np.where(elem_to_unique_map == i)[0], :, :, :]), axis = (0, direction)).reshape((1, 1, coef.B.shape[2], coef.B.shape[3]))
+            b_shape = (1, 1, coef.B.shape[2], coef.B.shape[3])
+        elif direction == 2:
+            b_shape = (1, coef.B.shape[1], 1, coef.B.shape[3])
+        elif direction == 3:
+            b_shape = (1, coef.B.shape[1], coef.B.shape[2], 1)
             
-        else:
-            print("Not implemented")
-            break 
-
+        b = np.sum(np.float64(coef.B[np.where(elem_to_unique_map == i)[0], :, :, :]), axis = (0, direction)).reshape(b_shape)
         weights = coef.B[elem_to_unique_map == i, :, :, :] / b
 
         # Do the weighted sum over the specified direction to get the average
         avrg_field[i, 0, :, :] = np.sum(np.float64(field[elem_to_unique_map == i, :, :, :])*(weights), axis = (0, direction)) 
-        rank_weights[i, 0, :, :] = b
+        rank_weights[i, 0, :, :] = b.reshape((int(np.sqrt(b.size)), int(np.sqrt(b.size)))) 
 
     return rank_weights
 
@@ -417,6 +379,8 @@ def average_slice_global(avrg_field = None, el_owner = None, router = None, rank
 
         for e in range(0, avrg_field.shape[0]):
             
+            elem_data_l = [np.float64(unique_field_data[i][np.where(locations == e)]) for ind, locations in enumerate(unique_locations)]
+            
             elem_data = np.array([np.float64(unique_field_data[i][np.where(locations == e)]) for ind, locations in enumerate(unique_locations)])
             elem_weights = np.array([unique_rank_weights[i][np.where(locations == e)] for ind, locations in enumerate(unique_locations)])
 
@@ -429,3 +393,73 @@ def average_slice_global(avrg_field = None, el_owner = None, router = None, rank
         globally_averaged = True
 
     return globally_averaged
+
+
+def get_el_owner(logger = None, rank_unique_centroids = None, rt = None, dtype = np.single, rel_tol = 0.01):
+
+    logger.write("info", f"Identifying which rank will take charge of the 2D elements")
+    logger.write("warning", f"This might be slow...")
+    logger.write("warning", f"It might be slower with many ranks...")
+    logger.write("warning", f"Consider using only as many as necesary for data to fit in memory")
+    logger.tic()
+    # Go over all unique centroids in the domain per rank and find which ...
+    # ... rank should take care of averaging the global data and writing out.
+
+    ## Doing with this loop for memory efficiency, rather than creating a big a array
+    ## Consider doing this in bigger batches, rather than point per point.
+    ### Buffer to store each centroid
+    centroid = np.zeros((1, 2), dtype=dtype)
+    ### Buffer to store the rank and element owner of the centroid
+    el_owner = np.zeros((rank_unique_centroids.shape[0], 2), dtype=np.int64)
+    ### In this case, we send our centroid to all ranks
+    destination = [rank for rank in range(0, rt.comm.Get_size())]
+    ### Identify how many unique elements the rank that has the most have.
+    tmp, _ = rt.all_gather(rank_unique_centroids.shape[0], dtype=np.int32)
+    max_unique = np.max(tmp)
+
+    ### Repeat the process for all the unique centroid in the rank
+    for i in range(0, max_unique):
+        ### Use this if statement since some ranks might have more unique centroid than me
+        if i < rank_unique_centroids.shape[0]:
+            centroid[0, 0] = rank_unique_centroids[i, 0]
+            centroid[0, 1] = rank_unique_centroids[i, 1]
+        else:
+            centroid[0,0] = -1e7
+            centroid[0,1] = -1e7
+
+        ### send my centroid to all ranks and recieve the centroids from all others
+        sources, recvbf = rt.all_to_all(destination = destination, data = centroid, dtype=np.single)
+
+        ### Prepare a response array list indicating if I have the centroid that the rank sent. 
+        response = []            
+        for j in range(0, len(recvbf)):
+
+            ### The buffers are always flattened. We know it is a 2D array
+            recvbf[j] = recvbf[j].reshape((-1, 2))
+
+            ### Flag == 0 if I do not have the centroid
+            ### Flag == 1 if I have the centroid with a relative tolerance
+            flag = np.zeros((2), dtype=np.int32)
+            if np.any(np.all(np.isclose(rank_unique_centroids, recvbf[j], rtol=rel_tol), axis=1)):                        
+                flag[0] = 1
+                ### El id of the unique element that holds it
+                flag[1] = np.where(np.all(np.isclose(rank_unique_centroids, recvbf[j], rtol=rel_tol), axis=1))[0][0]
+
+
+            ### Append the flag to the response list
+            response.append(flag)                    
+
+        ### Now that the rank has checked if it has the centorid, we answer back to the original owners.
+        _ , recvbf = rt.all_to_all(destination = sources, data = response, dtype=np.int32)
+
+        ### The rank owner of the element will be the lowest index rank that owns it.
+        ### It will take care of averaging the data from all ranks and writing out.
+        for j in range(0, rt.comm.Get_size()):
+            if recvbf[j][0] == 1:
+                el_owner[i, 0] = j
+                el_owner[i, 1] = recvbf[j][1]
+                break            
+    logger.write("info", f"done!")
+    logger.toc()
+
+    return el_owner
