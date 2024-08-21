@@ -206,7 +206,7 @@ class Router:
             A list with the rank ids that the data should be sent to.
         data : list or ndarray
             The data that will be sent. If it is a list,
-            the data will be sent to the corresponding destination.
+            the data will be sent to the corresponding index in the destination list.
             if the data is an ndarray, the same data will be sent to all destinations.
         dtype : dtype
             The data type of the data that is sent.
@@ -435,3 +435,51 @@ class Router:
         self.comm.Scatterv(sendbuf=(sendbuf, sendcounts), recvbuf=recvbuf, root=root)
 
         return recvbuf
+ 
+    def all_gather(self, data=None, dtype=None):
+        """
+        Gathers data from all processes to all processes.
+
+        This is a wrapper to the MPI Allgatherv function.
+
+        Parameters
+        ----------
+        data : ndarray
+            Data that is gathered in all processes.
+        dtype : dtype
+            The data type of the data that is gathered.
+
+        Returns
+        -------
+        recvbuf : ndarray
+            The gathered data in the root process.
+            The data is always recieved flattened. User must reshape it.
+        sendcounts : ndarray
+            The number of data that was sent from each rank.
+
+        Examples
+        --------
+        To gather data from all ranks to the root rank, do the following:
+
+        >>> rt = Router(comm)
+        >>> local_data = np.ones(((rank+1)*10, 3), dtype=np.double)*rank
+        >>> recvbf, sendcounts = rt.all_gather(data = local_data, dtype = np.double)
+        """
+
+        rank = self.comm.Get_rank()
+
+        if isinstance(data, np.ndarray):
+            data = data.flatten()
+            count = data.size
+        else:
+            data = np.ones((1), dtype=dtype)*data
+            count = 1
+
+        # Collect local array sizes using the high-level mpi4py gather
+        sendcounts = np.array(self.comm.allgather(count), dtype=np.ulong)
+
+        recvbuf = np.empty(sum(sendcounts), dtype=dtype)
+
+        self.comm.Allgatherv(sendbuf=data, recvbuf=(recvbuf, sendcounts))
+
+        return recvbuf, sendcounts  
