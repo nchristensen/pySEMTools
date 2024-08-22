@@ -46,7 +46,7 @@ def space_average_field_files(
         default is np.single.
     rel_tol : float
         Relative tolerance to consider when dividing the files into batches.
-        A 5% (5e-2) tolerance is used by default.
+        A 1% (1e-2) tolerance is used by default.
     output_word_size : int
         Word size of the output files. Default is 4 bytes, i.e. single precision.
         The other option is 8 bytes, i.e. double precision.
@@ -165,10 +165,13 @@ def space_average_field_files(
     # Create a 2D sem arrays to hold averages
     if homogeneous_dir == "z":
         slice_shape = (rank_unique_centroids.shape[0], 1, msh.ly, msh.lx)
+        slice_shape_e = (-1, 1, msh.ly, msh.lx)
     elif homogeneous_dir == "y":
         slice_shape = (rank_unique_centroids.shape[0], 1, msh.lz, msh.lx)
+        slice_shape_e = (-1, 1, msh.lz, msh.lx)
     elif homogeneous_dir == "x":
         slice_shape = (rank_unique_centroids.shape[0], 1, msh.lz, msh.ly)
+        slice_shape_e = (-1, 1, msh.lz, msh.ly)
     x_2d = np.zeros(slice_shape, dtype=dtype)
     y_2d = np.zeros(slice_shape, dtype=dtype)
 
@@ -209,8 +212,8 @@ def space_average_field_files(
     logger.write("info", f"Creating 2D mesh object on ranks that have them")
     comm_2d = comm.Split(color=1 if global_average else 0, key=comm.Get_rank())
     if global_average:
-        x_2d_msh = x_2d[elements_i_own, :, :, :]
-        y_2d_msh = y_2d[elements_i_own, :, :, :]
+        x_2d_msh = x_2d[elements_i_own, :, :, :].reshape(slice_shape_e)
+        y_2d_msh = y_2d[elements_i_own, :, :, :].reshape(slice_shape_e)
         z_2d_msh = np.zeros_like(x_2d_msh)
         msh_2d = Mesh(comm_2d, create_connectivity=False, x = x_2d_msh, y = y_2d_msh, z = z_2d_msh)
 
@@ -218,33 +221,21 @@ def space_average_field_files(
         fld_2d.add_field(comm_2d, field_name = "u", field = x_2d_msh, dtype=dtype)
         fld_2d.add_field(comm_2d, field_name = "v", field = y_2d_msh, dtype=dtype)
         fld_2d.add_field(comm_2d, field_name = "rank", field = np.ones_like(x_2d_msh)*comm.rank, dtype=dtype)
-        pynekwrite("2dcoordinates0.f00000", comm_2d, msh=msh_2d, fld=fld_2d, wdsz=output_word_size, write_mesh=write_mesh)
+        pynekwrite(output_folder+"2dcoordinates0.f00000", comm_2d, msh=msh_2d, fld=fld_2d, wdsz=output_word_size, write_mesh=write_mesh)
         fld_2d.clear()
-
-    import sys
-    sys.exit(0)
-
-    if comm.Get_rank() == 0:
-        
-
-        print(msh.x[10, 0, :, :])
-        print(tmp_avrg[elem_to_unique_map[10], 0, :, :])
-
-        print(msh.x.dtype)
-        print(tmp_avrg.dtype)
-    
-
-    
-    rank_x_unique = np.zeros((rank_unique_centroids.shape[0], 1, msh.ly, msh.lx), dtype=dtype)
-    rank_y_unique = np.zeros((rank_unique_centroids.shape[0], 1, msh.ly, msh.lx), dtype=dtype)
-    rank_z_unique = np.zeros_like(rank_x_unique)
-
+ 
 
     if comm.Get_rank() == 0:
         print(
             "================================================================================================="
         )
+        
+    # Create the field that will hold the 3D data that is read
+    fld = FieldRegistry(comm)
 
+    logger.write("info", f"Starting to go through the files in the index: {field_index_name}")
+    logger.tic()
+    write_coords = True
     for i, file in enumerate(file_index.keys()):
 
         try:
@@ -252,32 +243,39 @@ def space_average_field_files(
         except ValueError:
             continue
 
-        logger.tic()
-        fld = Field(comm)
-
-
         out_fname = (
             file_index[file]["fname"].split(".")[0][:-1]
             + "0.f"
             + file_index[file]["fname"].split(".")[1][1:]
         )
-        out_fname = "space_avg_" + out_fname
+        out_fname = f"{homogeneous_dir}_avg_{out_fname}"
 
         #read the file
-        logger.write("info", f"Reading file {file_index[file]['path']}")
-    
+        logger.write("info", f"Reading file {file_index[file]['path']}")    
         pynekread(file_index[file]['path'], comm, data_dtype=dtype, fld=fld)
 
+        logger.write("info", f"Averaging the fields in the specified direction") 
+        for field_key in fld.registry.keys():
+            
+            field_2d = np.zeros_like(x_2d)
 
-        # Now average the fields in one key
+            _  = average_field_in_dir_local(avrg_field = field_2d, field = fld.registry[field_key], coef = coef, elem_to_unique_map = elem_to_unique_map, direction = direction)
+            _  = average_slice_global(avrg_field = field_2d, el_owner = el_owner, router = rt, rank_weights = rank_weights)
 
-        u = fld.fields["vel"][0]
+            if global_average:
+                fld_2d.add_field(comm_2d, field_name = field_key, field = field_2d[elements_i_own, :, :, :].reshape(slice_shape_e), dtype=dtype)
 
-        print(u.shape)
+        logger.write("info", f"Averaging finished, writing to file {output_folder}{out_fname}") 
+        if global_average:  
+            pynekwrite(output_folder+out_fname, comm_2d, msh=msh_2d, fld=fld_2d, wdsz=output_word_size, write_mesh=write_coords)
+            # Clear the file for next iteration
+            fld_2d.clear()
+            # After the first file has been written, allow the option to not write mesh again by using the actual input by the user.
+            write_coords = write_mesh
 
-        # Create elements that are 2D in the specified direction
+    logger.write("info", f"Run finished")
+    logger.toc()
 
-        tmp1 = np.zeros((u.shape[0], 1, u.shape[2], u.shape[3]), dtype=dtype)
 
 
 def average_field_in_dir_local(avrg_field = None, field = None, coef = None, elem_to_unique_map = None, direction = 1):
