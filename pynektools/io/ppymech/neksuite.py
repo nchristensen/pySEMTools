@@ -30,35 +30,35 @@ class IoHelper:
 
     def __init__(self, h, pynek_dtype=np.double):
 
-        self.fld_data_size = h.wdsz
+        self.fld_data_size = np.int64(h.wdsz)
         self.pynek_dtype = pynek_dtype
-        self.lx = h.orders[0]
-        self.ly = h.orders[1]
-        self.lz = h.orders[2]
-        self.lxyz = self.lx * self.ly * self.lz
-        self.glb_nelv = h.nb_elems
+        self.lx = np.int64(h.orders[0])
+        self.ly = np.int64(h.orders[1])
+        self.lz = np.int64(h.orders[2])
+        self.lxyz = np.int64(self.lx * self.ly * self.lz)
+        self.glb_nelv = np.int64(h.nb_elems)
         self.time = h.time
-        self.istep = h.istep
+        self.istep = np.int64(h.istep)
         self.variables = h.variables
         self.realtype = h.realtype
-        self.gdim = h.nb_dims
-        self.pos_variables = h.nb_vars[0]
-        self.vel_variables = h.nb_vars[1]
-        self.pres_variables = h.nb_vars[2]
-        self.temp_variables = h.nb_vars[3]
-        self.scalar_variables = h.nb_vars[4]
+        self.gdim = np.int64(h.nb_dims)
+        self.pos_variables = np.int64(h.nb_vars[0])
+        self.vel_variables = np.int64(h.nb_vars[1])
+        self.pres_variables = np.int64(h.nb_vars[2])
+        self.temp_variables = np.int64(h.nb_vars[3])
+        self.scalar_variables = np.int64(h.nb_vars[4])
 
         # Allocate optional variables
-        self.nelv = None
-        self.n = None
-        self.offset_el = None
+        self.nelv = np.int64(0)
+        self.n = np.int64(0)
+        self.offset_el = np.int64(0)
 
-        self.m = None
-        self.pe_rank = None
-        self.pe_size = None
-        self.l = None
-        self.r = None
-        self.ip = None
+        self.m = np.int64(0)
+        self.pe_rank = np.int64(0)
+        self.pe_size = np.int64(0)
+        self.l = np.int64(0)
+        self.r = np.int64(0)
+        self.ip = np.int64(0)
 
         self.tmp_sp_vector = None
         self.tmp_dp_vector = None
@@ -84,7 +84,7 @@ class IoHelper:
         size = comm.Get_size()
 
         # Divide the global number of elements equally
-        self.nelv = int(self.glb_nelv / size)
+        self.nelv = np.int64(self.glb_nelv / size)
         self.n = self.lxyz * self.nelv
         self.offset_el = rank * self.nelv
 
@@ -102,8 +102,8 @@ class IoHelper:
 
         """
         self.m = self.glb_nelv
-        self.pe_rank = comm.Get_rank()
-        self.pe_size = comm.Get_size()
+        self.pe_rank = np.int64(comm.Get_rank())
+        self.pe_size = np.int64(comm.Get_size())
         self.l = np.floor(np.double(self.m) / np.double(self.pe_size))
         self.r = np.mod(self.m, self.pe_size)
         self.ip = np.floor(
@@ -116,8 +116,8 @@ class IoHelper:
             / np.double(self.pe_size)
         )
 
-        self.nelv = int(self.ip)
-        self.offset_el = int(self.pe_rank * self.l + min(self.pe_rank, self.r))
+        self.nelv = np.int64(self.ip)
+        self.offset_el = np.int64(self.pe_rank * self.l + min(self.pe_rank, self.r))
         self.n = self.lxyz * self.nelv
 
     def element_mapping_from_parallel_hexadata(self, comm):
@@ -167,14 +167,14 @@ class IoHelper:
         self.n = self.lxyz * self.nelv
 
         # do a running sum
-        sendbuf = np.ones((1), np.intc) * self.nelv
-        recvbuf = np.zeros((1), np.intc)
+        sendbuf = np.ones((1), np.int64) * self.nelv
+        recvbuf = np.zeros((1), np.int64)
         comm.Scan(sendbuf, recvbuf)
         self.offset_el = recvbuf[0] - self.nelv
 
         # Later on, update this to an mpi reduction,
-        sendbuf = np.ones((1), np.intc) * self.nelv
-        recvbuf = np.zeros((1), np.intc)
+        sendbuf = np.ones((1), np.int64) * self.nelv
+        recvbuf = np.zeros((1), np.int64)
         comm.Allreduce(sendbuf, recvbuf)
         self.glb_nelv = recvbuf[0]
 
@@ -261,7 +261,7 @@ def preadnek(filename, comm, data_dtype=np.double):
 
     # Read the indices?
     mpi_offset += mpi_real_size
-    idx = np.zeros(ioh.nelv, dtype=np.intc)
+    idx = np.zeros(ioh.nelv, dtype=np.int64)
     byte_offset = mpi_offset + ioh.offset_el * mpi_int_size
     fh.Read_at_all(byte_offset, idx, status=None)
     data.elmap = idx
@@ -440,7 +440,7 @@ def pynekread(filename, comm, data_dtype=np.double, msh=None, fld=None):
 
     # Read the indices?
     mpi_offset += mpi_real_size
-    idx = np.zeros(ioh.nelv, dtype=np.intc)
+    idx = np.zeros(ioh.nelv, dtype=np.int64)
     byte_offset = mpi_offset + ioh.offset_el * mpi_int_size
     fh.Read_at_all(byte_offset, idx, status=None)
     # data.elmap = idx
@@ -621,7 +621,7 @@ def pynekread_field(filename, comm, data_dtype=np.double, key=""):
 
     # Read the indices?
     mpi_offset += mpi_real_size
-    idx = np.zeros(ioh.nelv, dtype=np.intc)
+    idx = np.zeros(ioh.nelv, dtype=np.int64)
     byte_offset = mpi_offset + ioh.offset_el * mpi_int_size
     fh.Read_at_all(byte_offset, idx, status=None)
     # data.elmap = idx
@@ -816,7 +816,7 @@ def pwritenek(filename, data, comm):
     mpi_offset += mpi_real_size
 
     # write element mapping
-    idx = np.zeros(ioh.nelv, dtype=np.intc)
+    idx = np.zeros(ioh.nelv, dtype=np.int64)
     for i in range(0, data.nel):
         idx[i] = data.elmap[i]
     byte_offset = mpi_offset + ioh.offset_el * mpi_int_size
@@ -1108,7 +1108,7 @@ def pynekwrite(filename, comm, msh=None, fld=None, wdsz=4, istep=0, write_mesh=T
     mpi_offset += mpi_real_size
 
     # write element mapping
-    idx = np.zeros(ioh.nelv, dtype=np.intc)
+    idx = np.zeros(ioh.nelv, dtype=np.int64)
     for i in range(0, ioh.nelv):
         idx[i] = i + ioh.offset_el
     byte_offset = mpi_offset + ioh.offset_el * mpi_int_size

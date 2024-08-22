@@ -74,8 +74,8 @@ class Interpolator:
 
         # Find the element offset of each rank so you can store the global element number
         nelv = self.x.shape[0]
-        sendbuf = np.ones((1), np.intc) * nelv
-        recvbuf = np.zeros((1), np.intc)
+        sendbuf = np.ones((1), np.int64) * nelv
+        recvbuf = np.zeros((1), np.int64)
         comm.Scan(sendbuf, recvbuf)
         self.offset_el = recvbuf[0] - nelv
 
@@ -295,7 +295,7 @@ class Interpolator:
         self.log.tic()
 
         # Check how many probes should be in each rank with a load balanced linear distribution
-        probe_partition_sendcount = np.zeros((size), dtype=np.intc)
+        probe_partition_sendcount = np.zeros((size), dtype=np.int64)
         if rank == io_rank:
             for i_rank in range(0, size):
                 m = self.probes.shape[0]
@@ -327,12 +327,12 @@ class Interpolator:
             # Set the necesary arrays for identification of point
             number_of_points = self.probes.shape[0]
             self.probes_rst = np.zeros((number_of_points, 3), dtype=np.double)
-            self.el_owner = np.zeros((number_of_points), dtype=np.intc)
-            self.glb_el_owner = np.zeros((number_of_points), dtype=np.intc)
-            # self.rank_owner = np.zeros((number_of_points), dtype = np.intc)
-            self.rank_owner = np.ones((number_of_points), dtype=np.intc) * -1000
+            self.el_owner = np.zeros((number_of_points), dtype=np.int64)
+            self.glb_el_owner = np.zeros((number_of_points), dtype=np.int64)
+            # self.rank_owner = np.zeros((number_of_points), dtype = np.int64)
+            self.rank_owner = np.ones((number_of_points), dtype=np.int64) * -1000
             self.err_code = np.zeros(
-                (number_of_points), dtype=np.intc
+                (number_of_points), dtype=np.int64
             )  # 0 not found, 1 is found
             self.test_pattern = np.ones(
                 (number_of_points), dtype=np.double
@@ -360,16 +360,16 @@ class Interpolator:
         self.probe_rst_partition = tmp.reshape((int(tmp.size / 3), 3))
         ## Int
         self.el_owner_partition = scatter_from_root(
-            self.el_owner, probe_partition_sendcount, io_rank, np.intc, comm
+            self.el_owner, probe_partition_sendcount, io_rank, np.int64, comm
         )
         self.glb_el_owner_partition = scatter_from_root(
-            self.glb_el_owner, probe_partition_sendcount, io_rank, np.intc, comm
+            self.glb_el_owner, probe_partition_sendcount, io_rank, np.int64, comm
         )
         self.rank_owner_partition = scatter_from_root(
-            self.rank_owner, probe_partition_sendcount, io_rank, np.intc, comm
+            self.rank_owner, probe_partition_sendcount, io_rank, np.int64, comm
         )
         self.err_code_partition = scatter_from_root(
-            self.err_code, probe_partition_sendcount, io_rank, np.intc, comm
+            self.err_code, probe_partition_sendcount, io_rank, np.int64, comm
         )
         ## Double
         self.test_pattern_partition = scatter_from_root(
@@ -397,19 +397,19 @@ class Interpolator:
         if not isinstance(recvbuf, NoneType):
             self.probes_rst[:, :] = recvbuf.reshape((int(recvbuf.size / 3), 3))[:, :]
         sendbuf = self.el_owner_partition
-        recvbuf, _ = gather_in_root(sendbuf, root, np.intc, comm)
+        recvbuf, _ = gather_in_root(sendbuf, root, np.int64, comm)
         if not isinstance(recvbuf, NoneType):
             self.el_owner[:] = recvbuf[:]
         sendbuf = self.glb_el_owner_partition
-        recvbuf, _ = gather_in_root(sendbuf, root, np.intc, comm)
+        recvbuf, _ = gather_in_root(sendbuf, root, np.int64, comm)
         if not isinstance(recvbuf, NoneType):
             self.glb_el_owner[:] = recvbuf[:]
         sendbuf = self.rank_owner_partition
-        recvbuf, _ = gather_in_root(sendbuf, root, np.intc, comm)
+        recvbuf, _ = gather_in_root(sendbuf, root, np.int64, comm)
         if not isinstance(recvbuf, NoneType):
             self.rank_owner[:] = recvbuf[:]
         sendbuf = self.err_code_partition
-        recvbuf, _ = gather_in_root(sendbuf, root, np.intc, comm)
+        recvbuf, _ = gather_in_root(sendbuf, root, np.int64, comm)
         if not isinstance(recvbuf, NoneType):
             self.err_code[:] = recvbuf[:]
         sendbuf = self.test_pattern_partition
@@ -511,11 +511,11 @@ class Interpolator:
                 test_pattern_not_found = self.test_pattern_partition[not_found]
 
                 # Tell every rank in the broadcaster of the local communicator their actual rank
-                broadcaster_global_rank = np.ones((1), dtype=np.intc) * rank
+                broadcaster_global_rank = np.ones((1), dtype=np.int64) * rank
                 search_comm.Bcast(broadcaster_global_rank, root=broadcaster)
 
                 # Tell every rank how much they need to allocate for the broadcaster bounding boxes
-                nelv_in_broadcaster = np.ones((1), dtype=np.intc) * nelv
+                nelv_in_broadcaster = np.ones((1), dtype=np.int64) * nelv
                 search_comm.Bcast(nelv_in_broadcaster, root=broadcaster)
 
                 # Allocate the recieve buffer for bounding boxes
@@ -664,16 +664,16 @@ class Interpolator:
                     el_owner_broadcaster_has,
                     el_owner_sendcount_broadcaster_is_candidate,
                 ) = gather_in_root(
-                    el_owner_broadcaster_is_candidate, root, np.intc, search_comm
+                    el_owner_broadcaster_is_candidate, root, np.int64, search_comm
                 )
                 glb_el_owner_broadcaster_has, _ = gather_in_root(
-                    glb_el_owner_broadcaster_is_candidate, root, np.intc, search_comm
+                    glb_el_owner_broadcaster_is_candidate, root, np.int64, search_comm
                 )
                 rank_owner_broadcaster_has, _ = gather_in_root(
-                    rank_owner_broadcaster_is_candidate, root, np.intc, search_comm
+                    rank_owner_broadcaster_is_candidate, root, np.int64, search_comm
                 )
                 err_code_broadcaster_has, _ = gather_in_root(
-                    err_code_broadcaster_is_candidate, root, np.intc, search_comm
+                    err_code_broadcaster_is_candidate, root, np.int64, search_comm
                 )
                 test_pattern_broadcaster_has, _ = gather_in_root(
                     test_pattern_broadcaster_is_candidate, root, np.double, search_comm
@@ -767,7 +767,7 @@ class Interpolator:
                     sendbuf,
                     el_owner_sendcount_broadcaster_is_candidate,
                     root,
-                    np.intc,
+                    np.int64,
                     search_comm,
                 )
                 el_owner_broadcaster_is_candidate[:] = recvbuf[:]
@@ -780,7 +780,7 @@ class Interpolator:
                     sendbuf,
                     el_owner_sendcount_broadcaster_is_candidate,
                     root,
-                    np.intc,
+                    np.int64,
                     search_comm,
                 )
                 glb_el_owner_broadcaster_is_candidate[:] = recvbuf[:]
@@ -792,7 +792,7 @@ class Interpolator:
                     sendbuf,
                     el_owner_sendcount_broadcaster_is_candidate,
                     root,
-                    np.intc,
+                    np.int64,
                     search_comm,
                 )
                 rank_owner_broadcaster_is_candidate[:] = recvbuf[:]
@@ -804,7 +804,7 @@ class Interpolator:
                     sendbuf,
                     el_owner_sendcount_broadcaster_is_candidate,
                     root,
-                    np.intc,
+                    np.int64,
                     search_comm,
                 )
                 err_code_broadcaster_is_candidate[:] = recvbuf[:]
@@ -938,8 +938,8 @@ class Interpolator:
         test_pattern_not_found = self.test_pattern_partition[not_found]
 
         # Tell every rank how many points not found each other rank has
-        not_found_in_this_rank = np.ones((1), dtype=np.intc) * n_not_found
-        not_found_in_all_ranks = np.zeros((comm.Get_size()), dtype=np.intc)
+        not_found_in_this_rank = np.ones((1), dtype=np.int64) * n_not_found
+        not_found_in_all_ranks = np.zeros((comm.Get_size()), dtype=np.int64)
         comm.Allgather(
             [not_found_in_this_rank, MPI.INT], [not_found_in_all_ranks, MPI.INT]
         )  # This allgather can be changed with point2point
@@ -963,11 +963,11 @@ class Interpolator:
             npt = not_found_in_all_ranks[my_source[ni]]
             buff_probes.append(np.zeros((npt, 3), dtype=np.double))
             buff_probes_rst.append(np.zeros((npt, 3), dtype=np.double))
-            buff_el_owner.append(np.zeros((npt), dtype=np.intc))
-            buff_glb_el_owner.append(np.zeros((npt), dtype=np.intc))
-            buff_rank_owner.append(np.ones((npt), dtype=np.intc) * -1000)
+            buff_el_owner.append(np.zeros((npt), dtype=np.int64))
+            buff_glb_el_owner.append(np.zeros((npt), dtype=np.int64))
+            buff_rank_owner.append(np.ones((npt), dtype=np.int64) * -1000)
             buff_err_code.append(
-                np.zeros((npt), dtype=np.intc)
+                np.zeros((npt), dtype=np.int64)
             )  # 0 not found, 1 is found
             buff_test_pattern.append(
                 np.ones((npt), dtype=np.double)
@@ -988,11 +988,11 @@ class Interpolator:
             npt = n_not_found
             obuff_probes.append(np.zeros((npt, 3), dtype=np.double))
             obuff_probes_rst.append(np.zeros((npt, 3), dtype=np.double))
-            obuff_el_owner.append(np.zeros((npt), dtype=np.intc))
-            obuff_glb_el_owner.append(np.zeros((npt), dtype=np.intc))
-            obuff_rank_owner.append(np.ones((npt), dtype=np.intc) * -1000)
+            obuff_el_owner.append(np.zeros((npt), dtype=np.int64))
+            obuff_glb_el_owner.append(np.zeros((npt), dtype=np.int64))
+            obuff_rank_owner.append(np.ones((npt), dtype=np.int64) * -1000)
             obuff_err_code.append(
-                np.zeros((npt), dtype=np.intc)
+                np.zeros((npt), dtype=np.int64)
             )  # 0 not found, 1 is found
             obuff_test_pattern.append(
                 np.ones((npt), dtype=np.double)
@@ -1267,7 +1267,7 @@ class Interpolator:
             sort_by_rank = None
 
         # Check the sendcounts in number of probes
-        sendcounts = np.zeros((size), dtype=np.intc)
+        sendcounts = np.zeros((size), dtype=np.int64)
         if rank == io_rank:
             for root in range(0, size):
                 sendcounts[root] = len(np.where(rank_owner == root)[0])
@@ -1295,7 +1295,7 @@ class Interpolator:
             sendbuf = sorted_err_code.reshape((sorted_err_code.size))
         else:
             sendbuf = None
-        recvbuf = scatter_from_root(sendbuf, sendcounts, root, np.intc, comm)
+        recvbuf = scatter_from_root(sendbuf, sendcounts, root, np.int64, comm)
         my_err_code = recvbuf
 
         # Redistribute el_owner
@@ -1304,7 +1304,7 @@ class Interpolator:
             # print(sendbuf)
         else:
             sendbuf = None
-        recvbuf = scatter_from_root(sendbuf, sendcounts, root, np.intc, comm)
+        recvbuf = scatter_from_root(sendbuf, sendcounts, root, np.int64, comm)
         # print(recvbuf)
         my_el_owner = recvbuf
 
@@ -1313,7 +1313,7 @@ class Interpolator:
             sendbuf = sorted_rank_owner.reshape((sorted_rank_owner.size))
         else:
             sendbuf = None
-        recvbuf = scatter_from_root(sendbuf, sendcounts, root, np.intc, comm)
+        recvbuf = scatter_from_root(sendbuf, sendcounts, root, np.int64, comm)
         my_rank_owner = recvbuf
 
         self.my_probes = my_probes
@@ -1470,12 +1470,12 @@ def domain_binning_map_bin_to_rank(mesh_to_bin, nx, ny, nz, comm):
     # in the SEM mesh resides in bin mesh cell
     mesh_to_bin = [item for sublist in mesh_to_bin for item in sublist]
     mesh_to_bin = np.unique(mesh_to_bin)
-    mesh_to_bin_map = np.zeros((1, nx * ny * nz), dtype=np.intc)
-    mesh_to_bin_map[0, mesh_to_bin] = np.intc(1)
+    mesh_to_bin_map = np.zeros((1, nx * ny * nz), dtype=np.int64)
+    mesh_to_bin_map[0, mesh_to_bin] = np.int64(1)
     # mesh_to_bin_map indicates that this rank has points in the cells of
     # the bin mesh that have been marked with a 1.
     # Now gather the mesh to bin map of all ranks
-    global_mesh_to_bin_map = np.zeros((size * nx * ny * nz), dtype=np.intc)
+    global_mesh_to_bin_map = np.zeros((size * nx * ny * nz), dtype=np.int64)
     comm.Allgather(
         [mesh_to_bin_map.flatten(), MPI.INT], [global_mesh_to_bin_map, MPI.INT]
     )
@@ -1565,15 +1565,15 @@ def get_global_candidate_ranks(comm, candidate_ranks):
 
     # Get arrays with number of candidates per rank
     ## Tell how many there are per rank
-    n_candidate_ranks_per_rank = np.zeros((size), dtype=np.intc)
-    sendbuf = np.ones((1), dtype=np.intc) * len(candidate_ranks)
+    n_candidate_ranks_per_rank = np.zeros((size), dtype=np.int64)
+    sendbuf = np.ones((1), dtype=np.int64) * len(candidate_ranks)
     comm.Allgather([sendbuf, MPI.INT], [n_candidate_ranks_per_rank, MPI.INT])
 
     ## Allocate an array in all ranks that tells which are the rank candidates in all other ranks
     nc = np.max(n_candidate_ranks_per_rank)
-    rank_candidates_in_all_ranks = np.zeros((size, nc), dtype=np.intc)
+    rank_candidates_in_all_ranks = np.zeros((size, nc), dtype=np.int64)
     rank_candidates_in_this_rank = (
-        np.ones((1, nc), dtype=np.intc) * -1
+        np.ones((1, nc), dtype=np.int64) * -1
     )  # Set default to -1 to filter out easily later
     for i in range(0, len(candidate_ranks)):
         rank_candidates_in_this_rank[0, i] = candidate_ranks[i]
