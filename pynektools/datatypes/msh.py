@@ -173,28 +173,28 @@ class Mesh:
 
         self.log.write("info", "Initializing common attributes.")
 
-        self.lx = self.x.shape[
+        self.lx = np.int64(self.x.shape[
             3
-        ]  # This is not an error, the x data is on the last index
-        self.ly = self.x.shape[
+        ])  # This is not an error, the x data is on the last index
+        self.ly = np.int64(self.x.shape[
             2
-        ]  # This is not an error, the x data is on the last index
-        self.lz = self.x.shape[
+        ])  # This is not an error, the x data is on the last index
+        self.lz = np.int64(self.x.shape[
             1
-        ]  # This is not an error, the x data is on the last index
-        self.lxyz = self.lx * self.ly * self.lz
-        self.nelv = self.x.shape[0]
+        ])  # This is not an error, the x data is on the last index
+        self.lxyz = np.int64(self.lx * self.ly * self.lz)
+        self.nelv = np.int64(self.x.shape[0])
 
         # Find the element offset of each rank so you can store the global element number
         nelv = self.x.shape[0]
-        sendbuf = np.ones((1), np.intc) * nelv
-        recvbuf = np.zeros((1), np.intc)
+        sendbuf = np.ones((1), np.int64) * nelv
+        recvbuf = np.zeros((1), np.int64)
         comm.Scan(sendbuf, recvbuf)
         self.offset_el = recvbuf[0] - nelv
 
         # Find the total number of elements
-        sendbuf = np.ones((1), np.intc) * self.nelv
-        recvbuf = np.zeros((1), np.intc)
+        sendbuf = np.ones((1), np.int64) * self.nelv
+        recvbuf = np.zeros((1), np.int64)
         comm.Allreduce(sendbuf, recvbuf)
         self.glb_nelv = recvbuf[0]
 
