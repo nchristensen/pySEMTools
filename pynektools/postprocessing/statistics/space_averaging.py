@@ -8,6 +8,7 @@ from ...datatypes.field import Field, FieldRegistry
 from ...datatypes.coef import Coef
 from ...io.ppymech.neksuite import preadnek, pwritenek, pynekread, pynekwrite
 from ...comm.router import Router
+from ...interpolation.point_interpolator.single_point_helper_functions import GLL_pwts
 
 def space_average_field_files(
     comm,
@@ -19,6 +20,7 @@ def space_average_field_files(
     output_word_size=4,
     write_mesh = True,
     homogeneous_dir = "z",
+    output_in_3d = False,
 ):
     """
     Average field files in the given dimension.
@@ -57,6 +59,10 @@ def space_average_field_files(
     homogeneous_dir : str
         Direction to average the field. Default is "z".
         Options are "x", "y", or "z".
+    output_in_3d : bool
+        If the output should be in 3D. Default is False.
+        The 3D output will contain only 1 element in the homogenous direction.
+        This is useful if one wants to interpolate later, as those routines require 3d inputs.
 
     Notes
     -----
@@ -215,15 +221,27 @@ def space_average_field_files(
         x_2d_msh = x_2d[elements_i_own, :, :, :].reshape(slice_shape_e)
         y_2d_msh = y_2d[elements_i_own, :, :, :].reshape(slice_shape_e)
         z_2d_msh = np.zeros_like(x_2d_msh)
+
+        if output_in_3d:
+
+            # Get the quadrature nodes
+            nn = x_2d_msh.shape[-1]
+            x_ , _ = GLL_pwts(nn)
+            x_gll_ = np.flip(x_)
+
+            x_2d_msh = np.tile(x_2d_msh, (1, nn, 1, 1))
+            y_2d_msh = np.tile(y_2d_msh, (1, nn, 1, 1))
+            z_2d_msh = np.tile(z_2d_msh, (1, nn, 1, 1))
+            z_2d_msh[:,:,:,:] = x_gll_.reshape((1, nn, 1, 1))
+ 
         msh_2d = Mesh(comm_2d, create_connectivity=False, x = x_2d_msh, y = y_2d_msh, z = z_2d_msh)
 
         fld_2d = FieldRegistry(comm_2d)
-        fld_2d.add_field(comm_2d, field_name = "u", field = x_2d_msh, dtype=dtype)
-        fld_2d.add_field(comm_2d, field_name = "v", field = y_2d_msh, dtype=dtype)
+        fld_2d.add_field(comm_2d, field_name = "x", field = x_2d_msh, dtype=dtype)
+        fld_2d.add_field(comm_2d, field_name = "y", field = y_2d_msh, dtype=dtype)
         fld_2d.add_field(comm_2d, field_name = "rank", field = np.ones_like(x_2d_msh)*comm.rank, dtype=dtype)
         pynekwrite(output_folder+"2dcoordinates0.f00000", comm_2d, msh=msh_2d, fld=fld_2d, wdsz=output_word_size, write_mesh=write_mesh)
         fld_2d.clear()
- 
 
     if comm.Get_rank() == 0:
         print(
@@ -263,7 +281,14 @@ def space_average_field_files(
             _  = average_slice_global(avrg_field = field_2d, el_owner = el_owner, router = rt, rank_weights = rank_weights)
 
             if global_average:
-                fld_2d.add_field(comm_2d, field_name = field_key, field = field_2d[elements_i_own, :, :, :].reshape(slice_shape_e), dtype=dtype)
+
+                add_field = field_2d[elements_i_own, :, :, :].reshape(slice_shape_e)
+
+                if output_in_3d:
+                     
+                     add_field = np.tile(add_field, (1, nn, 1, 1))
+                
+                fld_2d.add_field(comm_2d, field_name = f"{homogeneous_dir}_avgd_{field_key}", field = add_field.copy(), dtype=dtype)
 
         logger.write("info", f"Averaging finished, writing to file {output_folder}{out_fname}") 
         if global_average:  
