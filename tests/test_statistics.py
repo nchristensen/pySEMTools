@@ -1,6 +1,7 @@
 # Initialize MPI
 from mpi4py import MPI
 comm = MPI.COMM_WORLD
+
 import os
 
 # Import general modules
@@ -9,9 +10,16 @@ import numpy as np
 from pynektools.io.ppymech.neksuite import pynekread, pynekwrite
 from pynektools.postprocessing.statistics.time_averaging import average_field_files
 from pynektools.postprocessing.file_indexing import index_files_from_folder
-from pynektools.datatypes.field import Field
+from pynektools.datatypes.field import FieldRegistry, Field
+from pynektools.datatypes.coef import Coef
 from pynektools.datatypes.msh import Mesh
+from pynektools.postprocessing.statistics.space_averaging import *
+from pynektools.comm.router import Router
+from pynektools.monitoring.logger import Logger
 
+rt = Router(comm)
+logger = Logger(comm=comm, module_name="space_average_field_files")
+rel_tol = 0.01
 
 def test_time_averaging_1_batches():
 
@@ -24,7 +32,7 @@ def test_time_averaging_1_batches():
     pynekread(fname, comm, data_dtype = dtype, msh = msh)
 
     # Create fiction mean fields
-    fld = Field(comm)
+    fld = FieldRegistry(comm)
 
     # Field
     fld.clear()
@@ -229,5 +237,115 @@ def test_time_averaging_2_batches():
 
     assert passed
 
-test_time_averaging_1_batches()
-test_time_averaging_2_batches()
+def test_space_averaging():
+
+    homogeneous_dir = "z"    
+    dtype = np.single
+
+    # Read the mesh data
+    fname = 'examples/data/rbc0.f00001'    
+    # Read the original mesh data
+    msh = Mesh(comm, create_connectivity=False)
+    pynekread(fname, comm, data_dtype = dtype, msh = msh)
+
+    # Initialize coef
+    coef = Coef(msh, comm, get_area=False)    
+    
+    if homogeneous_dir == "z":
+        direction = 1
+    elif homogeneous_dir == "y":
+        direction = 2
+    elif homogeneous_dir == "x":
+        direction = 3
+    else:
+        return
+
+    if homogeneous_dir == "z":
+        xx = msh.x
+        yy = msh.y
+        direction = 1
+        ax = (2,3)
+    elif homogeneous_dir == "y":
+        xx = msh.x
+        yy = msh.z
+        direction = 2
+        ax = (1,3)
+    elif homogeneous_dir == "x":
+        xx = msh.y
+        yy = msh.z
+        direction = 3
+        ax = (1,2)
+    else:
+        return 
+    
+    x_bar =  np.min(xx, axis=ax)[:,0]  + (np.max(xx, axis=ax)[:, 0] - np.min(xx, axis=ax)[:, 0])/2
+    y_bar =  np.min(yy, axis=ax)[:,0]  + (np.max(yy, axis=ax)[:, 0] - np.min(yy, axis=ax)[:, 0])/2
+    centroids = np.zeros((msh.nelv, 2), dtype=dtype)
+    centroids[:, 0] = x_bar
+    centroids[:, 1] = y_bar
+
+    # Find the unique centroids in the rank
+    rank_unique_centroids = np.unique(centroids, axis=0)
+    
+    # Get el owners
+    el_owner = get_el_owner(logger = logger, rank_unique_centroids = rank_unique_centroids, rt = rt, dtype = dtype, rel_tol=rel_tol)
+
+    # Map centroids to unique centroids in this rank
+    logger.write("info", f"Mapping the indices of the original elements to those of the unique elements in the specified direction")
+    elem_to_unique_map = np.zeros((msh.nelv), dtype=np.int64)
+    for i in range(0, msh.nelv):
+        elem_to_unique_map[i] = np.where(np.all(np.isclose(rank_unique_centroids, centroids[i, :], rtol=rel_tol), axis=1))[0][0]
+
+
+    logger.write("info", f"Getting 2D slices")
+    # Create a 2D sem arrays to hold averages
+    if homogeneous_dir == "z":
+        slice_shape = (rank_unique_centroids.shape[0], 1, msh.ly, msh.lx)
+        slice_shape_e = (-1, 1, msh.ly, msh.lx)
+    elif homogeneous_dir == "y":
+        slice_shape = (rank_unique_centroids.shape[0], 1, msh.lz, msh.lx)
+        slice_shape_e = (-1, 1, msh.lz, msh.lx)
+    elif homogeneous_dir == "x":
+        slice_shape = (rank_unique_centroids.shape[0], 1, msh.lz, msh.ly)
+        slice_shape_e = (-1, 1, msh.lz, msh.ly)
+    x_2d = np.zeros(slice_shape, dtype=dtype)
+    y_2d = np.zeros(slice_shape, dtype=dtype)
+
+    # Average the fileds to test
+    rank_weights = average_field_in_dir_local(avrg_field = x_2d, field = xx, coef = coef, elem_to_unique_map = elem_to_unique_map, direction = direction)
+    global_average, elements_i_own = average_slice_global(avrg_field = x_2d, el_owner = el_owner, router = rt, rank_weights = rank_weights)
+    
+    _ = average_field_in_dir_local(avrg_field = y_2d, field = yy, coef = coef, elem_to_unique_map = elem_to_unique_map, direction = direction)
+    _ = average_slice_global(avrg_field = y_2d, el_owner = el_owner, router = rt, rank_weights = rank_weights)
+
+    logger.write("info", f"Verifying averaging")
+
+    if global_average:
+        passed = True
+        for e in elements_i_own:
+            
+            if direction == 1:
+                t1 = np.allclose(x_2d[elem_to_unique_map[e], :, :, :], xx[e, 0, :, :])
+                t2 = np.allclose(y_2d[elem_to_unique_map[e], :, :, :], yy[e, 0, :, :])
+            elif direction == 2:
+                t1 = np.allclose(x_2d[elem_to_unique_map[e], :, :, :], xx[e, :, 0, :])
+                t2 = np.allclose(y_2d[elem_to_unique_map[e], :, :, :], yy[e, :, 0, :])
+            elif direction == 3:
+                t1 = np.allclose(x_2d[elem_to_unique_map[e], :, :, :], xx[e, :, :, 0])
+                t2 = np.allclose(y_2d[elem_to_unique_map[e], :, :, :], yy[e, :, :, 0])
+                 
+            passed = np.all([t1, t2])
+
+            if not passed:
+                break
+        
+        if passed:
+            logger.write("info", f"Averaging test passed: {passed}")
+        else:
+            logger.write("error", f"Averaging test passed: {passed}")
+
+    assert passed
+
+test_space_averaging() 
+#test_time_averaging_1_batches()
+#test_time_averaging_2_batches()
