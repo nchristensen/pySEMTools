@@ -45,7 +45,10 @@ class Interpolator:
         self.max_elems = max_elems
 
         # Determine which point interpolator to use
-        self.log.write("info", "Initializing point interpolator: {}".format(point_interpolator_type))
+        self.log.write(
+            "info",
+            "Initializing point interpolator: {}".format(point_interpolator_type),
+        )
         self.ei = get_point_interpolator(
             point_interpolator_type,
             x.shape[1],
@@ -66,9 +69,8 @@ class Interpolator:
             dev = self.r.device
         except AttributeError:
             dev = "cpu"
-        
-        self.log.write("info", f"Using device: {dev}")
 
+        self.log.write("info", f"Using device: {dev}")
 
         self.progress_bar = progress_bar
 
@@ -127,7 +129,9 @@ class Interpolator:
     ):
 
         if find_points_comm_pattern == "collective":
-            self.log.write("info", "Communication pattern selected does not need global tree")
+            self.log.write(
+                "info", "Communication pattern selected does not need global tree"
+            )
 
         elif find_points_comm_pattern == "point_to_point":
             self.global_tree_type = global_tree_type
@@ -197,7 +201,9 @@ class Interpolator:
 
         if isinstance(global_tree_nbins, NoneType):
             global_tree_nbins = comm.Get_size()
-            self.log.write("info", f"nbins not provided, using {global_tree_nbins} as default")
+            self.log.write(
+                "info", f"nbins not provided, using {global_tree_nbins} as default"
+            )
 
         bin_size = global_tree_nbins
 
@@ -429,10 +435,15 @@ class Interpolator:
         use_kdtree=True,
         test_tol=1e-4,
         elem_percent_expansion=0.01,
+        tol=np.finfo(np.double).eps * 10,
+        max_iter=50,
     ):
         """Public method to dins points across ranks and elements"""
         if comm.Get_rank() == 0:
-            self.log.write("info", "using communication pattern: {}".format(find_points_comm_pattern))
+            self.log.write(
+                "info",
+                "using communication pattern: {}".format(find_points_comm_pattern),
+            )
 
         if find_points_comm_pattern == "collective":
             self.find_points_collective_(
@@ -440,6 +451,8 @@ class Interpolator:
                 use_kdtree=use_kdtree,
                 test_tol=test_tol,
                 elem_percent_expansion=elem_percent_expansion,
+                tol=tol,
+                max_iter=max_iter,
             )
         elif find_points_comm_pattern == "point_to_point":
             self.find_points_point_to_point_(
@@ -447,10 +460,18 @@ class Interpolator:
                 use_kdtree=use_kdtree,
                 test_tol=test_tol,
                 elem_percent_expansion=elem_percent_expansion,
+                tol=tol,
+                max_iter=max_iter,
             )
 
     def find_points_collective_(
-        self, comm, use_kdtree=True, test_tol=1e-4, elem_percent_expansion=0.01
+        self,
+        comm,
+        use_kdtree=True,
+        test_tol=1e-4,
+        elem_percent_expansion=0.01,
+        tol=np.finfo(np.double).eps * 10,
+        max_iter=50,
     ):
         """Find points using the collective implementation"""
         rank = comm.Get_rank()
@@ -708,6 +729,8 @@ class Interpolator:
                     settings["use_test_pattern"] = True
                     settings["elem_percent_expansion"] = elem_percent_expansion
                     settings["progress_bar"] = self.progress_bar
+                    settings["find_pts_tol"] = tol
+                    settings["find_pts_max_iterations"] = max_iter
 
                     buffers = {}
                     buffers["r"] = self.r
@@ -886,7 +909,13 @@ class Interpolator:
         return
 
     def find_points_point_to_point_(
-        self, comm, use_kdtree=True, test_tol=1e-4, elem_percent_expansion=0.01
+        self,
+        comm,
+        use_kdtree=True,
+        test_tol=1e-4,
+        elem_percent_expansion=0.01,
+        tol=np.finfo(np.double).eps * 10,
+        max_iter=50,
     ):
         """Find points using the point to point implementation"""
         rank = comm.Get_rank()
@@ -944,7 +973,10 @@ class Interpolator:
             [not_found_in_this_rank, MPI.INT], [not_found_in_all_ranks, MPI.INT]
         )  # This allgather can be changed with point2point
 
-        self.log.write("debug_all", f"rank: {rank}, nsources: {len(my_source)}, ndests: {len(my_dest)}")
+        self.log.write(
+            "debug_all",
+            f"rank: {rank}, nsources: {len(my_source)}, ndests: {len(my_dest)}",
+        )
 
         # Check how many buffers to create to recieve points
         # from other ranks that think this rank is a candidate
@@ -1077,6 +1109,8 @@ class Interpolator:
         settings["use_test_pattern"] = True
         settings["elem_percent_expansion"] = elem_percent_expansion
         settings["progress_bar"] = self.progress_bar
+        settings["find_pts_tol"] = tol
+        settings["find_pts_max_iterations"] = max_iter
 
         buffers = {}
         buffers["r"] = self.r
@@ -1087,7 +1121,9 @@ class Interpolator:
         # Now find the rst coordinates for the points stored in each of the buffers
         for source_index in range(0, len(my_source)):
 
-            self.log.write("debug", f"Processing batch: {source_index} out of {len(my_source)}")
+            self.log.write(
+                "debug", f"Processing batch: {source_index} out of {len(my_source)}"
+            )
 
             probes_info = {}
             probes_info["probes"] = buff_probes[source_index]
@@ -1176,7 +1212,9 @@ class Interpolator:
 
         # Now loop trhough all the points in the buffers that
         # have been sent back and determine which point was found
-        self.log.write("info", "Determine which points were found and find best candidate")
+        self.log.write(
+            "info", "Determine which points were found and find best candidate"
+        )
         for point in range(0, n_not_found):
 
             # These are the error code and test patterns for
@@ -1348,7 +1386,7 @@ class Interpolator:
             sampled_field=sampled_field,
             settings=settings,
         )
-        
+
         self.log.toc()
 
         return sampled_field_at_probe
@@ -1427,7 +1465,7 @@ def get_bbox_centroids_and_max_dist(bbox):
     bbox_centroid[:, 1] = bbox[:, 2] + bbox_dist[:, 1] / 2
     bbox_centroid[:, 2] = bbox[:, 4] + bbox_dist[:, 2] / 2
 
-    return bbox_centroid, bbox_max_dist*(1 + 1e-2)
+    return bbox_centroid, bbox_max_dist * (1 + 1e-2)
 
 
 def get_communication_pairs(self, global_rank_candidate_dict, comm):

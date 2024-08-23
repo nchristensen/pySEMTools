@@ -173,15 +173,15 @@ class Mesh:
 
         self.log.write("info", "Initializing common attributes.")
 
-        self.lx = np.int64(self.x.shape[
-            3
-        ])  # This is not an error, the x data is on the last index
-        self.ly = np.int64(self.x.shape[
-            2
-        ])  # This is not an error, the x data is on the last index
-        self.lz = np.int64(self.x.shape[
-            1
-        ])  # This is not an error, the x data is on the last index
+        self.lx = np.int64(
+            self.x.shape[3]
+        )  # This is not an error, the x data is on the last index
+        self.ly = np.int64(
+            self.x.shape[2]
+        )  # This is not an error, the x data is on the last index
+        self.lz = np.int64(
+            self.x.shape[1]
+        )  # This is not an error, the x data is on the last index
         self.lxyz = np.int64(self.lx * self.ly * self.lz)
         self.nelv = np.int64(self.x.shape[0])
 

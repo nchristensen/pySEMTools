@@ -40,7 +40,7 @@ class PRefiner:
             dtype = msh.x.dtype
         else:
             dtype = self.dtype
-        
+
         # Allocate the new coordinates
         x = np.zeros((msh.nelv, self.lz, self.ly, self.lx), dtype=dtype)
         y = np.zeros((msh.nelv, self.lz, self.ly, self.lx), dtype=dtype)
@@ -71,7 +71,7 @@ class PRefiner:
         """Interpolate any field that was in the old mesh onto the refined/coarsened one"""
         # check the number of fields to interpolate
         number_of_fields = len(field_list)
-        
+
         if isinstance(self.dtype, type(None)):
             dtype = field_list[0].dtype
         else:
@@ -80,7 +80,9 @@ class PRefiner:
         # Allocate the result of the interpolation
         interpolated_fields = []
         for _ in range(0, number_of_fields):
-            interpolated_fields.append(np.zeros((self.nelv, self.lz, self.ly, self.lx), dtype=dtype))
+            interpolated_fields.append(
+                np.zeros((self.nelv, self.lz, self.ly, self.lx), dtype=dtype)
+            )
 
         # Get the RST coordinates of the new points
         x_gll = self.ei_new.x_gll

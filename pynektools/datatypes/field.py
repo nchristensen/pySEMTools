@@ -162,6 +162,7 @@ class Field:
         self.temp_fields = 0
         self.scal_fields = 0
 
+
 def get_field_from_hexadata(data, prefix, qoi):
     """
     Extract a field from the hexadata object and return it as a numpy array
@@ -209,6 +210,7 @@ def get_field_from_hexadata(data, prefix, qoi):
 
     return field
 
+
 class FieldRegistry(Field):
     """
     Class that contains fields.
@@ -226,7 +228,7 @@ class FieldRegistry(Field):
     def __init__(self, comm, data=None):
 
         super().__init__(comm, data=data)
-        
+
         self.registry = {}
         self.scal_fields_names = []
 
@@ -238,7 +240,7 @@ class FieldRegistry(Field):
         """
 
         super().update_vars()
- 
+
         if self.vel_fields > 0:
             self.registry["u"] = self.fields["vel"][0]
             self.registry["v"] = self.fields["vel"][1]
@@ -247,7 +249,7 @@ class FieldRegistry(Field):
 
         if self.pres_fields > 0:
             self.registry["p"] = self.fields["pres"][0]
-        
+
         if self.temp_fields > 0:
             self.registry["t"] = self.fields["temp"][0]
 
@@ -273,7 +275,7 @@ class FieldRegistry(Field):
         ----------
         old_key : str
             Old key to be renamed.
-        
+
         new_key : str
             New key to be used.
 
@@ -285,10 +287,18 @@ class FieldRegistry(Field):
         """
 
         if old_key in self.registry:
-            self.registry[new_key] = self.registry.pop(old_key) 
+            self.registry[new_key] = self.registry.pop(old_key)
 
-
-    def add_field(self, comm, field_name="", field = None, file_type = None, file_name = None, file_key = None, dtype = np.double):
+    def add_field(
+        self,
+        comm,
+        field_name="",
+        field=None,
+        file_type=None,
+        file_name=None,
+        file_key=None,
+        dtype=np.double,
+    ):
         """
         Add fields to the registry. They will be stored in the fields dictionary to easily write them.
 
@@ -298,10 +308,10 @@ class FieldRegistry(Field):
 
         comm : Comm
             MPI comminicator object.
-        
+
         field_name : str
             Name of the field to be added. where the field is added thepends on the name
-        
+
         field : ndarray
             Field to be added to the registry. If this is provided, it is assumed to be a ndarray.
             It will then be added to the registry.
@@ -309,7 +319,7 @@ class FieldRegistry(Field):
         file_type : str
             Type of the file to be added. If this is provided, it is assumed to be a file.
             Currently, only "fld" supported.
-            
+
         file_name : str
             File name of the field to be added. If this is provided, it is assumed to be a file.
             It will then be added to the registry.
@@ -321,10 +331,14 @@ class FieldRegistry(Field):
             Only for "vel" we read the 2/3 components at the same time
 
         dtype : np.dtype
-            Data type of the field. Default is np.double. 
+            Data type of the field. Default is np.double.
         """
 
-        if not isinstance(file_name, type(None)) or not isinstance(file_key, type(None)) or not isinstance(file_type, type(None)):
+        if (
+            not isinstance(file_name, type(None))
+            or not isinstance(file_key, type(None))
+            or not isinstance(file_type, type(None))
+        ):
             # Assign a field from a file
 
             if file_type != "fld":
@@ -332,45 +346,55 @@ class FieldRegistry(Field):
                 return
 
             if file_type == "fld":
-                
+
                 key_prefix = file_key.split("_")[0]
                 try:
                     key_suffix = int(file_key.split("_")[1])
                 except IndexError:
-                    self.log.write("warning", f"File key {file_key} has no suffix (key: prefix_sufix). Assuming suffix 0")
+                    self.log.write(
+                        "warning",
+                        f"File key {file_key} has no suffix (key: prefix_sufix). Assuming suffix 0",
+                    )
                     key_suffix = 0
 
                 self.log.write("debug", f"Reading field {file_name} from file")
 
-                field_list = pynekread_field(file_name, comm, data_dtype=dtype, key=file_key)
+                field_list = pynekread_field(
+                    file_name, comm, data_dtype=dtype, key=file_key
+                )
 
                 if key_prefix == "vel" or key_prefix == "pos":
                     field = field_list[key_suffix]
                 else:
                     field = field_list[0]
- 
+
         if not isinstance(field, type(None)):
             # Assign a field from a ndarray
 
-            if field_name == "u" or field_name == "v" or field_name =="w":
+            if field_name == "u" or field_name == "v" or field_name == "w":
                 prefix = "vel"
-            elif field_name == "p": 
+            elif field_name == "p":
                 prefix = "pres"
             elif field_name == "t":
                 prefix = "temp"
             else:
                 prefix = "scal"
                 self.scal_fields_names.append(field_name)
-            
+
             if field.dtype != dtype:
-                self.log.write("warning", f"Field {field_name} has dtype {field.dtype} but expected {dtype}")
-                self.log.write("warning", f"Field {field_name} will be casted to {dtype}")
-                #cast it
+                self.log.write(
+                    "warning",
+                    f"Field {field_name} has dtype {field.dtype} but expected {dtype}",
+                )
+                self.log.write(
+                    "warning", f"Field {field_name} will be casted to {dtype}"
+                )
+                # cast it
                 field = field.astype(dtype)
 
             # Append it to the field list
             self.fields[prefix].append(field)
             # Register it in the dictionary
-            self.registry[field_name] = field 
-        
+            self.registry[field_name] = field
+
             super().update_vars()
