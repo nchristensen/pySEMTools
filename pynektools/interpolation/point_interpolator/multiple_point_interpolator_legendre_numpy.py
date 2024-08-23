@@ -239,9 +239,6 @@ class LegendreInterpolator(MultiplePointInterpolator):
             and self.iterations < max_iterations
         ):
             
-            points_found = np.linalg.norm(self.eps_rst[:npoints, :nelems], axis=(2, 3)) <= tol
-            iterations_per_point[points_found] = self.iterations
-
             # Update the guess
             self.rstj[:npoints, :nelems, 0, 0] = self.rj[:npoints, :nelems, 0, 0]
             self.rstj[:npoints, :nelems, 1, 0] = self.sj[:npoints, :nelems, 0, 0]
@@ -281,6 +278,9 @@ class LegendreInterpolator(MultiplePointInterpolator):
             self.sj[:npoints, :nelems, 0, 0] = self.rstj[:npoints, :nelems, 1, 0]
             self.tj[:npoints, :nelems, 0, 0] = self.rstj[:npoints, :nelems, 2, 0]
             self.iterations += 1
+            
+            points_found = np.linalg.norm(self.eps_rst[:npoints, :nelems], axis=(2, 3)) <= tol
+            iterations_per_point[points_found] = self.iterations
 
         # Check if points are inside the element
         limit = 1 + np.finfo(np.single).eps
@@ -371,6 +371,8 @@ class LegendreInterpolator(MultiplePointInterpolator):
         use_test_pattern = settings.get("use_test_pattern", True)
         elem_percent_expansion = settings.get("elem_percent_expansion", 0.01)
         progress_bar = settings.get("progress_bar", False)
+        find_pts_tol = settings.get("find_pts_tol", np.finfo(np.double).eps * 10)
+        find_pts_max_iterations = settings.get("find_pts_max_iterations", 50) 
         # Buffers
         r = buffers.get("r", None)
         s = buffers.get("s", None)
@@ -476,6 +478,8 @@ class LegendreInterpolator(MultiplePointInterpolator):
                         probes[pt_not_found_indices, 0].reshape(probe_new_shape),
                         probes[pt_not_found_indices, 1].reshape(probe_new_shape),
                         probes[pt_not_found_indices, 2].reshape(probe_new_shape),
+                        tol=find_pts_tol,
+                        max_iterations=find_pts_max_iterations,
                     )
                 )
 

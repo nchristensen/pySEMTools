@@ -429,6 +429,8 @@ class Interpolator:
         use_kdtree=True,
         test_tol=1e-4,
         elem_percent_expansion=0.01,
+        tol=np.finfo(np.double).eps*10,
+        max_iter=50,
     ):
         """Public method to dins points across ranks and elements"""
         if comm.Get_rank() == 0:
@@ -440,6 +442,8 @@ class Interpolator:
                 use_kdtree=use_kdtree,
                 test_tol=test_tol,
                 elem_percent_expansion=elem_percent_expansion,
+                tol=tol,
+                max_iter=max_iter,
             )
         elif find_points_comm_pattern == "point_to_point":
             self.find_points_point_to_point_(
@@ -447,10 +451,12 @@ class Interpolator:
                 use_kdtree=use_kdtree,
                 test_tol=test_tol,
                 elem_percent_expansion=elem_percent_expansion,
+                tol=tol,
+                max_iter=max_iter,
             )
 
     def find_points_collective_(
-        self, comm, use_kdtree=True, test_tol=1e-4, elem_percent_expansion=0.01
+        self, comm, use_kdtree=True, test_tol=1e-4, elem_percent_expansion=0.01, tol=np.finfo(np.double).eps*10, max_iter=50
     ):
         """Find points using the collective implementation"""
         rank = comm.Get_rank()
@@ -708,6 +714,8 @@ class Interpolator:
                     settings["use_test_pattern"] = True
                     settings["elem_percent_expansion"] = elem_percent_expansion
                     settings["progress_bar"] = self.progress_bar
+                    settings["find_pts_tol"] = tol
+                    settings["find_pts_max_iterations"] = max_iter
 
                     buffers = {}
                     buffers["r"] = self.r
@@ -886,7 +894,7 @@ class Interpolator:
         return
 
     def find_points_point_to_point_(
-        self, comm, use_kdtree=True, test_tol=1e-4, elem_percent_expansion=0.01
+        self, comm, use_kdtree=True, test_tol=1e-4, elem_percent_expansion=0.01, tol=np.finfo(np.double).eps*10, max_iter=50
     ):
         """Find points using the point to point implementation"""
         rank = comm.Get_rank()
@@ -1077,6 +1085,8 @@ class Interpolator:
         settings["use_test_pattern"] = True
         settings["elem_percent_expansion"] = elem_percent_expansion
         settings["progress_bar"] = self.progress_bar
+        settings["find_pts_tol"] = tol
+        settings["find_pts_max_iterations"] = max_iter
 
         buffers = {}
         buffers["r"] = self.r

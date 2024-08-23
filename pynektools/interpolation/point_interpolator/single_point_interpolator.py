@@ -180,6 +180,8 @@ class SinglePointInterpolator(ABC):
         use_test_pattern = settings.get("use_test_pattern", True)
         elem_percent_expansion = settings.get("elem_percent_expansion", 0.01)
         progress_bar = settings.get("progress_bar", False)
+        find_pts_tol = settings.get("find_pts_tol", np.finfo(np.double).eps * 10)
+        find_pts_max_iterations = settings.get("find_pts_max_iterations", 50) 
 
         # Reset the element owner and the error code so this rank checks again
         err_code[:] = not_found_code
@@ -236,7 +238,7 @@ class SinglePointInterpolator(ABC):
                         x[e, :, :, :], y[e, :, :, :], z[e, :, :, :]
                     )
                     r, s, t = self.find_rst_from_xyz(
-                        probes[pts, 0], probes[pts, 1], probes[pts, 2]
+                        probes[pts, 0], probes[pts, 1], probes[pts, 2], tol=find_pts_tol, max_iterations=find_pts_max_iterations
                     )
                     if self.point_inside_element:
                         probes_rst[pts, 0] = r

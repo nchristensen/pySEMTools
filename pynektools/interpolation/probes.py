@@ -138,6 +138,8 @@ class Probes:
         global_tree_type="rank_bbox",
         global_tree_nbins=1024,
         use_autograd=False,
+        find_points_tol = np.finfo(np.double).eps*10, 
+        find_points_max_iter = 50
     ):
 
         rank = comm.Get_rank()
@@ -236,6 +238,8 @@ class Probes:
             comm,
             find_points_comm_pattern=find_points_comm_pattern,
             elem_percent_expansion=elem_percent_expansion,
+            tol = find_points_tol,
+            max_iter = find_points_max_iter
         )
 
         # Gather probes to rank 0 again
