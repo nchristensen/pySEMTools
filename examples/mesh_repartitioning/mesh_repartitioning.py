@@ -15,8 +15,10 @@ fname = "../data/rbc0.f00001"
 pynekread(fname, comm, data_dtype=np.single, msh=msh, fld=fld)
 
 
-condition1 = msh.z < 0.2
-mp = MeshPartitioner(comm, msh=msh, conditions=[condition1])
+condition1 = msh.z < 0.1
+conidtion2 = msh.z > 0.9
+cond = condition1 | conidtion2 # Logical OR
+mp = MeshPartitioner(comm, msh=msh, conditions=[cond])
 
 partitioned_mesh = mp.create_partitioned_mesh(msh, partitioning_algorithm="load_balanced_linear", create_conectivity=False)
 partitioned_field = mp.create_partitioned_field(fld, partitioning_algorithm="load_balanced_linear")
