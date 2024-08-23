@@ -9,6 +9,7 @@ from mpi4py import MPI  # for the timer
 from .mpi_ops import gather_in_root, scatter_from_root
 from .point_interpolator.point_interpolator_factory import get_point_interpolator
 from ..monitoring.logger import Logger
+from ..comm.router import Router
 
 NoneType = type(None)
 
@@ -34,6 +35,9 @@ class Interpolator:
         self.log = Logger(comm=comm, module_name="Interpolator")
         self.log.write("info", "Initializing Interpolator object")
         self.log.tic()
+
+        # Instance communication object
+        self.rt = Router(comm)
 
         self.x = x
         self.y = y
@@ -947,14 +951,6 @@ class Interpolator:
         self.log.write("info", "Obtaining candidate ranks and sources")
         my_dest = get_candidate_ranks(self, comm)
 
-        # Get a global array with the candidates in all other
-        # ranks to determine the best way to communicate
-        global_rank_candidate = get_global_candidate_ranks(comm, my_dest)
-
-        # Get the ranks that have me in their dest, so they become
-        # my sources (This tank will check their data)
-        my_source = np.where(np.any(global_rank_candidate == rank, axis=1))[0]
-
         # Create temporary arrays that store the points that have not been found
         not_found = np.where(self.err_code_partition != 1)[0]
         n_not_found = not_found.size
@@ -966,132 +962,35 @@ class Interpolator:
         err_code_not_found = self.err_code_partition[not_found]
         test_pattern_not_found = self.test_pattern_partition[not_found]
 
-        # Tell every rank how many points not found each other rank has
-        not_found_in_this_rank = np.ones((1), dtype=np.int64) * n_not_found
-        not_found_in_all_ranks = np.zeros((comm.Get_size()), dtype=np.int64)
-        comm.Allgather(
-            [not_found_in_this_rank, MPI.INT], [not_found_in_all_ranks, MPI.INT]
-        )  # This allgather can be changed with point2point
+        # Send data to my candidates and recieve from ranks where I am candidate
+        self.log.write("info", "Send data to candidates and recieve from sources")
 
-        self.log.write(
-            "debug_all",
-            f"rank: {rank}, nsources: {len(my_source)}, ndests: {len(my_dest)}",
+        my_source, buff_probes = self.rt.send_recv(
+            destination=my_dest, data=probe_not_found, dtype=np.double, tag=1
+        )
+        _ , buff_probes_rst = self.rt.send_recv(
+            destination=my_dest, data=probe_rst_not_found, dtype=np.double, tag=2
+        )
+        _ , buff_el_owner = self.rt.send_recv(
+            destination=my_dest, data=el_owner_not_found, dtype=np.int64, tag=3
+        )
+        _ , buff_glb_el_owner = self.rt.send_recv(
+            destination=my_dest, data=glb_el_owner_not_found, dtype=np.int64, tag=4
+        )
+        _ , buff_rank_owner = self.rt.send_recv(
+            destination=my_dest, data=rank_owner_not_found, dtype=np.int64, tag=5
+        )
+        _ , buff_err_code = self.rt.send_recv(
+            destination=my_dest, data=err_code_not_found, dtype=np.int64, tag=6
+        )
+        _ , buff_test_pattern = self.rt.send_recv(
+            destination=my_dest, data=test_pattern_not_found, dtype=np.double, tag=7
         )
 
-        # Check how many buffers to create to recieve points
-        # from other ranks that think this rank is a candidate
-        self.log.write("info", "Create buffers to hold data from other ranks")
-        n_buff = len(my_source)
-        # Create buffer for data from other ranks
-        buff_probes = []
-        buff_probes_rst = []
-        buff_el_owner = []
-        buff_glb_el_owner = []
-        buff_rank_owner = []
-        buff_err_code = []
-        buff_test_pattern = []
-        for ni in range(n_buff):
-            # The points in each buffer depend on the points on the sending rank
-            npt = not_found_in_all_ranks[my_source[ni]]
-            buff_probes.append(np.zeros((npt, 3), dtype=np.double))
-            buff_probes_rst.append(np.zeros((npt, 3), dtype=np.double))
-            buff_el_owner.append(np.zeros((npt), dtype=np.int64))
-            buff_glb_el_owner.append(np.zeros((npt), dtype=np.int64))
-            buff_rank_owner.append(np.ones((npt), dtype=np.int64) * -1000)
-            buff_err_code.append(
-                np.zeros((npt), dtype=np.int64)
-            )  # 0 not found, 1 is found
-            buff_test_pattern.append(
-                np.ones((npt), dtype=np.double)
-            )  # test interpolation holder
-
-        # This rank will send its data to the other ranks in the dest list.
-        # These buffers will be used to store the data when the points are sent back
-        on_buff = len(my_dest)
-        obuff_probes = []
-        obuff_probes_rst = []
-        obuff_el_owner = []
-        obuff_glb_el_owner = []
-        obuff_rank_owner = []
-        obuff_err_code = []
-        obuff_test_pattern = []
-        for ni in range(on_buff):
-            # The points in each buffer are the same points in this rank
-            npt = n_not_found
-            obuff_probes.append(np.zeros((npt, 3), dtype=np.double))
-            obuff_probes_rst.append(np.zeros((npt, 3), dtype=np.double))
-            obuff_el_owner.append(np.zeros((npt), dtype=np.int64))
-            obuff_glb_el_owner.append(np.zeros((npt), dtype=np.int64))
-            obuff_rank_owner.append(np.ones((npt), dtype=np.int64) * -1000)
-            obuff_err_code.append(
-                np.zeros((npt), dtype=np.int64)
-            )  # 0 not found, 1 is found
-            obuff_test_pattern.append(
-                np.ones((npt), dtype=np.double)
-            )  # test interpolation holder
-
-        # Set the request to Recieve the data from the other ranks that have me as a candidate
-        self.log.write("info", "Send data to candidates and recieve from sources")
-        req_list_r = []
+        # Reshape the data from the probes
         for source_index in range(0, len(my_source)):
-            source = my_source[source_index]
-            req_list_r.append([])
-            req_list_r[source_index].append(
-                comm.Irecv(buff_probes[source_index], source=source, tag=1)
-            )
-            req_list_r[source_index].append(
-                comm.Irecv(buff_probes_rst[source_index], source=source, tag=2)
-            )
-            req_list_r[source_index].append(
-                comm.Irecv(buff_el_owner[source_index], source=source, tag=3)
-            )
-            req_list_r[source_index].append(
-                comm.Irecv(buff_glb_el_owner[source_index], source=source, tag=4)
-            )
-            req_list_r[source_index].append(
-                comm.Irecv(buff_rank_owner[source_index], source=source, tag=5)
-            )
-            req_list_r[source_index].append(
-                comm.Irecv(buff_err_code[source_index], source=source, tag=6)
-            )
-            req_list_r[source_index].append(
-                comm.Irecv(buff_test_pattern[source_index], source=source, tag=7)
-            )
-
-        # Set and complete the request to send my points to my candidates
-        req_list_s = []
-        dest_index = -1
-        for dest in my_dest:
-            dest_index = dest_index + 1
-            req_list_s.append([])
-            req_list_s[dest_index].append(comm.Isend(probe_not_found, dest=dest, tag=1))
-            req_list_s[dest_index].append(
-                comm.Isend(probe_rst_not_found, dest=dest, tag=2)
-            )
-            req_list_s[dest_index].append(
-                comm.Isend(el_owner_not_found, dest=dest, tag=3)
-            )
-            req_list_s[dest_index].append(
-                comm.Isend(glb_el_owner_not_found, dest=dest, tag=4)
-            )
-            req_list_s[dest_index].append(
-                comm.Isend(rank_owner_not_found, dest=dest, tag=5)
-            )
-            req_list_s[dest_index].append(
-                comm.Isend(err_code_not_found, dest=dest, tag=6)
-            )
-            req_list_s[dest_index].append(
-                comm.Isend(test_pattern_not_found, dest=dest, tag=7)
-            )
-
-            # complete the send request
-            for req in req_list_s[dest_index]:
-                req.wait()
-
-        # Complete the request to recieve the data in the buffers
-        for source_index in range(0, len(my_source)):
-            for req in req_list_r[source_index]:
-                req.wait()
+            buff_probes[source_index] = buff_probes[source_index].reshape(-1, 3)
+            buff_probes_rst[source_index] = buff_probes_rst[source_index].reshape(-1, 3)
 
         # Set the information for the coordinate search in this rank
         self.log.write("info", "Find rst coordinates for the points")
@@ -1148,69 +1047,40 @@ class Interpolator:
 
         # Set the request to Recieve back the data that I have sent to my candidates
         self.log.write("info", "Send data to sources and recieve from candidates")
-        oreq_list_r = []
-        for source_index in range(0, len(my_dest)):
-            source = my_dest[source_index]
-            oreq_list_r.append([])
-            oreq_list_r[source_index].append(
-                comm.Irecv(obuff_probes[source_index], source=source, tag=11)
-            )
-            oreq_list_r[source_index].append(
-                comm.Irecv(obuff_probes_rst[source_index], source=source, tag=12)
-            )
-            oreq_list_r[source_index].append(
-                comm.Irecv(obuff_el_owner[source_index], source=source, tag=13)
-            )
-            oreq_list_r[source_index].append(
-                comm.Irecv(obuff_glb_el_owner[source_index], source=source, tag=14)
-            )
-            oreq_list_r[source_index].append(
-                comm.Irecv(obuff_rank_owner[source_index], source=source, tag=15)
-            )
-            oreq_list_r[source_index].append(
-                comm.Irecv(obuff_err_code[source_index], source=source, tag=16)
-            )
-            oreq_list_r[source_index].append(
-                comm.Irecv(obuff_test_pattern[source_index], source=source, tag=17)
-            )
 
-        # Set the request to send this data back to the rank that sent it to me
-        oreq_list_s = []
-        for dest_index in range(0, len(my_source)):
-            dest = my_source[dest_index]
-            oreq_list_s.append([])
-            oreq_list_s[dest_index].append(
-                comm.Isend(buff_probes[dest_index], dest=dest, tag=11)
-            )
-            oreq_list_s[dest_index].append(
-                comm.Isend(buff_probes_rst[dest_index], dest=dest, tag=12)
-            )
-            oreq_list_s[dest_index].append(
-                comm.Isend(buff_el_owner[dest_index], dest=dest, tag=13)
-            )
-            oreq_list_s[dest_index].append(
-                comm.Isend(buff_glb_el_owner[dest_index], dest=dest, tag=14)
-            )
-            oreq_list_s[dest_index].append(
-                comm.Isend(buff_rank_owner[dest_index], dest=dest, tag=15)
-            )
-            oreq_list_s[dest_index].append(
-                comm.Isend(buff_err_code[dest_index], dest=dest, tag=16)
-            )
-            oreq_list_s[dest_index].append(
-                comm.Isend(buff_test_pattern[dest_index], dest=dest, tag=17)
-            )
+        _ , obuff_probes = self.rt.send_recv(
+            destination=my_source, data=buff_probes, dtype=np.double, tag=11
+        )
+        _ , obuff_probes_rst = self.rt.send_recv(
+            destination=my_source, data=buff_probes_rst, dtype=np.double, tag=12
+        )
+        _ , obuff_el_owner = self.rt.send_recv(
+            destination=my_source, data=buff_el_owner, dtype=np.int64, tag=13
+        )
+        _ , obuff_glb_el_owner = self.rt.send_recv(
+            destination=my_source, data=buff_glb_el_owner, dtype=np.int64, tag=14
+        )
+        _ , obuff_rank_owner = self.rt.send_recv(
+            destination=my_source, data=buff_rank_owner, dtype=np.int64, tag=15
+        )
+        _ , obuff_err_code = self.rt.send_recv(
+            destination=my_source, data=buff_err_code, dtype=np.int64, tag=16
+        )
+        _ , obuff_test_pattern = self.rt.send_recv(
+            destination=my_source, data=buff_test_pattern, dtype=np.double, tag=17
+        )
+        
+        # Reshape the data from the probes
+        for dest_index in range(0, len(my_dest)):
+            obuff_probes[dest_index] = obuff_probes[dest_index].reshape(-1, 3)
+            obuff_probes_rst[dest_index] = obuff_probes_rst[dest_index].reshape(-1, 3)
 
-            # Complete the send request
-            for req in oreq_list_s[dest_index]:
-                req.wait()
+        # Free resources from previous buffers if possible
+        del buff_probes, buff_probes_rst, buff_el_owner
+        del buff_glb_el_owner, buff_rank_owner, 
+        del buff_err_code, buff_test_pattern
 
-        # Complete the request to recieve the data in the buffers
-        for index in range(0, len(my_dest)):
-            for req in oreq_list_r[index]:
-                req.wait()
-
-        # Now loop trhough all the points in the buffers that
+        # Now loop through all the points in the buffers that
         # have been sent back and determine which point was found
         self.log.write(
             "info", "Determine which points were found and find best candidate"
