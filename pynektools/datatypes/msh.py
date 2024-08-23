@@ -185,6 +185,7 @@ class Mesh:
         self.lxyz = np.int64(self.lx * self.ly * self.lz)
         self.nelv = np.int64(self.x.shape[0])
 
+        self.log.write("debug", "Performing MPI scan")
         # Find the element offset of each rank so you can store the global element number
         nelv = self.x.shape[0]
         sendbuf = np.ones((1), np.int64) * nelv
@@ -192,6 +193,7 @@ class Mesh:
         comm.Scan(sendbuf, recvbuf)
         self.offset_el = recvbuf[0] - nelv
 
+        self.log.write("debug", "Getting global number of elements")
         # Find the total number of elements
         sendbuf = np.ones((1), np.int64) * self.nelv
         recvbuf = np.zeros((1), np.int64)
@@ -204,6 +206,10 @@ class Mesh:
             self.gdim = 2
 
         self.create_connectivity()
+
+        self.global_element_number = np.arange(
+            self.offset_el, self.offset_el + self.nelv, dtype=np.int64
+        )
 
     def create_connectivity(self):
 
