@@ -210,7 +210,7 @@ class Router:
             if the data is an ndarray, the same data will be sent to all destinations.
         dtype : dtype
             The data type of the data that is sent.
-        
+
         Notes
         -----
         Extra keyword arguments are ignored. This is to keep the same interface as the send_recv method.

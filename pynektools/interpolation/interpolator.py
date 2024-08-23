@@ -968,22 +968,22 @@ class Interpolator:
         my_source, buff_probes = self.rt.send_recv(
             destination=my_dest, data=probe_not_found, dtype=np.double, tag=1
         )
-        _ , buff_probes_rst = self.rt.send_recv(
+        _, buff_probes_rst = self.rt.send_recv(
             destination=my_dest, data=probe_rst_not_found, dtype=np.double, tag=2
         )
-        _ , buff_el_owner = self.rt.send_recv(
+        _, buff_el_owner = self.rt.send_recv(
             destination=my_dest, data=el_owner_not_found, dtype=np.int64, tag=3
         )
-        _ , buff_glb_el_owner = self.rt.send_recv(
+        _, buff_glb_el_owner = self.rt.send_recv(
             destination=my_dest, data=glb_el_owner_not_found, dtype=np.int64, tag=4
         )
-        _ , buff_rank_owner = self.rt.send_recv(
+        _, buff_rank_owner = self.rt.send_recv(
             destination=my_dest, data=rank_owner_not_found, dtype=np.int64, tag=5
         )
-        _ , buff_err_code = self.rt.send_recv(
+        _, buff_err_code = self.rt.send_recv(
             destination=my_dest, data=err_code_not_found, dtype=np.int64, tag=6
         )
-        _ , buff_test_pattern = self.rt.send_recv(
+        _, buff_test_pattern = self.rt.send_recv(
             destination=my_dest, data=test_pattern_not_found, dtype=np.double, tag=7
         )
 
@@ -1048,37 +1048,43 @@ class Interpolator:
         # Set the request to Recieve back the data that I have sent to my candidates
         self.log.write("info", "Send data to sources and recieve from candidates")
 
-        _ , obuff_probes = self.rt.send_recv(
+        _, obuff_probes = self.rt.send_recv(
             destination=my_source, data=buff_probes, dtype=np.double, tag=11
         )
-        _ , obuff_probes_rst = self.rt.send_recv(
+        _, obuff_probes_rst = self.rt.send_recv(
             destination=my_source, data=buff_probes_rst, dtype=np.double, tag=12
         )
-        _ , obuff_el_owner = self.rt.send_recv(
+        _, obuff_el_owner = self.rt.send_recv(
             destination=my_source, data=buff_el_owner, dtype=np.int64, tag=13
         )
-        _ , obuff_glb_el_owner = self.rt.send_recv(
+        _, obuff_glb_el_owner = self.rt.send_recv(
             destination=my_source, data=buff_glb_el_owner, dtype=np.int64, tag=14
         )
-        _ , obuff_rank_owner = self.rt.send_recv(
+        _, obuff_rank_owner = self.rt.send_recv(
             destination=my_source, data=buff_rank_owner, dtype=np.int64, tag=15
         )
-        _ , obuff_err_code = self.rt.send_recv(
+        _, obuff_err_code = self.rt.send_recv(
             destination=my_source, data=buff_err_code, dtype=np.int64, tag=16
         )
-        _ , obuff_test_pattern = self.rt.send_recv(
+        _, obuff_test_pattern = self.rt.send_recv(
             destination=my_source, data=buff_test_pattern, dtype=np.double, tag=17
         )
-        
+
         # Reshape the data from the probes
         for dest_index in range(0, len(my_dest)):
             obuff_probes[dest_index] = obuff_probes[dest_index].reshape(-1, 3)
             obuff_probes_rst[dest_index] = obuff_probes_rst[dest_index].reshape(-1, 3)
 
         # Free resources from previous buffers if possible
-        del buff_probes, buff_probes_rst, buff_el_owner
-        del buff_glb_el_owner, buff_rank_owner, 
-        del buff_err_code, buff_test_pattern
+        del (
+            buff_probes,
+            buff_probes_rst,
+            buff_el_owner,
+            buff_glb_el_owner,
+            buff_rank_owner,
+            buff_err_code,
+            buff_test_pattern,
+        )
 
         # Now loop through all the points in the buffers that
         # have been sent back and determine which point was found
