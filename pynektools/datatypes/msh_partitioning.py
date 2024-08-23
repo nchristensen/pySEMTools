@@ -10,6 +10,7 @@ from .field import Field, FieldRegistry
 from ..comm.router import Router
 from ..monitoring.logger import Logger
 
+
 class MeshPartitioner:
     """
     A class that repartitons SEM mesh data using a given partitioning algorithm.
@@ -22,15 +23,18 @@ class MeshPartitioner:
     ----------
     comm : MPI communicator
         MPI communicator
-    
+
     msh : Mesh
         Mesh object to partition
-    
+
     conditions : list[np.ndarray]
-        List of conditions to apply to the mesh elements. The conditions should be in the form of a list of numpy arrays. 
-        Each numpy array should have the same length as the number of elements in the mesh. The conditions should be boolean arrays. 
+        List of conditions to apply to the mesh elements. The conditions should be in the form of a list of numpy arrays.
+        Each numpy array should have the same length as the number of elements in the mesh. The conditions should be boolean arrays.
     """
-    def __init__(self, comm, msh: Mesh = None, conditions: list[np.ndarray] = None) -> None:
+
+    def __init__(
+        self, comm, msh: Mesh = None, conditions: list[np.ndarray] = None
+    ) -> None:
 
         self.log = Logger(comm=comm, module_name="Mesh Partitioner")
         self.log.write("info", "Initializing Mesh Partitioner")
@@ -46,13 +50,18 @@ class MeshPartitioner:
         z_ = msh.z[self.compliant_elements]
 
         sub_mesh = Mesh(comm, x=x_, y=y_, z=z_, create_connectivity=False)
-        
+
         self.partition_nelv = sub_mesh.nelv
         self.partition_glb_nelv = sub_mesh.glb_nelv
         self.partition_global_element_number = sub_mesh.global_element_number
         self.partition_lxyz = sub_mesh.lxyz
 
-    def create_partitioned_mesh(self, msh: Mesh = None, partitioning_algorithm: str = "load_balanced_linear", create_conectivity: bool = False) -> Mesh:
+    def create_partitioned_mesh(
+        self,
+        msh: Mesh = None,
+        partitioning_algorithm: str = "load_balanced_linear",
+        create_conectivity: bool = False,
+    ) -> Mesh:
         """
         Create a partitioned mesh object
 
@@ -60,27 +69,36 @@ class MeshPartitioner:
         ----------
         msh : Mesh
             Mesh object to partition
-        
+
         partitioning_algorithm : str
             Algorithm to use for partitioning the mesh elements
-        
+
         Returns
         -------
         partitioned_mesh : Mesh
             Partitioned mesh object
         """
 
-        self.log.write("info", f"Partitioning the mesh coordinates with {partitioning_algorithm} algorithm")
+        self.log.write(
+            "info",
+            f"Partitioning the mesh coordinates with {partitioning_algorithm} algorithm",
+        )
         x_ = self.redistribute_field_elements(msh.x, partitioning_algorithm)
         y_ = self.redistribute_field_elements(msh.y, partitioning_algorithm)
         z_ = self.redistribute_field_elements(msh.z, partitioning_algorithm)
 
         self.log.write("info", "Creating mesh object")
-        partitioned_mesh = Mesh(self.rt.comm, x=x_, y=y_, z=z_, create_connectivity=create_conectivity)
+        partitioned_mesh = Mesh(
+            self.rt.comm, x=x_, y=y_, z=z_, create_connectivity=create_conectivity
+        )
 
         return partitioned_mesh
-    
-    def create_partitioned_field(self, fld: Union[Field, FieldRegistry] = None, partitioning_algorithm: str = "load_balanced_linear") -> FieldRegistry:
+
+    def create_partitioned_field(
+        self,
+        fld: Union[Field, FieldRegistry] = None,
+        partitioning_algorithm: str = "load_balanced_linear",
+    ) -> FieldRegistry:
         """
         Create a partitioned field object
 
@@ -88,34 +106,41 @@ class MeshPartitioner:
         ----------
         fld : Field or FieldRegistry
             Field object to partition
-        
+
         partitioning_algorithm : str
             Algorithm to use for partitioning the mesh elements
-        
+
         Returns
         -------
         partitioned_field : FieldRegistry
             Partitioned field object
         """
 
-        self.log.write("info", f"Partitioning the field object with {partitioning_algorithm} algorithm")
+        self.log.write(
+            "info",
+            f"Partitioning the field object with {partitioning_algorithm} algorithm",
+        )
 
         partitioned_field = FieldRegistry(self.rt.comm)
 
         for key in fld.fields.keys():
             for i in range(len(fld.fields[key])):
-                field_ = self.redistribute_field_elements(fld.fields[key][i], partitioning_algorithm)
+                field_ = self.redistribute_field_elements(
+                    fld.fields[key][i], partitioning_algorithm
+                )
                 partitioned_field.fields[key].append(field_.copy())
-
 
         self.log.write("info", "done")
         partitioned_field.t = fld.t
         partitioned_field.update_vars()
 
-
         return partitioned_field
 
-    def redistribute_field_elements(self, field: np.ndarray = None, partitioning_algorithm: str = "load_balanced_linear") -> None:
+    def redistribute_field_elements(
+        self,
+        field: np.ndarray = None,
+        partitioning_algorithm: str = "load_balanced_linear",
+    ) -> None:
         """
         Redistribute the elements of the mesh object to different ranks
 
@@ -131,9 +156,12 @@ class MeshPartitioner:
         if partitioning_algorithm == "load_balanced_linear":
 
             self.log.write("debug", "Using load balanced linear partitioning algorithm")
-            self.log.write("debug", "Determining the number of elements each processor should have")
-            nelv, offset_el, n = load_balanced_linear_map(self.rt.comm, self.partition_glb_nelv, self.partition_lxyz) 
-
+            self.log.write(
+                "debug", "Determining the number of elements each processor should have"
+            )
+            nelv, offset_el, n = load_balanced_linear_map(
+                self.rt.comm, self.partition_glb_nelv, self.partition_lxyz
+            )
 
             self.log.write("debug", "Partitioning data and redistributing")
             # Get the elements of the field that are compliant with the conditions provided at init
@@ -145,13 +173,16 @@ class MeshPartitioner:
             data = []
             for rank in range(self.rt.comm.Get_size()):
                 condition1 = self.partition_global_element_number >= offset_el[rank]
-                condition2 = self.partition_global_element_number < offset_el[rank] + nelv[rank] 
+                condition2 = (
+                    self.partition_global_element_number < offset_el[rank] + nelv[rank]
+                )
                 destination.append(rank)
                 data.append(field_[np.where(np.logical_and(condition1, condition2))])
-            
 
             # Send data to all other ranks
-            sources, recvbfs = self.rt.all_to_all(destination = destination, data = data, dtype=field.dtype)
+            sources, recvbfs = self.rt.all_to_all(
+                destination=destination, data=data, dtype=field.dtype
+            )
 
             self.log.write("debug", "Data received. Reshaping and concatenating")
             # Reshape the datad put it in the field format
@@ -167,62 +198,60 @@ class MeshPartitioner:
 
         return partitioned_field
 
-def load_balanced_linear_map(comm, glb_nelv: int = None, lxyz: int = None) -> tuple[list[int], list[int], list[int]]:
-        """
-        Maps the number of elements each processor has
-        in a linearly load balanced manner
 
-        In this case we do it in every rank just to see which data each should have before communicating.
+def load_balanced_linear_map(
+    comm, glb_nelv: int = None, lxyz: int = None
+) -> tuple[list[int], list[int], list[int]]:
+    """
+    Maps the number of elements each processor has
+    in a linearly load balanced manner
 
-        Parameters
-        ----------
-        comm : MPI communicator
-            MPI communicator
+    In this case we do it in every rank just to see which data each should have before communicating.
 
-        glb_nelv : int
-            Number of global elements
-        
-        lxyz : int
-            Number of points in an element
+    Parameters
+    ----------
+    comm : MPI communicator
+        MPI communicator
 
-        Returns
-        -------
-        nelv : list[int] 
-            Number of elements each processor should have
-        
-        offset_el : list[int]
-            Offset of the elements each processor should have
-        
-        n : list[int]
-            Number of points each processor should have
-        """
+    glb_nelv : int
+        Number of global elements
 
-        nelv = []
-        offset_el = []
-        n = []        
-        for pe_rank in range(comm.Get_size()):
-            
-            m = np.int64(glb_nelv)
-            pe_rank = np.int64(pe_rank) 
-            pe_size = np.int64(comm.Get_size())
-            l = np.floor(np.double(m) / np.double(pe_size))
-            r = np.mod(m, pe_size)
-            ip = np.floor(
-                (
-                    np.double(m)
-                    + np.double(pe_size)
-                    - np.double(pe_rank)
-                    - np.double(1)
-                )
-                / np.double(pe_size)
-            )
+    lxyz : int
+        Number of points in an element
 
-            nelv_ = np.int64(ip)
-            offset_el_ = np.int64(pe_rank * l + min(pe_rank, r))
-            n_ = lxyz * nelv
+    Returns
+    -------
+    nelv : list[int]
+        Number of elements each processor should have
 
-            nelv.append(nelv_)
-            offset_el.append(offset_el_)
-            n.append(n_)
-        
-        return nelv, offset_el, n
+    offset_el : list[int]
+        Offset of the elements each processor should have
+
+    n : list[int]
+        Number of points each processor should have
+    """
+
+    nelv = []
+    offset_el = []
+    n = []
+    for pe_rank in range(comm.Get_size()):
+
+        m = np.int64(glb_nelv)
+        pe_rank = np.int64(pe_rank)
+        pe_size = np.int64(comm.Get_size())
+        l = np.floor(np.double(m) / np.double(pe_size))
+        r = np.mod(m, pe_size)
+        ip = np.floor(
+            (np.double(m) + np.double(pe_size) - np.double(pe_rank) - np.double(1))
+            / np.double(pe_size)
+        )
+
+        nelv_ = np.int64(ip)
+        offset_el_ = np.int64(pe_rank * l + min(pe_rank, r))
+        n_ = lxyz * nelv
+
+        nelv.append(nelv_)
+        offset_el.append(offset_el_)
+        n.append(n_)
+
+    return nelv, offset_el, n
