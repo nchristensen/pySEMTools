@@ -26,10 +26,10 @@ from pynektools.interpolation.interpolator import Interpolator
 from pynektools.interpolation.point_interpolator.single_point_legendre_interpolator import LegendreInterpolator as element_interpolator_c
 from pynektools.io.ppymech.neksuite import preadnek
 from pynektools.datatypes.msh import Mesh as msh_c
-
-from pynektools.interpolation.mpi_ops import gather_in_root, scatter_from_root
+from pynektools.comm.router import Router
 
 NoneType = type(None)
+rt = Router(comm)
 
 #==============================================================================
 
@@ -137,7 +137,7 @@ def test_single_point_interpolator():
     # Gather in rank zero for processing
     root = 0
     sendbuf = my_interpolated_fields.reshape((my_interpolated_fields.size))
-    recvbuf, _ = gather_in_root(sendbuf, root, np.double,  comm)
+    recvbuf, _ = rt.gather_in_root(sendbuf, root, np.double)
     
     if type(recvbuf) != NoneType:
         tmp = recvbuf.reshape((int(recvbuf.size/(3)), 3))
@@ -264,7 +264,7 @@ def test_multiple_point_interpolator_numpy():
     # Gather in rank zero for processing
     root = 0
     sendbuf = my_interpolated_fields.reshape((my_interpolated_fields.size))
-    recvbuf, _ = gather_in_root(sendbuf, root, np.double,  comm)
+    recvbuf, _ = rt.gather_in_root(sendbuf, root, np.double)
     
     if type(recvbuf) != NoneType:
         tmp = recvbuf.reshape((int(recvbuf.size/(3)), 3))
@@ -392,7 +392,7 @@ def test_multiple_point_interpolator_torch():
     # Gather in rank zero for processing
     root = 0
     sendbuf = my_interpolated_fields.reshape((my_interpolated_fields.size))
-    recvbuf, _ = gather_in_root(sendbuf, root, np.double,  comm)
+    recvbuf, _ = rt.gather_in_root(sendbuf, root, np.double)
     
     if type(recvbuf) != NoneType:
         tmp = recvbuf.reshape((int(recvbuf.size/(3)), 3))
@@ -522,7 +522,7 @@ def test_multiple_point_interpolator_torch_autograd():
     # Gather in rank zero for processing
     root = 0
     sendbuf = my_interpolated_fields.reshape((my_interpolated_fields.size))
-    recvbuf, _ = gather_in_root(sendbuf, root, np.double,  comm)
+    recvbuf, _ = rt.gather_in_root(sendbuf, root, np.double)
     
     if type(recvbuf) != NoneType:
         tmp = recvbuf.reshape((int(recvbuf.size/(3)), 3))
@@ -534,3 +534,6 @@ def test_multiple_point_interpolator_torch_autograd():
     passed = np.all([t1])
 
     assert passed
+
+test_multiple_point_interpolator_numpy()
+test_multiple_point_interpolator_torch()

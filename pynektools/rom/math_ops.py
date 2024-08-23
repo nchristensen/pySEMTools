@@ -2,7 +2,7 @@
 
 from mpi4py import MPI
 import numpy as np
-from .mpi_ops import gather_in_root
+from ..comm.router import Router
 
 NoneType = type(None)
 
@@ -83,8 +83,10 @@ class MathOps:
     def gather_modes_and_mass_at_root(self, u_1t, bm, n, comm, root=0):
         """Method to gather modes and mass matrix in a given root"""
 
+        rt = Router(comm)
+
         sendbuf = u_1t.reshape((u_1t.size))
-        recvbuf, _ = gather_in_root(sendbuf, root, sendbuf.dtype, comm)
+        recvbuf, _ = rt.gather_in_root(sendbuf, root, sendbuf.dtype)
 
         if not isinstance(recvbuf, NoneType):
             u = recvbuf.reshape((n, int(recvbuf.size / n)))
@@ -92,7 +94,7 @@ class MathOps:
             u = None
 
         sendbuf = bm.reshape((bm.size))
-        recvbuf, _ = gather_in_root(sendbuf, root, sendbuf.dtype, comm)
+        recvbuf, _ = rt.gather_in_root(sendbuf, root, sendbuf.dtype)
 
         if not isinstance(recvbuf, NoneType):
             bm1sqrt = recvbuf.reshape((n, int(recvbuf.size / n)))
