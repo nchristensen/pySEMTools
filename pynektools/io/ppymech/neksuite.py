@@ -465,6 +465,9 @@ def pynekread(filename, comm, data_dtype=np.double, msh=None, fld=None):
         else:
             mpi_offset += ioh.glb_nelv * ioh.gdim * ioh.lxyz * ioh.fld_data_size
 
+    if not isinstance(fld, type(None)):
+        log.write("info", "Reading field data")
+
     # Read the velocity
     if ioh.vel_variables > 0:
         if not isinstance(fld, type(None)):
@@ -539,7 +542,7 @@ def pynekread(filename, comm, data_dtype=np.double, msh=None, fld=None):
 
     fh.Close()
 
-    log.write("debug", "File read")
+    log.write("info", "File read")
     log.toc()
 
     del log
@@ -712,7 +715,7 @@ def pynekread_field(filename, comm, data_dtype=np.double, key=""):
 
     fh.Close()
 
-    log.write("debug", "File read")
+    log.write("info", "File read")
     log.toc()
 
     del log

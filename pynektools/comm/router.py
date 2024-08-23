@@ -435,7 +435,7 @@ class Router:
         self.comm.Scatterv(sendbuf=(sendbuf, sendcounts), recvbuf=recvbuf, root=root)
 
         return recvbuf
- 
+
     def all_gather(self, data=None, dtype=None):
         """
         Gathers data from all processes to all processes.
@@ -472,7 +472,7 @@ class Router:
             data = data.flatten()
             count = data.size
         else:
-            data = np.ones((1), dtype=dtype)*data
+            data = np.ones((1), dtype=dtype) * data
             count = 1
 
         # Collect local array sizes using the high-level mpi4py gather
@@ -482,4 +482,4 @@ class Router:
 
         self.comm.Allgatherv(sendbuf=data, recvbuf=(recvbuf, sendcounts))
 
-        return recvbuf, sendcounts  
+        return recvbuf, sendcounts
