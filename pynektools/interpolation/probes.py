@@ -5,7 +5,6 @@ import csv
 import numpy as np
 from ..io.ppymech.neksuite import preadnek
 from .interpolator import Interpolator
-from .mpi_ops import gather_in_root
 from ..monitoring.logger import Logger
 
 NoneType = type(None)
@@ -499,7 +498,7 @@ class Probes:
         sendbuf = self.my_interpolated_fields.reshape(
             (self.my_interpolated_fields.size)
         )
-        recvbuf, _ = gather_in_root(sendbuf, root, np.double, comm)
+        recvbuf, _ = self.itp.rt.gather_in_root(sendbuf, root, np.double)
 
         if not isinstance(recvbuf, NoneType):
             tmp = recvbuf.reshape(
@@ -587,7 +586,7 @@ class Probes:
         sendbuf = self.my_interpolated_fields.reshape(
             (self.my_interpolated_fields.size)
         )
-        recvbuf, _ = gather_in_root(sendbuf, root, np.double, comm)
+        recvbuf, _ = self.itp.rt.gather_in_root(sendbuf, root, np.double)
 
         if not isinstance(recvbuf, NoneType):
             tmp = recvbuf.reshape(
