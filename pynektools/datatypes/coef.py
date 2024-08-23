@@ -542,7 +542,9 @@ class Coef:
         >>> dudx = coef.dudxyz(u, coef.drdx, coef.dsdx, coef.dtdx)
         """
 
-        self.log.write("info", "Calculating the derivative with respect to physical coordinates")
+        self.log.write(
+            "info", "Calculating the derivative with respect to physical coordinates"
+        )
         self.log.tic()
 
         nelv = field.shape[0]
@@ -594,7 +596,7 @@ class Coef:
             dudxyz = dfdr * drdx + dfds * dsdx + dfdt * dtdx
         else:
             dudxyz = dfdr * drdx + dfds * dsdx
-        
+
         self.log.write("info", "done")
         self.log.toc()
 
@@ -662,7 +664,9 @@ class Coef:
 
         if msh.create_connectivity_bool:
 
-            self.log.write("info", "Averaging field over shared points in the same rank")
+            self.log.write(
+                "info", "Averaging field over shared points in the same rank"
+            )
             self.log.tic()
 
             if msh.lz > 1:
@@ -735,12 +739,15 @@ class Coef:
                                 ]
                             )
                             field[e, k, j, i] = np.mean(field_at_shared)
-            
+
             self.log.write("info", "done")
             self.log.toc()
 
         else:
-            self.log.write("warning", "Mesh does not have connectivity data. Returning unmodified array")
+            self.log.write(
+                "warning",
+                "Mesh does not have connectivity data. Returning unmodified array",
+            )
 
         return field
 

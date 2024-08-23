@@ -1,8 +1,10 @@
-'''Contains the ProbesReader class'''
+"""Contains the ProbesReader class"""
+
 import csv
 import numpy as np
 
-__all__ = ['ProbesReader']
+__all__ = ["ProbesReader"]
+
 
 class ProbesReader:
     """
@@ -84,7 +86,6 @@ def read_probes_csv(file_name: str) -> tuple:
         times = tmp[0::N_p, 0]
         fields = dict()
         for i, field_name in enumerate(field_names):
-            fields[field_name] = np.reshape(tmp[:, i + 1], (N_p, -1),
-                                            order="F")
+            fields[field_name] = np.reshape(tmp[:, i + 1], (N_p, -1), order="F")
 
     return (points, fields, times, field_names)

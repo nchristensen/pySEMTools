@@ -14,10 +14,10 @@ NoneType = type(None)
 class Probes:
     """
     Class to interpolate fields at probes from a SEM mesh.
-    
+
     Main interpolation class. This works in parallel, however, the probes are held at rank 0.
     therefore if initializing from file, the probes file should be read at rank 0 and then
-    scattered to all ranks. 
+    scattered to all ranks.
 
     If the probes are passed as an argument, they should be passed to all ranks, however only the
     data in rank 0 will be relevant (an scatter to all other ranks). See example below to observe
@@ -47,7 +47,7 @@ class Probes:
         If True, a progress bar is displayed. Default is False.
     point_interpolator_type : str
         Type of point interpolator. Default is single_point_legendre.
-        options are: single_point_legendre, single_point_lagrange, 
+        options are: single_point_legendre, single_point_lagrange,
         multiple_point_legendre_numpy, multiple_point_legendre_torch.
     max_pts : int, optional
         Maximum number of points to interpolate. Default is 128. Used if multiple point interpolator is selected.
@@ -66,7 +66,7 @@ class Probes:
     use_autograd : bool
         If True, autograd is used to compute the interpolation. Default is False.
         This is only used if the interpolator is a torch interpolator.
-        
+
     Attributes
     ----------
     probes : ndarray
@@ -74,7 +74,7 @@ class Probes:
     interpolated_fields : ndarray
         2D array of interpolated fields at probes. shape = (n_probes, n_fields + 1). Held at Rank 0.
         The first column is always time, the rest are the interpolated fields.
-    
+
     Notes
     -----
     A sample input file can be found in the examples folder of the main repository,
@@ -109,7 +109,7 @@ class Probes:
     class IoData:
         """
         Class to store the input/output data.
-        
+
         Support class to hold paths to probe, msh, and output data.
 
         Parameters
@@ -138,8 +138,8 @@ class Probes:
         global_tree_type="rank_bbox",
         global_tree_nbins=1024,
         use_autograd=False,
-        find_points_tol = np.finfo(np.double).eps*10, 
-        find_points_max_iter = 50
+        find_points_tol=np.finfo(np.double).eps * 10,
+        find_points_max_iter=50,
     ):
 
         rank = comm.Get_rank()
@@ -160,9 +160,9 @@ class Probes:
             self.output_data = self.IoData(params_file["case"]["IO"]["output_data"])
             self.params_file = params_file
         else:
-            
+
             self.log.write("info", f"No input file provided. Using default values")
-            
+
             default_output = {}
             default_output["dataPath"] = "./"
             default_output["casename"] = "interpolated_fields.csv"
@@ -170,11 +170,13 @@ class Probes:
             self.output_data = self.IoData(default_output)
 
         if isinstance(probes, NoneType):
-            
+
             self.probes_data = self.IoData(params_file["case"]["IO"]["probe_data"])
             # Read probes
             probe_fname = self.probes_data.dataPath + self.probes_data.casename
-            self.log.write("info", "Reading probes from {} in rank 0".format(probe_fname))
+            self.log.write(
+                "info", "Reading probes from {} in rank 0".format(probe_fname)
+            )
             if rank == 0:
                 file = open(probe_fname)
                 self.probes = np.array(list(csv.reader(file)), dtype=np.double)
@@ -182,7 +184,9 @@ class Probes:
                 self.probes = None
         else:
             # Assign probes to the required shape
-            self.log.write("info", "Probes provided as keyword argument. Assigning in rank 0")
+            self.log.write(
+                "info", "Probes provided as keyword argument. Assigning in rank 0"
+            )
             if rank == 0:
                 self.probes = probes
             else:
@@ -200,7 +204,7 @@ class Probes:
                 + str(self.mesh_data.index).zfill(5)
             )
             self.log.write("info", "Reading mesh from {}".format(msh_fld_fname))
-            mesh_data = preadnek(msh_fld_fname, comm) 
+            mesh_data = preadnek(msh_fld_fname, comm)
             self.x, self.y, self.z = get_coordinates_from_hexadata(mesh_data)
             del mesh_data
 
@@ -226,7 +230,12 @@ class Probes:
 
         # Set up the global tree
         self.log.write("info", "Setting up global tree")
-        self.itp.set_up_global_tree(comm, find_points_comm_pattern=find_points_comm_pattern,global_tree_type=global_tree_type, global_tree_nbins=global_tree_nbins)
+        self.itp.set_up_global_tree(
+            comm,
+            find_points_comm_pattern=find_points_comm_pattern,
+            global_tree_type=global_tree_type,
+            global_tree_nbins=global_tree_nbins,
+        )
 
         # Scatter the probes to all ranks
         self.log.write("info", "Scattering probes to all ranks")
@@ -238,8 +247,8 @@ class Probes:
             comm,
             find_points_comm_pattern=find_points_comm_pattern,
             elem_percent_expansion=elem_percent_expansion,
-            tol = find_points_tol,
-            max_iter = find_points_max_iter
+            tol=find_points_tol,
+            max_iter=find_points_max_iter,
         )
 
         # Gather probes to rank 0 again
@@ -254,27 +263,40 @@ class Probes:
         if write_coords:
 
             if rank == 0:
-                # Write the coordinates                
+                # Write the coordinates
                 ## Set up the header
                 field_type_list = None
-                field_index_list = None    
+                field_index_list = None
                 if not isinstance(filename, NoneType):
                     # Check if the keywords indicate that the interpolation is from file
-                    if "case" in self.params_file and "interpolate_fields" in self.params_file["case"] and "field_type" in self.params_file["case"]["interpolate_fields"]:
-                        field_type_list = self.params_file["case"]["interpolate_fields"]["field_type"]
-                        field_index_list = self.params_file["case"]["interpolate_fields"]["field"]
-                         
+                    if (
+                        "case" in self.params_file
+                        and "interpolate_fields" in self.params_file["case"]
+                        and "field_type"
+                        in self.params_file["case"]["interpolate_fields"]
+                    ):
+                        field_type_list = self.params_file["case"][
+                            "interpolate_fields"
+                        ]["field_type"]
+                        field_index_list = self.params_file["case"][
+                            "interpolate_fields"
+                        ]["field"]
+
                 ## Create the header
-                if isinstance(field_type_list, NoneType) or isinstance(field_index_list, NoneType):
+                if isinstance(field_type_list, NoneType) or isinstance(
+                    field_index_list, NoneType
+                ):
                     header = [self.probes.shape[0], 0, 0]
                 else:
                     header = [self.probes.shape[0], len(field_type_list)]
                     for i in range(len(field_type_list)):
-                        header.append(f'{field_type_list[i]}{field_index_list[i]}')
-                
+                        header.append(f"{field_type_list[i]}{field_index_list[i]}")
+
                 ## Write the coordinates
-                self.log.write("info", "Writing probe coordinates to {}".format(self.output_fname))
-                write_csv(self.output_fname, self.probes, "w", header = header)
+                self.log.write(
+                    "info", "Writing probe coordinates to {}".format(self.output_fname)
+                )
+                write_csv(self.output_fname, self.probes, "w", header=header)
 
                 # Write out a file with the points with warnings
                 indices = np.where(self.itp.err_code != 1)[0]
@@ -314,22 +336,40 @@ class Probes:
                     + self.output_data.casename[:-4]
                     + ".json"
                 )
-                self.log.write("info", "Writing points with warnings to {}".format(json_output_fname))
+                self.log.write(
+                    "info",
+                    "Writing points with warnings to {}".format(json_output_fname),
+                )
                 with open(json_output_fname, "w") as outfile:
                     outfile.write(params_file_str)
 
                 nfound = len(np.where(self.itp.err_code == 1)[0])
                 nnotfound = len(np.where(self.itp.err_code == 0)[0])
                 nwarning = len(np.where(self.itp.err_code == -10)[0])
-                self.log.write("info", f"Found {nfound} points, {nnotfound} not found, {nwarning} with warnings")
+                self.log.write(
+                    "info",
+                    f"Found {nfound} points, {nnotfound} not found, {nwarning} with warnings",
+                )
 
                 if nwarning > 0:
-                    self.log.write("warning", "There are points with warnings. Check the warning file to see them (error code -10)")
-                    self.log.write("warning", "There are points with warnings. If test pattern is small, you can trust the interpolation")
+                    self.log.write(
+                        "warning",
+                        "There are points with warnings. Check the warning file to see them (error code -10)",
+                    )
+                    self.log.write(
+                        "warning",
+                        "There are points with warnings. If test pattern is small, you can trust the interpolation",
+                    )
 
                 if nnotfound > 0:
-                    self.log.write("error", "Some points were not found. Check the warning file to see them (error code 0)")
-                    self.log.write("error", "Some points were not found. The result from their interpolation will be 0")
+                    self.log.write(
+                        "error",
+                        "Some points were not found. Check the warning file to see them (error code 0)",
+                    )
+                    self.log.write(
+                        "error",
+                        "Some points were not found. The result from their interpolation will be 0",
+                    )
 
         ## init dummy variables
         self.fld_data = None
@@ -353,12 +393,12 @@ class Probes:
         Parameters
         ----------
         file_number : int
-            The file number to read. 
+            The file number to read.
             This is the number that is appended to the file name given at init.
-            
+
         comm : Comm
             MPI communicator.
-            
+
         Returns
         -------
         hexadata
@@ -399,10 +439,10 @@ class Probes:
         ----------
         fld_data : hexadata
             Hexadata object containing the field data.
-            
+
         comm : Comm
             MPI communicator.
-            
+
         mode : str
             Mode of interpolation. only rst. This should be removed as an option.
 
@@ -445,12 +485,15 @@ class Probes:
                 fld_data, self.list_of_fields[i], self.list_of_qoi[i]
             )
 
-            self.log.write("info", f"Interpolating field: {self.list_of_fields[i]}:{self.list_of_qoi[i]}")
+            self.log.write(
+                "info",
+                f"Interpolating field: {self.list_of_fields[i]}:{self.list_of_qoi[i]}",
+            )
             if mode == "rst":
                 self.my_interpolated_fields[:, i + 1] = (
                     self.itp.interpolate_field_from_rst(field)[:]
                 )
-            
+
         # Write to the csv file
         root = 0
         sendbuf = self.my_interpolated_fields.reshape(
@@ -475,7 +518,9 @@ class Probes:
             self.interpolated_fields[self.itp.sort_by_rank] = tmp
 
             # Write data in the csv file
-            self.log.write("info", f"Writing interpolated fields to {self.output_fname}")
+            self.log.write(
+                "info", f"Writing interpolated fields to {self.output_fname}"
+            )
             write_csv(self.output_fname, self.interpolated_fields, "a")
 
     def interpolate_from_field_list(self, t, field_list, comm, write_data=True):
@@ -488,23 +533,23 @@ class Probes:
         ----------
         t : float
             Time of the field data.
-            
+
         field_list : list
             List of fields to interpolate. Each field is an ndarray of shape (nelv, lz, ly, lx).
-            
+
         comm : Comm
             MPI communicator.
-            
+
         write_data : bool
             If True, the interpolated data is written to a csv file. Default is True.
 
         Examples
         --------
-        This method can be used to interpolate fields from a list of fields. If you have 
+        This method can be used to interpolate fields from a list of fields. If you have
         previosly obtained a set of fields u,v,w as ndarrays of shape (nelv, lz, ly, lx), you can:
 
         >>> probes.interpolate_from_field_list(t, [u,v,w], comm)
-        
+
         The results are stored in probes.interpolated_fields attribute.
         Remember: the first column of this attribute is always the time t given.
         """
@@ -533,7 +578,7 @@ class Probes:
             self.log.write("info", f"Interpolating field {i}")
             self.my_interpolated_fields[:, i + 1] = self.itp.interpolate_field_from_rst(
                 field
-            )[:] 
+            )[:]
 
             i += 1
 
@@ -560,7 +605,9 @@ class Probes:
 
             # Write data in the csv file
             if write_data:
-                self.log.write("info", f"Writing interpolated fields to {self.output_fname}")
+                self.log.write(
+                    "info", f"Writing interpolated fields to {self.output_fname}"
+                )
                 write_csv(self.output_fname, self.interpolated_fields, "a")
 
 
@@ -570,7 +617,7 @@ def get_coordinates_from_hexadata(data):
     Parameters
     ----------
     data :
-        
+
 
     Returns
     -------
@@ -594,25 +641,25 @@ def get_coordinates_from_hexadata(data):
     return x, y, z
 
 
-def write_csv(fname, data, mode, header = None):
+def write_csv(fname, data, mode, header=None):
     """write point positions to the file
 
     Parameters
     ----------
     fname :
-        
+
     data :
-        
+
     mode :
-        
+
 
     Returns
     -------
 
     """
 
-    #string = "writing .csv file as " + fname
-    #print(string)
+    # string = "writing .csv file as " + fname
+    # print(string)
 
     # open file
     outfile = open(fname, mode)
@@ -633,11 +680,11 @@ def get_field_from_hexadata(data, prefix, qoi):
     Parameters
     ----------
     data :
-        
+
     prefix :
-        
+
     qoi :
-        
+
 
     Returns
     -------

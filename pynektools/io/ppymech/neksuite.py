@@ -545,6 +545,7 @@ def pynekread(filename, comm, data_dtype=np.double, msh=None, fld=None):
     del log
     return
 
+
 def pynekread_field(filename, comm, data_dtype=np.double, key=""):
     """
     Read nek file and returs a pynekobject (Parallel).
@@ -576,7 +577,7 @@ def pynekread_field(filename, comm, data_dtype=np.double, key=""):
     log.tic()
 
     key_prefix = key.split("_")[0]
-    try: 
+    try:
         key_suffix = int(key.split("_")[1])
     except IndexError:
         key_suffix = 0
@@ -694,7 +695,7 @@ def pynekread_field(filename, comm, data_dtype=np.double, key=""):
         if key_prefix == "scal":
             var = int(key_suffix)
             log.write("debug", f"Reading scalar {var} data")
-            
+
             if var >= ioh.scalar_variables:
                 raise ValueError(f"Scalar {var} does not exist in the file.")
 
@@ -729,7 +730,8 @@ def pynekread_field(filename, comm, data_dtype=np.double, key=""):
     elif key_prefix == "scal":
         return [s]
     else:
-        raise ValueError(f"Key {key} not recognized.")        
+        raise ValueError(f"Key {key} not recognized.")
+
 
 # @profile
 def pwritenek(filename, data, comm):
@@ -1029,7 +1031,7 @@ def pynekwrite(filename, comm, msh=None, fld=None, wdsz=4, istep=0, write_mesh=T
     >>> from pynektools.io.ppymech.neksuite import pwritenek
     >>> pynekwrite('field00001.fld', comm, msh = msh, fld=fld)
     """
-    
+
     log = Logger(comm=comm, module_name="pynekwrite")
     log.tic()
     log.write("info", "Writing file: {}".format(filename))
@@ -1134,9 +1136,9 @@ def pynekwrite(filename, comm, msh=None, fld=None, wdsz=4, istep=0, write_mesh=T
 
     # Write the velocity
     if ioh.vel_variables > 0:
-    
+
         log.write("debug", "Writing velocity data")
-        
+
         u = fld.fields["vel"][0]
         v = fld.fields["vel"][1]
         if len(fld.fields["vel"]) > 2:
@@ -1191,7 +1193,7 @@ def pynekwrite(filename, comm, msh=None, fld=None, wdsz=4, istep=0, write_mesh=T
 
     # ================== Metadata
     if ioh.gdim > 2:
-            
+
         log.write("debug", "Writing metadata")
 
         # Write the coordinates
@@ -1249,7 +1251,7 @@ def pynekwrite(filename, comm, msh=None, fld=None, wdsz=4, istep=0, write_mesh=T
             fld.fields[key][i].shape = field_shape
 
     fh.Close()
-    
+
     log.write("debug", "File written")
     log.toc()
 

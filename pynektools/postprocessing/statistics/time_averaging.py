@@ -17,7 +17,7 @@ def average_field_files(
     dtype=np.single,
     rel_tol=0.05,
     output_word_size=4,
-    write_mesh = True,
+    write_mesh=True,
 ):
     """
     Average field files in batches of a given time interval.
@@ -28,7 +28,7 @@ def average_field_files(
     ----------
     comm : MPI.COMM
         MPI communicator.
-        
+
     field_index_name : str
         Index file that contains the information of the field files to be averaged.
         Relative or absule path to the file should be provided.
@@ -62,7 +62,7 @@ def average_field_files(
     -----
     This function will output the results in single precision and will put the mesh in all outputs by default.
     Future implementations might include this as an option.
-        
+
     Returns
     -------
     None
@@ -126,10 +126,15 @@ def average_field_files(
         f"Finished dividing files into batches.",
     )
 
-    logger.write("info", f"Writing {output_folder}batches_{os.path.basename(field_index_name)} batch index")
+    logger.write(
+        "info",
+        f"Writing {output_folder}batches_{os.path.basename(field_index_name)} batch index",
+    )
     logger.tic()
     if comm.Get_rank() == 0:
-        with open(output_folder + "batches_" + os.path.basename(field_index_name), "w") as outfile:
+        with open(
+            output_folder + "batches_" + os.path.basename(field_index_name), "w"
+        ) as outfile:
             outfile.write(json.dumps(batches, indent=4))
     comm.Barrier()
     logger.toc()
@@ -141,14 +146,16 @@ def average_field_files(
             "warning",
             "Provide the mesh_index keyword with an index to a file that contiains the mesh",
         )
-    
+
         for i, key in enumerate(file_index.keys()):
             try:
                 int_key = int(key)
             except ValueError:
                 continue
             mesh_index = key
-            logger.write("warning", f"we assume that the mesh index correspond to {mesh_index}")
+            logger.write(
+                "warning", f"we assume that the mesh index correspond to {mesh_index}"
+            )
             break
 
     logger.write("info", f"Reading mesh from file {mesh_index} in {field_index_name}")

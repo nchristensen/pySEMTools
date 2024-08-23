@@ -8,6 +8,7 @@ from mpi4py.MPI import Wtime as time
 USE_COLORS = os.getenv("PYNEKTOOLS_USE_COLORS", "False").lower() in ("true", "1", "t")
 DEBUG = os.getenv("PYNEKTOOLS_DEBUG", "False").lower() in ("true", "1", "t")
 
+
 # Modified from https://stackoverflow.com/questions/384076/how-can-i-color-python-logging-output
 class CustomFormatter(logging.Formatter):
     """Custom formatter for the log messages"""
@@ -29,7 +30,7 @@ class CustomFormatter(logging.Formatter):
         logging.ERROR: red + formatt + reset,
         logging.CRITICAL: bold_red + formatt + reset,
     }
-    
+
     FORMATS_no_color = {
         logging.DEBUG: formatt,
         logging.INFO: formatt,
@@ -66,7 +67,7 @@ class Logger:
             logger = logging.getLogger(module_name)
         else:
             logger = logging.getLogger(__name__)
-        
+
         logger.setLevel(level)
 
         # create console handler with a higher log level
@@ -80,7 +81,7 @@ class Logger:
 
         self.log = logger
 
-        #if DEBUG:
+        # if DEBUG:
         #    self.write("warning", "Debug mode activated - This will produce a lot of output.")
         #    self.write("warning", "Options where all ranks write are followed by a comm barrier.")
         #    self.write("warning", "bad for performance. Do not use debug mode in production.")
@@ -111,8 +112,8 @@ class Logger:
         rank = comm.Get_rank()
 
         if level == "debug_all":
-            #self.log.debug(message)
-            #comm.Barrier()
+            # self.log.debug(message)
+            # comm.Barrier()
             if rank == 0:
                 self.log.debug("This debug message type is not implemented yet.")
 

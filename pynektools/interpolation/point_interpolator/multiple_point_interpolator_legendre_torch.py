@@ -442,9 +442,11 @@ class LegendreInterpolator(MultiplePointInterpolator):
         self.iterations = 0
         self.eps_rst[:npoints, :nelems, :, :] = 1
 
-        #create an integer array to store the number of iterations that it took for each point
-        iterations_per_point = torch.zeros(npoints, nelems, 1, 1, dtype=torch.int32, device=device)
-        iterations_per_point[:,:,:,:] = max_iterations
+        # create an integer array to store the number of iterations that it took for each point
+        iterations_per_point = torch.zeros(
+            npoints, nelems, 1, 1, dtype=torch.int32, device=device
+        )
+        iterations_per_point[:, :, :, :] = max_iterations
 
         while (
             torch.any(torch.norm(self.eps_rst[:npoints, :nelems], dim=(2, 3)) > tol)
@@ -452,7 +454,7 @@ class LegendreInterpolator(MultiplePointInterpolator):
         ):
 
             with torch.no_grad():
-                
+
                 # Update the guess
                 self.rstj[:npoints, :nelems, 0, 0] = self.rj[:npoints, :nelems, 0, 0]
                 self.rstj[:npoints, :nelems, 1, 0] = self.sj[:npoints, :nelems, 0, 0]
@@ -495,8 +497,10 @@ class LegendreInterpolator(MultiplePointInterpolator):
                 self.sj[:npoints, :nelems, 0, 0] = self.rstj[:npoints, :nelems, 1, 0]
                 self.tj[:npoints, :nelems, 0, 0] = self.rstj[:npoints, :nelems, 2, 0]
                 self.iterations += 1
-                
-                points_found = torch.norm(self.eps_rst[:npoints, :nelems], dim=(2, 3)) <= tol
+
+                points_found = (
+                    torch.norm(self.eps_rst[:npoints, :nelems], dim=(2, 3)) <= tol
+                )
                 iterations_per_point[points_found] = self.iterations
 
         with torch.no_grad():
@@ -765,7 +769,7 @@ class LegendreInterpolator(MultiplePointInterpolator):
         elem_percent_expansion = settings.get("elem_percent_expansion", 0.01)
         progress_bar = settings.get("progress_bar", False)
         find_pts_tol = settings.get("find_pts_tol", np.finfo(np.double).eps * 10)
-        find_pts_max_iterations = settings.get("find_pts_max_iterations", 50)  
+        find_pts_max_iterations = settings.get("find_pts_max_iterations", 50)
         # Buffers
         r = buffers.get("r", None)
         s = buffers.get("s", None)
@@ -992,7 +996,7 @@ class LegendreInterpolator(MultiplePointInterpolator):
                         err_code[real_list[better_test]] = not_found_code
                         test_pattern[real_list[better_test]] = test_error[better_test]
 
-                    #if len(set_as_found) > 0:
+                    # if len(set_as_found) > 0:
                     #    err_code[real_list[set_as_found]] = 1
 
                 else:

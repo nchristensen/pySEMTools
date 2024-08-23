@@ -14,12 +14,12 @@ def index_files_from_log(comm, logpath="", logname="", progress_reports=50):
     Idenx files based on the outputs of a neko log file.
 
     Index files based on a neko log file.
-    
+
     Parameters
     ----------
     comm : MPI.COMM
         MPI communicator
-        
+
     logpath : str
         Path to the log file. Optional. If not provided, the current working directory is used.
     logname : str
@@ -37,7 +37,7 @@ def index_files_from_log(comm, logpath="", logname="", progress_reports=50):
     >>> from mpi4py import MPI
     >>> from pynektools.postprocessing.file_indexing import index_files_from_log
     >>> comm = MPI.COMM_WORLD
-    >>> index_files_from_log(comm, logpath="path/to/logfile/", logname="logfile.log", progress_reports=50)    
+    >>> index_files_from_log(comm, logpath="path/to/logfile/", logname="logfile.log", progress_reports=50)
     """
 
     logger = Logger(comm=comm, module_name="file_index_from_log")
@@ -218,17 +218,24 @@ def index_files_from_log(comm, logpath="", logname="", progress_reports=50):
     del logger
 
 
-def index_files_from_folder(comm, folder_path="", run_start_time=0, stat_start_time=0, output_folder = "", file_type = ""):
+def index_files_from_folder(
+    comm,
+    folder_path="",
+    run_start_time=0,
+    stat_start_time=0,
+    output_folder="",
+    file_type="",
+):
     """
     Index files based on a folder.
 
     Index all field files in a folder.
-    
+
     Parameters
     ----------
     comm : MPI.COMM
         mpi communicator.
-        
+
     folder_path : str
         Path to the folder. Optional. If not provided, the current working directory is used.
     run_start_time : float
@@ -288,26 +295,26 @@ def index_files_from_folder(comm, folder_path="", run_start_time=0, stat_start_t
 
     for ftype in added_files:
         logger.write("info", f"Found files with {ftype} pattern")
-        
+
     if isinstance(file_type, list) and len(added_files) < 1:
         logger.write("warning", f"No files with pattern {file_type} found")
 
     # Do a test to see if the file type exist and if one wants to overwrite it
     remove = []
     for ftype in added_files:
-        index_fname = folder_path+ftype+"_index.json"
+        index_fname = folder_path + ftype + "_index.json"
         file_exists = os.path.exists(index_fname)
         if file_exists:
             logger.write("warning", f"File {index_fname} exists. Overwrite?")
             overwrite = input("input: [yes/no] ")
             if overwrite == "no":
                 remove.append(ftype)
-    
+
     added_files = [nm for nm in added_files if nm not in remove]
 
     for ftype in added_files:
         logger.write("info", f"Writing index for {ftype} pattern")
- 
+
     if comm.Get_rank() == 0:
         print(
             "========================================================================================="
@@ -327,7 +334,7 @@ def index_files_from_folder(comm, folder_path="", run_start_time=0, stat_start_t
 
         if ftype not in added_files:
             continue
-        
+
         logger.write("info", f"Indexing file: {file_in_folder}")
 
         files[ftype][files_index[ftype]] = dict()
@@ -386,7 +393,8 @@ def index_files_from_folder(comm, folder_path="", run_start_time=0, stat_start_t
 
     del logger
 
-def merge_index_files(comm, index_list = "", output_fname = "", sort_by_time = False):
+
+def merge_index_files(comm, index_list="", output_fname="", sort_by_time=False):
     """
     Merge index files into one.
 
@@ -437,25 +445,28 @@ def merge_index_files(comm, index_list = "", output_fname = "", sort_by_time = F
             with open(index_file, "r") as infile:
                 index = json.load(infile)
         except FileNotFoundError:
-            logger.write("warning", f"Expected file {index_file} but it does not exist. skipping it")
+            logger.write(
+                "warning",
+                f"Expected file {index_file} but it does not exist. skipping it",
+            )
             continue
 
         logger.write("info", f"Reading index file: {index_file}")
 
         for key in index.keys():
-            
+
             if key == "simulation_start_time":
                 if index[key] < consolidated_index["simulation_start_time"]:
                     consolidated_index["simulation_start_time"] = index[key]
                 continue
-            
+
             elif index[key]["path"] != "file_not_in_folder":
                 consolidated_index[consolidated_key] = index[key]
                 consolidated_key += 1
 
     if sort_by_time:
         logger.write("info", "Sorting index files by time")
-        
+
         unsorted_key = []
         time = []
         for key in consolidated_index.keys():
@@ -463,7 +474,7 @@ def merge_index_files(comm, index_list = "", output_fname = "", sort_by_time = F
                 int_key = int(key)
             except ValueError:
                 continue
-            
+
             unsorted_key.append(int(key))
             time.append(consolidated_index[key]["time"])
 
@@ -474,7 +485,9 @@ def merge_index_files(comm, index_list = "", output_fname = "", sort_by_time = F
 
         sorted_consolidated_index = {}
         sorted_consolidated_key = 0
-        sorted_consolidated_index["simulation_start_time"] = consolidated_index["simulation_start_time"]
+        sorted_consolidated_index["simulation_start_time"] = consolidated_index[
+            "simulation_start_time"
+        ]
 
         for key in sorted_key:
             sorted_consolidated_index[sorted_consolidated_key] = consolidated_index[key]
@@ -483,7 +496,6 @@ def merge_index_files(comm, index_list = "", output_fname = "", sort_by_time = F
         consolidated_index = sorted_consolidated_index
 
     logger.write("info", f"Writing consolidated index file: {output_fname}")
-
 
     write_index = True
     file_exists = os.path.exists(output_fname)
@@ -494,7 +506,6 @@ def merge_index_files(comm, index_list = "", output_fname = "", sort_by_time = F
         if overwrite == "no":
             write_index = False
             logger.write("warning", f"Skipping writing index {output_fname}")
-        
 
     if write_index:
         with open(output_fname, "w") as outfile:
