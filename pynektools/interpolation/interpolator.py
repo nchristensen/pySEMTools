@@ -520,6 +520,8 @@ class Interpolator:
             search_rank = search_comm.Get_rank()
             search_size = search_comm.Get_size()
 
+            search_rt = Router(search_comm)
+
             # Make each rank in the communicator broadcast their
             # bounding boxes to the others to search
             for broadcaster in range(0, search_size):
@@ -664,44 +666,42 @@ class Interpolator:
                 ]
 
                 root = broadcaster
-                tmp, probe_sendcount_broadcaster_is_candidate = gather_in_root(
+                tmp, probe_sendcount_broadcaster_is_candidate = search_rt.gather_in_root(
                     probe_broadcaster_is_candidate.reshape(
                         (probe_broadcaster_is_candidate.size)
                     ),
                     root,
                     np.double,
-                    search_comm,
                 )
                 if not isinstance(tmp, NoneType):
                     probe_broadcaster_has = tmp.reshape((int(tmp.size / 3), 3))
 
-                tmp, _ = gather_in_root(
+                tmp, _ = search_rt.gather_in_root(
                     probe_rst_broadcaster_is_candidate.reshape(
                         (probe_rst_broadcaster_is_candidate.size)
                     ),
                     root,
                     np.double,
-                    search_comm,
                 )
                 if not isinstance(tmp, NoneType):
                     probe_rst_broadcaster_has = tmp.reshape((int(tmp.size / 3), 3))
                 (
                     el_owner_broadcaster_has,
                     el_owner_sendcount_broadcaster_is_candidate,
-                ) = gather_in_root(
-                    el_owner_broadcaster_is_candidate, root, np.int64, search_comm
+                ) = search_rt.gather_in_root(
+                    el_owner_broadcaster_is_candidate, root, np.int64
                 )
-                glb_el_owner_broadcaster_has, _ = gather_in_root(
-                    glb_el_owner_broadcaster_is_candidate, root, np.int64, search_comm
+                glb_el_owner_broadcaster_has, _ = search_rt.gather_in_root(
+                    glb_el_owner_broadcaster_is_candidate, root, np.int64
                 )
-                rank_owner_broadcaster_has, _ = gather_in_root(
-                    rank_owner_broadcaster_is_candidate, root, np.int64, search_comm
+                rank_owner_broadcaster_has, _ = search_rt.gather_in_root(
+                    rank_owner_broadcaster_is_candidate, root, np.int64
                 )
-                err_code_broadcaster_has, _ = gather_in_root(
-                    err_code_broadcaster_is_candidate, root, np.int64, search_comm
+                err_code_broadcaster_has, _ = search_rt.gather_in_root(
+                    err_code_broadcaster_is_candidate, root, np.int64
                 )
-                test_pattern_broadcaster_has, _ = gather_in_root(
-                    test_pattern_broadcaster_is_candidate, root, np.double, search_comm
+                test_pattern_broadcaster_has, _ = search_rt.gather_in_root(
+                    test_pattern_broadcaster_is_candidate, root, np.double
                 )
 
                 # Now let the broadcaster check if it really had the point.
@@ -760,12 +760,11 @@ class Interpolator:
                     sendbuf = probe_broadcaster_has.reshape(probe_broadcaster_has.size)
                 else:
                     sendbuf = None
-                recvbuf = scatter_from_root(
+                recvbuf = search_rt.scatter_from_root(
                     sendbuf,
                     probe_sendcount_broadcaster_is_candidate,
                     root,
                     np.double,
-                    search_comm,
                 )
                 probe_broadcaster_is_candidate[:, :] = recvbuf.reshape(
                     (int(recvbuf.size / 3), 3)
@@ -776,12 +775,11 @@ class Interpolator:
                     )
                 else:
                     sendbuf = None
-                recvbuf = scatter_from_root(
+                recvbuf = search_rt.scatter_from_root(
                     sendbuf,
                     probe_sendcount_broadcaster_is_candidate,
                     root,
                     np.double,
-                    search_comm,
                 )
                 probe_rst_broadcaster_is_candidate[:, :] = recvbuf.reshape(
                     (int(recvbuf.size / 3), 3)
@@ -790,12 +788,11 @@ class Interpolator:
                     sendbuf = el_owner_broadcaster_has
                 else:
                     sendbuf = None
-                recvbuf = scatter_from_root(
+                recvbuf = search_rt.scatter_from_root(
                     sendbuf,
                     el_owner_sendcount_broadcaster_is_candidate,
                     root,
                     np.int64,
-                    search_comm,
                 )
                 el_owner_broadcaster_is_candidate[:] = recvbuf[:]
                 if search_rank == root:
@@ -803,48 +800,44 @@ class Interpolator:
                     sendbuf = glb_el_owner_broadcaster_has
                 else:
                     sendbuf = None
-                recvbuf = scatter_from_root(
+                recvbuf = search_rt.scatter_from_root(
                     sendbuf,
                     el_owner_sendcount_broadcaster_is_candidate,
                     root,
                     np.int64,
-                    search_comm,
                 )
                 glb_el_owner_broadcaster_is_candidate[:] = recvbuf[:]
                 if search_rank == root:
                     sendbuf = rank_owner_broadcaster_has
                 else:
                     sendbuf = None
-                recvbuf = scatter_from_root(
+                recvbuf = search_rt.scatter_from_root(
                     sendbuf,
                     el_owner_sendcount_broadcaster_is_candidate,
                     root,
                     np.int64,
-                    search_comm,
                 )
                 rank_owner_broadcaster_is_candidate[:] = recvbuf[:]
                 if search_rank == root:
                     sendbuf = err_code_broadcaster_has
                 else:
                     sendbuf = None
-                recvbuf = scatter_from_root(
+                recvbuf = search_rt.scatter_from_root(
                     sendbuf,
                     el_owner_sendcount_broadcaster_is_candidate,
                     root,
                     np.int64,
-                    search_comm,
                 )
                 err_code_broadcaster_is_candidate[:] = recvbuf[:]
                 if search_rank == root:
                     sendbuf = test_pattern_broadcaster_has
                 else:
                     sendbuf = None
-                recvbuf = scatter_from_root(
+                recvbuf = search_rt.scatter_from_root(
                     sendbuf,
                     el_owner_sendcount_broadcaster_is_candidate,
                     root,
                     np.double,
-                    search_comm,
                 )
                 test_pattern_broadcaster_is_candidate[:] = recvbuf[:]
 
@@ -893,6 +886,8 @@ class Interpolator:
                     )
 
             j = j + 1
+
+            del search_rt
             search_comm.Free()
 
         # Final check
