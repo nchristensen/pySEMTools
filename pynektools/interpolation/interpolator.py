@@ -6,7 +6,6 @@ import numpy as np
 from scipy.spatial import KDTree
 from tqdm import tqdm
 from mpi4py import MPI  # for the timer
-from .mpi_ops import gather_in_root, scatter_from_root
 from .point_interpolator.point_interpolator_factory import get_point_interpolator
 from ..monitoring.logger import Logger
 from ..comm.router import Router
@@ -666,12 +665,14 @@ class Interpolator:
                 ]
 
                 root = broadcaster
-                tmp, probe_sendcount_broadcaster_is_candidate = search_rt.gather_in_root(
-                    probe_broadcaster_is_candidate.reshape(
-                        (probe_broadcaster_is_candidate.size)
-                    ),
-                    root,
-                    np.double,
+                tmp, probe_sendcount_broadcaster_is_candidate = (
+                    search_rt.gather_in_root(
+                        probe_broadcaster_is_candidate.reshape(
+                            (probe_broadcaster_is_candidate.size)
+                        ),
+                        root,
+                        np.double,
+                    )
                 )
                 if not isinstance(tmp, NoneType):
                     probe_broadcaster_has = tmp.reshape((int(tmp.size / 3), 3))
