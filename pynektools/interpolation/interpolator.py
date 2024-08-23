@@ -360,30 +360,30 @@ class Interpolator:
         self.probe_partition_sendcount = probe_partition_sendcount
         self.probe_coord_partition_sendcount = probe_coord_partition_sendcount
         ## Double
-        tmp = scatter_from_root(
-            self.probes, probe_coord_partition_sendcount, io_rank, np.double, comm
+        tmp = self.rt.scatter_from_root(
+            self.probes, probe_coord_partition_sendcount, io_rank, np.double
         )
         self.probe_partition = tmp.reshape((int(tmp.size / 3), 3))
-        tmp = scatter_from_root(
-            self.probes_rst, probe_coord_partition_sendcount, io_rank, np.double, comm
+        tmp = self.rt.scatter_from_root(
+            self.probes_rst, probe_coord_partition_sendcount, io_rank, np.double
         )
         self.probe_rst_partition = tmp.reshape((int(tmp.size / 3), 3))
         ## Int
-        self.el_owner_partition = scatter_from_root(
-            self.el_owner, probe_partition_sendcount, io_rank, np.int64, comm
+        self.el_owner_partition = self.rt.scatter_from_root(
+            self.el_owner, probe_partition_sendcount, io_rank, np.int64
         )
-        self.glb_el_owner_partition = scatter_from_root(
-            self.glb_el_owner, probe_partition_sendcount, io_rank, np.int64, comm
+        self.glb_el_owner_partition = self.rt.scatter_from_root(
+            self.glb_el_owner, probe_partition_sendcount, io_rank, np.int64
         )
-        self.rank_owner_partition = scatter_from_root(
-            self.rank_owner, probe_partition_sendcount, io_rank, np.int64, comm
+        self.rank_owner_partition = self.rt.scatter_from_root(
+            self.rank_owner, probe_partition_sendcount, io_rank, np.int64
         )
-        self.err_code_partition = scatter_from_root(
-            self.err_code, probe_partition_sendcount, io_rank, np.int64, comm
+        self.err_code_partition = self.rt.scatter_from_root(
+            self.err_code, probe_partition_sendcount, io_rank, np.int64
         )
         ## Double
-        self.test_pattern_partition = scatter_from_root(
-            self.test_pattern, probe_partition_sendcount, io_rank, np.double, comm
+        self.test_pattern_partition = self.rt.scatter_from_root(
+            self.test_pattern, probe_partition_sendcount, io_rank, np.double
         )
 
         self.log.write("info", "done")
@@ -399,31 +399,31 @@ class Interpolator:
 
         root = io_rank
         sendbuf = self.probe_partition.reshape((self.probe_partition.size))
-        recvbuf, _ = gather_in_root(sendbuf, root, np.double, comm)
+        recvbuf, _ = self.rt.gather_in_root(sendbuf, root, np.double)
         if not isinstance(recvbuf, NoneType):
             self.probes[:, :] = recvbuf.reshape((int(recvbuf.size / 3), 3))[:, :]
         sendbuf = self.probe_rst_partition.reshape((self.probe_rst_partition.size))
-        recvbuf, _ = gather_in_root(sendbuf, root, np.double, comm)
+        recvbuf, _ = self.rt.gather_in_root(sendbuf, root, np.double)
         if not isinstance(recvbuf, NoneType):
             self.probes_rst[:, :] = recvbuf.reshape((int(recvbuf.size / 3), 3))[:, :]
         sendbuf = self.el_owner_partition
-        recvbuf, _ = gather_in_root(sendbuf, root, np.int64, comm)
+        recvbuf, _ = self.rt.gather_in_root(sendbuf, root, np.int64)
         if not isinstance(recvbuf, NoneType):
             self.el_owner[:] = recvbuf[:]
         sendbuf = self.glb_el_owner_partition
-        recvbuf, _ = gather_in_root(sendbuf, root, np.int64, comm)
+        recvbuf, _ = self.rt.gather_in_root(sendbuf, root, np.int64)
         if not isinstance(recvbuf, NoneType):
             self.glb_el_owner[:] = recvbuf[:]
         sendbuf = self.rank_owner_partition
-        recvbuf, _ = gather_in_root(sendbuf, root, np.int64, comm)
+        recvbuf, _ = self.rt.gather_in_root(sendbuf, root, np.int64)
         if not isinstance(recvbuf, NoneType):
             self.rank_owner[:] = recvbuf[:]
         sendbuf = self.err_code_partition
-        recvbuf, _ = gather_in_root(sendbuf, root, np.int64, comm)
+        recvbuf, _ = self.rt.gather_in_root(sendbuf, root, np.int64)
         if not isinstance(recvbuf, NoneType):
             self.err_code[:] = recvbuf[:]
         sendbuf = self.test_pattern_partition
-        recvbuf, _ = gather_in_root(sendbuf, root, np.double, comm)
+        recvbuf, _ = self.rt.gather_in_root(sendbuf, root, np.double)
         if not isinstance(recvbuf, NoneType):
             self.test_pattern[:] = recvbuf[:]
 
@@ -1187,7 +1187,7 @@ class Interpolator:
             sendbuf = sorted_probes.reshape((sorted_probes.size))
         else:
             sendbuf = None
-        recvbuf = scatter_from_root(sendbuf, sendcounts * 3, root, np.double, comm)
+        recvbuf = self.rt.scatter_from_root(sendbuf, sendcounts * 3, root, np.double)
         my_probes = recvbuf.reshape((int(recvbuf.size / 3), 3))
 
         # Redistribute probes rst
@@ -1195,7 +1195,7 @@ class Interpolator:
             sendbuf = sorted_probes_rst.reshape((sorted_probes_rst.size))
         else:
             sendbuf = None
-        recvbuf = scatter_from_root(sendbuf, sendcounts * 3, root, np.double, comm)
+        recvbuf = self.rt.scatter_from_root(sendbuf, sendcounts * 3, root, np.double)
         my_probes_rst = recvbuf.reshape((int(recvbuf.size / 3), 3))
 
         # Redistribute err_code
@@ -1203,7 +1203,7 @@ class Interpolator:
             sendbuf = sorted_err_code.reshape((sorted_err_code.size))
         else:
             sendbuf = None
-        recvbuf = scatter_from_root(sendbuf, sendcounts, root, np.int64, comm)
+        recvbuf = self.rt.scatter_from_root(sendbuf, sendcounts, root, np.int64)
         my_err_code = recvbuf
 
         # Redistribute el_owner
@@ -1212,7 +1212,7 @@ class Interpolator:
             # print(sendbuf)
         else:
             sendbuf = None
-        recvbuf = scatter_from_root(sendbuf, sendcounts, root, np.int64, comm)
+        recvbuf = self.rt.scatter_from_root(sendbuf, sendcounts, root, np.int64)
         # print(recvbuf)
         my_el_owner = recvbuf
 
@@ -1221,7 +1221,7 @@ class Interpolator:
             sendbuf = sorted_rank_owner.reshape((sorted_rank_owner.size))
         else:
             sendbuf = None
-        recvbuf = scatter_from_root(sendbuf, sendcounts, root, np.int64, comm)
+        recvbuf = self.rt.scatter_from_root(sendbuf, sendcounts, root, np.int64)
         my_rank_owner = recvbuf
 
         self.my_probes = my_probes
