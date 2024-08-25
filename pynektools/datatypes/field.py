@@ -210,6 +210,11 @@ def get_field_from_hexadata(data, prefix, qoi):
 
     return field
 
+class NoOverwriteDict(dict):
+    def __setitem__(self, key, value):
+        if key in self and isinstance(value, np.ndarray):
+            raise KeyError(f"Key '{key}' already exists. Cannot overwrite existing array without the add field method")
+        super().__setitem__(key, value)
 
 class FieldRegistry(Field):
     """
@@ -229,7 +234,9 @@ class FieldRegistry(Field):
 
         super().__init__(comm, data=data)
 
-        self.registry = {}
+        #self.registry = {}
+        self.registry = NoOverwriteDict()
+        self.registry_pos = {}
         self.scal_fields_names = []
 
         self.update_vars()
@@ -243,19 +250,25 @@ class FieldRegistry(Field):
 
         if self.vel_fields > 0:
             self.registry["u"] = self.fields["vel"][0]
+            self.registry_pos["u"] = "vel_0"
             self.registry["v"] = self.fields["vel"][1]
+            self.registry_pos["v"] = "vel_1"
             if self.vel_fields > 2:
                 self.registry["w"] = self.fields["vel"][2]
+                self.registry_pos["w"] = "vel_2"
 
         if self.pres_fields > 0:
             self.registry["p"] = self.fields["pres"][0]
+            self.registry_pos["p"] = "pres_0"
 
         if self.temp_fields > 0:
             self.registry["t"] = self.fields["temp"][0]
+            self.registry_pos["t"] = "temp_0"
 
         if self.scal_fields > 0:
             for i in range(0, self.scal_fields):
                 self.registry[f"s{i}"] = self.fields["scal"][i]
+                self.registry_pos[f"s{i}"] = f"scal_{i}"
 
     def clear(self):
         """
@@ -264,7 +277,9 @@ class FieldRegistry(Field):
 
         super().clear()
 
-        self.registry = {}
+        #self.registry = {}
+        self.registry = NoOverwriteDict()
+        registry_pos = {}
         self.scal_fields_names = []
 
     def rename_registry_key(self, old_key="", new_key=""):
@@ -392,9 +407,27 @@ class FieldRegistry(Field):
                 # cast it
                 field = field.astype(dtype)
 
-            # Append it to the field list
-            self.fields[prefix].append(field)
-            # Register it in the dictionary
-            self.registry[field_name] = field
+
+            if field_name in self.registry:
+                self.log.write(
+                    "warning",
+                    f"Field {field_name} already in registry. Overwriting",
+                )
+
+                # Find the position of the field in the list
+                pos = self.registry_pos[field_name]
+                prefix = pos.split("_")[0]
+                pos = int(pos.split("_")[1])
+
+                # Overwrite the field
+                self.registry[field_name][:,:,:,:] = field 
+            
+            else:
+
+                # Append it to the field list
+                self.fields[prefix].append(field)
+                # Register it in the dictionary
+                self.registry[field_name] = field
+                self.registry_pos[field_name] = f"{prefix}_{len(self.fields[prefix])-1}"
 
             super().update_vars()

@@ -104,7 +104,20 @@ class MemoryMonitor:
         None
 
         """
-        memory_usage = asizeof.asizeof(obj) / (1024**2)  # Convert bytes to MB
+        #memory_usage = asizeof.asizeof(obj) / (1024**2)  # Convert bytes to MB
+
+        attributes = dir(obj)
+        non_callable_attributes = [
+            attr
+            for attr in attributes
+            if not callable(getattr(obj, attr)) and not attr.startswith("__") and not attr == 'log'
+        ]
+        size_per_attribute = [
+            asizeof.asizeof(getattr(obj, attr)) / (1024**2)
+            for attr in non_callable_attributes
+        ]  # Convert bytes to MB
+
+        memory_usage = sum(size_per_attribute)
 
         if print_msg:
             print(
@@ -147,7 +160,7 @@ class MemoryMonitor:
         non_callable_attributes = [
             attr
             for attr in attributes
-            if not callable(getattr(obj, attr)) and not attr.startswith("__")
+            if not callable(getattr(obj, attr)) and not attr.startswith("__") and not attr == 'log'
         ]
         size_per_attribute = [
             asizeof.asizeof(getattr(obj, attr)) / (1024**2)
