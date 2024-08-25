@@ -602,7 +602,7 @@ class Coef:
 
         return dudxyz
 
-    def glsum(self, a, comm, datype=np.double):
+    def glsum(self, a, comm, dtype=np.double):
         """
         Peform global summatin of given qunaitity a using MPI.
 
@@ -629,9 +629,9 @@ class Coef:
         >>> volume = coef.glsum(coef.B, comm)
         """
 
-        sendbuf = np.ones((1), datype)
+        sendbuf = np.ones((1), dtype)
         sendbuf[0] = np.sum(a)
-        recvbuf = np.zeros((1), datype)
+        recvbuf = np.zeros((1), dtype)
         comm.Allreduce(sendbuf, recvbuf)
 
         return recvbuf[0]
