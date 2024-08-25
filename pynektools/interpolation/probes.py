@@ -119,8 +119,8 @@ class Probes:
 
         def __init__(self, params_file):
             self.casename = params_file["casename"]
-            self.dataPath = params_file["dataPath"]
-            self.index = params_file["first_index"]
+            self.dataPath = params_file.get("dataPath", "./")
+            self.index = params_file.get("first_index", 0)
 
     def __init__(
         self,
