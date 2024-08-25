@@ -11,3 +11,4 @@ Notebook index:
 
 1. Shows typical ways to populate objects and read/output files
 2. Shows how to work on reduced partitions of the SEM domain
+3. Shows how to use adios2 to perform data compression
