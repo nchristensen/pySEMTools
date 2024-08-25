@@ -10,3 +10,4 @@ Note that all the codes run in parallel with MPI. Notebooks are not so good at t
 Notebook index:
 
 1. Shows typical ways to populate objects and read/output files
+2. Shows how to work on reduced partitions of the SEM domain

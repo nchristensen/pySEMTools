@@ -533,5 +533,6 @@ def write_fld_subdomain_from_list(
         pwritenek(fname, out_data, write_comm)
 
     comm.Barrier()
+    write_comm.Free()
 
     return
