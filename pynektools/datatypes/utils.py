@@ -4,14 +4,16 @@ import sys
 import numpy as np
 from pymech.core import HexaData
 from pymech.neksuite.field import Header
-from .msh import Mesh as msh_c
-from .field import Field as field_c
+from .msh import Mesh
+from .field import Field, FieldRegistry
 from ..io.ppymech.neksuite import pwritenek
 from ..interpolation.interpolator import (
     get_bbox_from_coordinates,
     get_bbox_centroids_and_max_dist,
 )
 from ..interpolation.mesh_to_mesh import PRefiner
+from typing import Union
+from ..interpolation.point_interpolator.single_point_helper_functions import GLL_pwts
 
 
 NoneType = type(None)
@@ -398,7 +400,7 @@ def write_fld_file_from_list(fname, comm, msh, field_list=None):
     To write them in positions 0, 1, 2 of the vel keyword in the file, you should not use this function, and instead
     create a empty field object and update its metadata with the correct positions.
 
-    >>> out_fld = field_c(comm)
+    >>> out_fld = Field(comm)
     >>> out_fld.fields["vel"].append(u)
     >>> out_fld.fields["vel"].append(v)
     >>> out_fld.fields["vel"].append(w)
@@ -411,7 +413,7 @@ def write_fld_file_from_list(fname, comm, msh, field_list=None):
     number_of_fields = len(field_list)
 
     ## Create an empty field and update its metadata
-    out_fld = field_c(comm)
+    out_fld = Field(comm)
     for field in range(0, number_of_fields):
         out_fld.fields["scal"].append(field_list[field])
     out_fld.update_vars()
@@ -499,7 +501,7 @@ def write_fld_subdomain_from_list(
         x_sub = msh.x[write_these_e, :, :, :]
         y_sub = msh.y[write_these_e, :, :, :]
         z_sub = msh.z[write_these_e, :, :, :]
-        msh_sub = msh_c(write_comm, x=x_sub, y=y_sub, z=z_sub)
+        msh_sub = Mesh(write_comm, x=x_sub, y=y_sub, z=z_sub)
 
         field_list_sub = []
         for field in range(0, number_of_fields):
@@ -519,7 +521,7 @@ def write_fld_subdomain_from_list(
                 )[0]
 
         ## Create an empty field and update its metadata
-        out_fld = field_c(write_comm)
+        out_fld = Field(write_comm)
         for field in range(0, number_of_fields):
             out_fld.fields["scal"].append(field_list_sub[field])
         out_fld.update_vars()
@@ -536,3 +538,69 @@ def write_fld_subdomain_from_list(
     write_comm.Free()
 
     return
+
+def extrude_2d_sem_mesh(comm, lz : int = 1, msh : Mesh = None, fld: Union[Field, FieldRegistry] =None, point_dist : np.ndarray = None):
+    """
+    Extrude a 2D SEM mesh to 3D.
+
+    Extrude a 2D SEM mesh to 3D by replicating the mesh and fields in the z direction.
+
+    Parameters
+    ----------
+    comm : Comm
+        A communicator object.
+    lz : int
+        Number of layers in the z direction.
+    msh : Mesh
+        A mesh object.
+    
+    fld : Field or FieldRegistry
+        A field object.
+
+    point_dist : ndarray
+        Array with the z coordinates of the new mesh.
+        Defaults to GLL points from -1 to 1.
+    
+    Returns
+    -------
+    Mesh
+        A 3D mesh object.
+    FieldRegistry
+        A 3D field object.
+    
+    """
+
+    if not isinstance(msh, type(None)):
+            
+        if isinstance(point_dist, type(None)):
+        
+            x_, _ = GLL_pwts(lz)
+            point_dist = np.flip(x_)
+
+        x_ext = np.tile(msh.x, (1, lz, 1, 1))
+        y_ext = np.tile(msh.y, (1, lz, 1, 1))
+        z_ext = np.tile(msh.z, (1, lz, 1, 1))
+        z_ext[:, :, :, :] = point_dist.reshape((1, lz, 1, 1))
+
+        msh_ext = Mesh(
+            comm, create_connectivity=msh.create_connectivity_bool, x=x_ext, y=y_ext, z=z_ext
+        )
+
+    if not isinstance(fld, type(None)):
+
+        fld_ext = FieldRegistry(comm)
+
+        for key in fld.fields.keys():
+            for i in range(len(fld.fields[key])):
+                field_ = np.tile(fld.fields[key][i], (1, lz, 1, 1))
+                fld_ext.fields[key].append(field_.copy())
+
+        fld_ext.t = fld.t
+        fld_ext.update_vars()
+
+    if not isinstance(msh, type(None)) and not isinstance(fld, type(None)):
+        return msh_ext, fld_ext
+    elif not isinstance(msh, type(None)):
+        return msh_ext
+    elif not isinstance(fld, type(None)):
+        return fld_ext
