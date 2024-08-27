@@ -4,7 +4,7 @@ import numpy as np
 from .point_interpolator.single_point_legendre_interpolator import (
     LegendreInterpolator as element_interpolator_c,
 )
-from ..datatypes.msh import Mesh as msh_c
+from ..datatypes.msh import Mesh
 
 
 class PRefiner:
@@ -63,7 +63,7 @@ class PRefiner:
             )
 
         # Create the msh object
-        new_msh = msh_c(comm, x=x, y=y, z=z)
+        new_msh = Mesh(comm, x=x, y=y, z=z)
 
         return new_msh
 
@@ -171,7 +171,7 @@ class PMapper:
             )
 
         # Create the msh object
-        new_msh = msh_c(comm, x=x, y=y, z=z)
+        new_msh = Mesh(comm, x=x, y=y, z=z)
 
         return new_msh
 

@@ -1148,6 +1148,9 @@ class Interpolator:
         """Redistribute the probes to the ranks that
         have been determined in the search"""
 
+        self.log.write("info", "Scattering probes")
+        self.log.tic()
+        
         rank = comm.Get_rank()
         size = comm.Get_size()
 
@@ -1233,6 +1236,9 @@ class Interpolator:
         self.my_rank_owner = my_rank_owner
         self.sendcounts = sendcounts
         self.sort_by_rank = sort_by_rank
+
+        self.log.write("info", "done")
+        self.log.toc()
 
         return
 

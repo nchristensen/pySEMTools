@@ -570,7 +570,7 @@ def extrude_2d_sem_mesh(comm, lz : int = 1, msh : Mesh = None, fld: Union[Field,
     
     """
 
-    if not isinstance(msh, type(None)):
+    if isinstance(msh, Mesh):
             
         if isinstance(point_dist, type(None)):
         
@@ -586,7 +586,7 @@ def extrude_2d_sem_mesh(comm, lz : int = 1, msh : Mesh = None, fld: Union[Field,
             comm, create_connectivity=msh.create_connectivity_bool, x=x_ext, y=y_ext, z=z_ext
         )
 
-    if not isinstance(fld, type(None)):
+    if isinstance(fld, Field):
 
         fld_ext = FieldRegistry(comm)
 
@@ -597,6 +597,14 @@ def extrude_2d_sem_mesh(comm, lz : int = 1, msh : Mesh = None, fld: Union[Field,
 
         fld_ext.t = fld.t
         fld_ext.update_vars()
+    
+    elif isinstance(fld, FieldRegistry):
+        
+        fld_ext = FieldRegistry(comm)
+
+        for key in fld.registry.keys():
+            field_ = np.tile(fld.registry[key], (1, lz, 1, 1))
+            fld_ext.add_field(comm, field_name=key, field=field_.copy(), dtype=field_.dtype)
 
     if not isinstance(msh, type(None)) and not isinstance(fld, type(None)):
         return msh_ext, fld_ext
