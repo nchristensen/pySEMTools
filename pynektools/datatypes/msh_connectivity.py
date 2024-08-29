@@ -191,5 +191,7 @@ class MeshConnectivity:
             # Any of my unique facets that remain, should be a boundary facet
             self.boundary_efp_elem = self.unique_efp_elem
             self.boundary_efp_facet = self.unique_efp_facet
+            del self.unique_efp_elem
+            del self.unique_efp_facet
 
 
