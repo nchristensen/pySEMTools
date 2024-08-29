@@ -136,7 +136,7 @@ class MeshConnectivity:
         can know which is the facet that corresponds.
         """
             
-        if msh.gdi_shared_facet_tom == 3:
+        if msh.gdim == 3:
         
             # Send unique facet centers and their element and facet id to all other ranks.
             destinations = [rank for rank in range(0, self.rt.comm.Get_size()) if rank != self.rt.comm.Get_rank()]
