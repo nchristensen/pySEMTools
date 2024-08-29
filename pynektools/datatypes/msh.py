@@ -228,7 +228,7 @@ class Mesh:
         we store 3 coordinates for each vertex.
         '''
 
-        self.log.write("info", "Getting edges")
+        self.log.write("info", "Getting vertices")
 
         if self.gdim == 2:
             self.vertices = np.zeros((self.nelv, 4, 3), dtype=self.x.dtype) # 4 vertices, 3 coords (z = 0)
