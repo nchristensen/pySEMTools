@@ -205,11 +205,160 @@ class Mesh:
         else:
             self.gdim = 2
 
+        self.get_vertices()
+
+        self.get_facet_centers()
+
         self.create_connectivity()
 
         self.global_element_number = np.arange(
             self.offset_el, self.offset_el + self.nelv, dtype=np.int64
         )
+
+    def get_vertices(self):
+        '''
+        Get the vertices of the domain.
+        
+        Get all the vertices of the domain in 2D or 3D.
+
+        Notes
+        -----
+
+        We need 4 vertices for 2D and 8 vertices for 3D. For all cases,
+        we store 3 coordinates for each vertex.
+        '''
+
+        self.log.write("info", "Getting edges")
+
+        if self.gdim == 2:
+            self.vertices = np.zeros((self.nelv, 4, 3), dtype=self.x.dtype) # 4 vertices, 3 coords (z = 0)
+
+            self.vertices[:, 0, 0] = self.x[:, 0, 0, 0]
+            self.vertices[:, 0, 1] = self.y[:, 0, 0, 0]
+            self.vertices[:, 0, 2] = 0
+
+            self.vertices[:, 1, 0] = self.x[:, 0, 0, -1]
+            self.vertices[:, 1, 1] = self.y[:, 0, 0, -1]
+            self.vertices[:, 1, 2] = 0
+
+            self.vertices[:, 2, 0] = self.x[:, 0, -1, 0]
+            self.vertices[:, 2, 1] = self.y[:, 0, -1, 0]
+            self.vertices[:, 2, 2] = 0
+
+            self.vertices[:, 3, 0] = self.x[:, 0, -1, -1]
+            self.vertices[:, 3, 1] = self.y[:, 0, -1, -1]
+            self.vertices[:, 3, 2] = 0
+
+        elif self.gdim == 3:
+            self.vertices = np.zeros((self.nelv, 8, 3), dtype=self.x.dtype) # 4 vertices, 3 coords
+
+            self.vertices[:, 0, 0] = self.x[:, 0, 0, 0]
+            self.vertices[:, 0, 1] = self.y[:, 0, 0, 0]
+            self.vertices[:, 0, 2] = self.z[:, 0, 0, 0]
+
+            self.vertices[:, 1, 0] = self.x[:, 0, 0, -1]
+            self.vertices[:, 1, 1] = self.y[:, 0, 0, -1]
+            self.vertices[:, 1, 2] = self.z[:, 0, 0, -1]
+
+            self.vertices[:, 2, 0] = self.x[:, 0, -1, 0]
+            self.vertices[:, 2, 1] = self.y[:, 0, -1, 0]
+            self.vertices[:, 2, 2] = self.z[:, 0, -1, 0]
+
+            self.vertices[:, 3, 0] = self.x[:, 0, -1, -1]
+            self.vertices[:, 3, 1] = self.y[:, 0, -1, -1]
+            self.vertices[:, 3, 2] = self.z[:, 0, -1, -1]
+
+            self.vertices[:, 4, 0] = self.x[:, -1, 0, 0]
+            self.vertices[:, 4, 1] = self.y[:, -1, 0, 0]
+            self.vertices[:, 4, 2] = self.z[:, -1, 0, 0]
+
+            self.vertices[:, 5, 0] = self.x[:, -1, 0, -1]
+            self.vertices[:, 5, 1] = self.y[:, -1, 0, -1]
+            self.vertices[:, 5, 2] = self.z[:, -1, 0, -1]
+
+            self.vertices[:, 6, 0] = self.x[:, -1, -1, 0]
+            self.vertices[:, 6, 1] = self.y[:, -1, -1, 0]
+            self.vertices[:, 6, 2] = self.z[:, -1, -1, 0]
+
+            self.vertices[:, 7, 0] = self.x[:, -1, -1, -1]
+            self.vertices[:, 7, 1] = self.y[:, -1, -1, -1]
+            self.vertices[:, 7, 2] = self.z[:, -1, -1, -1]
+
+    def get_facet_centers(self):
+        '''
+        Get the centroid of each facet
+        
+        Find the "centroid of each facet. This is used to find the shared facets between elements.
+
+        Notes
+        -----
+
+        This is not really the centroid, as we also find a coordinate in the dimension perpendicular to the facet.
+        This means that these values can be outside or inside the element. However the same behaviour should be seen in the matching elements. 
+        '''
+
+        if self.gdim == 2:
+            self.log.write("info", "Facet centers not available for 2D")
+
+        elif self.gdim == 3:
+            self.log.write("info", "Getting facet centers")
+
+            self.facet_centers = np.zeros((self.nelv, 6, 3), dtype=self.x.dtype) # 6 facets, 3 coordinates
+
+            # Facet 1
+            facet = int(1-1)
+            facet_data = self.x[:, :, :, 0]
+            self.facet_centers[:, facet, 0] = np.min(facet_data, axis=(1,2)) + (np.max(facet_data, axis=(1,2)) - np.min(facet_data, axis=(1,2))) / 2
+            facet_data = self.y[:, :, :, 0]
+            self.facet_centers[:, facet, 1] = np.min(facet_data, axis=(1,2)) + (np.max(facet_data, axis=(1,2)) - np.min(facet_data, axis=(1,2))) / 2
+            facet_data = self.z[:, :, :, 0]
+            self.facet_centers[:, facet, 2] = np.min(facet_data, axis=(1,2)) + (np.max(facet_data, axis=(1,2)) - np.min(facet_data, axis=(1,2))) / 2
+            
+            # Facet 2
+            facet = int(2-1)
+            facet_data = self.x[:, :, :, -1]
+            self.facet_centers[:, facet, 0] = np.min(facet_data, axis=(1,2)) + (np.max(facet_data, axis=(1,2)) - np.min(facet_data, axis=(1,2))) / 2
+            facet_data = self.y[:, :, :, -1]
+            self.facet_centers[:, facet, 1] = np.min(facet_data, axis=(1,2)) + (np.max(facet_data, axis=(1,2)) - np.min(facet_data, axis=(1,2))) / 2
+            facet_data = self.z[:, :, :, -1]
+            self.facet_centers[:, facet, 2] = np.min(facet_data, axis=(1,2)) + (np.max(facet_data, axis=(1,2)) - np.min(facet_data, axis=(1,2))) / 2
+            
+            # Facet 3
+            facet = int(3-1)
+            facet_data = self.x[:, :, 0, :]
+            self.facet_centers[:, facet, 0] = np.min(facet_data, axis=(1,2)) + (np.max(facet_data, axis=(1,2)) - np.min(facet_data, axis=(1,2))) / 2
+            facet_data = self.y[:, :, 0, :]
+            self.facet_centers[:, facet, 1] = np.min(facet_data, axis=(1,2)) + (np.max(facet_data, axis=(1,2)) - np.min(facet_data, axis=(1,2))) / 2
+            facet_data = self.z[:, :, 0, :]
+            self.facet_centers[:, facet, 2] = np.min(facet_data, axis=(1,2)) + (np.max(facet_data, axis=(1,2)) - np.min(facet_data, axis=(1,2))) / 2
+            
+            # Facet 4
+            facet = int(4-1)
+            facet_data = self.x[:, :, -1, :]
+            self.facet_centers[:, facet, 0] = np.min(facet_data, axis=(1,2)) + (np.max(facet_data, axis=(1,2)) - np.min(facet_data, axis=(1,2))) / 2
+            facet_data = self.y[:, :, -1, :]
+            self.facet_centers[:, facet, 1] = np.min(facet_data, axis=(1,2)) + (np.max(facet_data, axis=(1,2)) - np.min(facet_data, axis=(1,2))) / 2
+            facet_data = self.z[:, :, -1, :]
+            self.facet_centers[:, facet, 2] = np.min(facet_data, axis=(1,2)) + (np.max(facet_data, axis=(1,2)) - np.min(facet_data, axis=(1,2))) / 2
+            
+            # Facet 5
+            facet = int(5-1)
+            facet_data = self.x[:, 0, :, :]
+            self.facet_centers[:, facet, 0] = np.min(facet_data, axis=(1,2)) + (np.max(facet_data, axis=(1,2)) - np.min(facet_data, axis=(1,2))) / 2
+            facet_data = self.y[:, 0, :, :]
+            self.facet_centers[:, facet, 1] = np.min(facet_data, axis=(1,2)) + (np.max(facet_data, axis=(1,2)) - np.min(facet_data, axis=(1,2))) / 2
+            facet_data = self.z[:, 0, :, :]
+            self.facet_centers[:, facet, 2] = np.min(facet_data, axis=(1,2)) + (np.max(facet_data, axis=(1,2)) - np.min(facet_data, axis=(1,2))) / 2
+            
+            # Facet 6
+            facet = int(6-1)
+            facet_data = self.x[:, -1, :, :]
+            self.facet_centers[:, facet, 0] = np.min(facet_data, axis=(1,2)) + (np.max(facet_data, axis=(1,2)) - np.min(facet_data, axis=(1,2))) / 2
+            facet_data = self.y[:, -1, :, :]
+            self.facet_centers[:, facet, 1] = np.min(facet_data, axis=(1,2)) + (np.max(facet_data, axis=(1,2)) - np.min(facet_data, axis=(1,2))) / 2
+            facet_data = self.z[:, -1, :, :]
+            self.facet_centers[:, facet, 2] = np.min(facet_data, axis=(1,2)) + (np.max(facet_data, axis=(1,2)) - np.min(facet_data, axis=(1,2))) / 2
+
 
     def create_connectivity(self):
 
