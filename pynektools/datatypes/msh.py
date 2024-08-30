@@ -3,6 +3,7 @@
 import numpy as np
 from ..monitoring.logger import Logger
 from .element_slicing import fetch_elem_facet_data as fd
+from .element_slicing import fetch_elem_edge_data as ed
 from .element_slicing import fetch_elem_vertex_data as vd
 
 NoneType = type(None)
@@ -209,6 +210,8 @@ class Mesh:
 
         self.get_vertices()
 
+        self.get_edge_centers()
+
         self.get_facet_centers()
 
         self.create_connectivity()
@@ -247,6 +250,43 @@ class Mesh:
                 self.vertices[:, vertex, 0] = vd(field=self.x, vertex=vertex)
                 self.vertices[:, vertex, 1] = vd(field=self.y, vertex=vertex)
                 self.vertices[:, vertex, 2] = vd(field=self.z, vertex=vertex)
+
+    def get_edge_centers(self):
+        '''
+        Get the edge centers of the domain.
+        
+        Get all the edge centers of the domain in 2D or 3D.
+
+        Notes
+        -----
+
+        We need 4 edges for 2D and 12 edges for 3D. For all cases
+        we store 3 coordinates for each edge.
+        '''
+
+        self.log.write("info", "Getting vertices")
+
+        if self.gdim == 2:
+            self.edge_centers = np.zeros((self.nelv, 4, 3), dtype=self.x.dtype) # 4 vertices, 3 coords (z = 0)
+
+            for edge in range(0, 4):
+                edge_data = ed(field=self.x, edge=edge)
+                self.edge_centers[:, edge, 0] = np.min(edge_data, axis=(1)) + (np.max(edge_data, axis=(1)) - np.min(edge_data, axis=(1))) / 2
+                edge_data = ed(field=self.y, edge=edge)
+                self.edge_centers[:, edge, 1] = np.min(edge_data, axis=(1)) + (np.max(edge_data, axis=(1)) - np.min(edge_data, axis=(1))) / 2
+                edge_data = ed(field=self.z, edge=edge)
+                self.edge_centers[:, edge, 2] = np.min(edge_data, axis=(1)) + (np.max(edge_data, axis=(1)) - np.min(edge_data, axis=(1))) / 2            
+                
+        elif self.gdim == 3:
+            self.edge_centers = np.zeros((self.nelv, 12, 3), dtype=self.x.dtype) # 4 vertices, 3 coords
+            
+            for edge in range(0, 12):
+                edge_data = ed(field=self.x, edge=edge)
+                self.edge_centers[:, edge, 0] = np.min(edge_data, axis=(1)) + (np.max(edge_data, axis=(1)) - np.min(edge_data, axis=(1))) / 2
+                edge_data = ed(field=self.y, edge=edge)
+                self.edge_centers[:, edge, 1] = np.min(edge_data, axis=(1)) + (np.max(edge_data, axis=(1)) - np.min(edge_data, axis=(1))) / 2
+                edge_data = ed(field=self.z, edge=edge)
+                self.edge_centers[:, edge, 2] = np.min(edge_data, axis=(1)) + (np.max(edge_data, axis=(1)) - np.min(edge_data, axis=(1))) / 2            
 
     def get_facet_centers(self):
         '''
