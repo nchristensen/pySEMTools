@@ -233,18 +233,23 @@ class Mesh:
         if self.gdim == 2:
             self.vertices = np.zeros((self.nelv, 4, 3), dtype=self.x.dtype) # 4 vertices, 3 coords (z = 0)
 
+            # Comments based on a reference element
+            #Bottom left
             self.vertices[:, 0, 0] = self.x[:, 0, 0, 0]
             self.vertices[:, 0, 1] = self.y[:, 0, 0, 0]
             self.vertices[:, 0, 2] = 0
 
+            #bottom right
             self.vertices[:, 1, 0] = self.x[:, 0, 0, -1]
             self.vertices[:, 1, 1] = self.y[:, 0, 0, -1]
             self.vertices[:, 1, 2] = 0
 
+            #top left
             self.vertices[:, 2, 0] = self.x[:, 0, -1, 0]
             self.vertices[:, 2, 1] = self.y[:, 0, -1, 0]
             self.vertices[:, 2, 2] = 0
 
+            #top right
             self.vertices[:, 3, 0] = self.x[:, 0, -1, -1]
             self.vertices[:, 3, 1] = self.y[:, 0, -1, -1]
             self.vertices[:, 3, 2] = 0
@@ -252,34 +257,43 @@ class Mesh:
         elif self.gdim == 3:
             self.vertices = np.zeros((self.nelv, 8, 3), dtype=self.x.dtype) # 4 vertices, 3 coords
 
+            # Comments based on a reference element
+            # Bottom left front
             self.vertices[:, 0, 0] = self.x[:, 0, 0, 0]
             self.vertices[:, 0, 1] = self.y[:, 0, 0, 0]
             self.vertices[:, 0, 2] = self.z[:, 0, 0, 0]
 
+            # Bottom right front
             self.vertices[:, 1, 0] = self.x[:, 0, 0, -1]
             self.vertices[:, 1, 1] = self.y[:, 0, 0, -1]
             self.vertices[:, 1, 2] = self.z[:, 0, 0, -1]
 
+            # Bottom left back
             self.vertices[:, 2, 0] = self.x[:, 0, -1, 0]
             self.vertices[:, 2, 1] = self.y[:, 0, -1, 0]
             self.vertices[:, 2, 2] = self.z[:, 0, -1, 0]
 
+            # Bottom right back
             self.vertices[:, 3, 0] = self.x[:, 0, -1, -1]
             self.vertices[:, 3, 1] = self.y[:, 0, -1, -1]
             self.vertices[:, 3, 2] = self.z[:, 0, -1, -1]
 
+            # Top left front
             self.vertices[:, 4, 0] = self.x[:, -1, 0, 0]
             self.vertices[:, 4, 1] = self.y[:, -1, 0, 0]
             self.vertices[:, 4, 2] = self.z[:, -1, 0, 0]
 
+            # Top right front
             self.vertices[:, 5, 0] = self.x[:, -1, 0, -1]
             self.vertices[:, 5, 1] = self.y[:, -1, 0, -1]
             self.vertices[:, 5, 2] = self.z[:, -1, 0, -1]
 
+            # Top left back
             self.vertices[:, 6, 0] = self.x[:, -1, -1, 0]
             self.vertices[:, 6, 1] = self.y[:, -1, -1, 0]
             self.vertices[:, 6, 2] = self.z[:, -1, -1, 0]
 
+            # Top right back
             self.vertices[:, 7, 0] = self.x[:, -1, -1, -1]
             self.vertices[:, 7, 1] = self.y[:, -1, -1, -1]
             self.vertices[:, 7, 2] = self.z[:, -1, -1, -1]

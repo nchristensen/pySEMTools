@@ -33,6 +33,8 @@ class MeshConnectivity:
             # Create local connecitivy
             self.local_connectivity(msh)
 
+            #print(np.unique(self.unique_efp_elem))
+
             # Create global connectivity
             self.global_connectivity(msh)
 
@@ -70,7 +72,82 @@ class MeshConnectivity:
         the unique pairs are the ones that are checked in global connecitivy,
         """
 
+        if msh.gdim >= 1:
+            
+            self.log.write("info", "Computing local connectivity: Using vertices")
+
+            # Allocate local dictionaries
+            self.local_shared_evp_to_elem_map = {}
+            self.local_shared_evp_to_vertex_map = {}
+
+            # For all elements, check all the vertices
+            for e in range(0, msh.nelv):
+                    
+                ## For each vertex, find any other vertices that match the coordinates
+                #for vertex in range(0, msh.vertices.shape[1]):
+                #    same_x =  np.isclose(msh.vertices[e, vertex, 0],msh.vertices[:, :, 0], rtol=self.rtol)
+                #    same_y =  np.isclose(msh.vertices[e, vertex, 1],msh.vertices[:, :, 1], rtol=self.rtol)
+                #    same_z =  np.isclose(msh.vertices[e, vertex, 2],msh.vertices[:, :, 2], rtol=self.rtol)
+                #    same_vertex = np.where(same_x & same_y & same_z)
+                #    
+                #    matching_elem = same_vertex[0]
+                #    matching_vertex = same_vertex[1]
+
+                # Compare all vertices of the element at once
+                sh = (1, 1, msh.vertices.shape[1])
+                sh2 = (-1, msh.vertices.shape[1], 1)
+                same_x = np.isclose(msh.vertices[e, :, 0].reshape(sh), msh.vertices[:, :, 0].reshape(sh2), rtol=self.rtol)
+                same_y = np.isclose(msh.vertices[e, :, 1].reshape(sh), msh.vertices[:, :, 1].reshape(sh2), rtol=self.rtol)
+                same_z = np.isclose(msh.vertices[e, :, 2].reshape(sh), msh.vertices[:, :, 2].reshape(sh2), rtol=self.rtol)                
+                same_vertex = np.where(same_x & same_y & same_z)
+
+                # If a match is found, populate the local dictionaries
+                if 1==1:
+                    my_vertex = same_vertex[2]
+                    matching_elem = same_vertex[0]
+                    matching_vertex = same_vertex[1]
+                    
+                    for vertex in range(0, msh.vertices.shape[1]):
+                    
+                        v_match = np.where(my_vertex == vertex)
+                    
+                        if len(v_match) > 0:
+                            me = matching_elem[v_match]
+                            mv = matching_vertex[v_match]
+                        else:
+                            me = []
+                            mv = []
+
+                        self.local_shared_evp_to_elem_map[(e, vertex)] = me
+                        self.local_shared_evp_to_vertex_map[(e, vertex)] = mv
+
+            # For all vertices where no match was found, indicate that they are "incomplete"
+            # This means they can be boundary or shared with other ranks
+
+            if msh.gdim == 2:
+                min_vertex = 4 # Anything less than 4 means that a vertex might be in another rank
+            else:
+                min_vertex = 8 # Anything less than 8 means that a vertex might be in another rank
+
+            self.incomplete_evp_elem = []
+            self.incomplete_evp_vertex = []
+            for elem_vertex_pair in self.local_shared_evp_to_elem_map.keys():
+
+                if len(self.local_shared_evp_to_elem_map[elem_vertex_pair]) < min_vertex: 
+                    print(elem_vertex_pair, self.local_shared_evp_to_elem_map[elem_vertex_pair], self.local_shared_evp_to_vertex_map[elem_vertex_pair])
+                    self.incomplete_evp_elem.append(elem_vertex_pair[0])
+                    self.incomplete_evp_vertex.append(elem_vertex_pair[1])
+            
+            # Delete my own entry from the map.
+            # Keep any other shared vertex I have in the map.
+            for i in range(0, len(self.incomplete_evp_elem)):
+                elem_vertex_pair = (self.incomplete_evp_elem[i], self.incomplete_evp_vertex[i])
+                self.local_shared_evp_to_elem_map[elem_vertex_pair] = self.local_shared_evp_to_elem_map[elem_vertex_pair][np.where(self.local_shared_evp_to_elem_map[elem_vertex_pair] != elem_vertex_pair[0])]
+                self.local_shared_evp_to_vertex_map[elem_vertex_pair] = self.local_shared_evp_to_vertex_map[elem_vertex_pair][np.where(self.local_shared_evp_to_elem_map[elem_vertex_pair] != elem_vertex_pair[0])]
+                    
         if msh.gdim == 3:
+            
+            self.log.write("info", "Computing local connectivity: Using facet centers")
 
             # Allocate local dictionaries
             self.local_shared_efp_to_elem_map = {}
@@ -102,7 +179,8 @@ class MeshConnectivity:
                     self.unique_efp_elem.append(elem_facet_pair[0])
                     self.unique_efp_facet.append(elem_facet_pair[1])
                     
-            ## Delete the unique element facet pairs from the local maps
+            # Delete the unique element facet pairs from the local maps
+            # Since I just need to sum the values of the matching facet
             for i in range(0, len(self.unique_efp_elem)):
                 elem_facet_pair = (self.unique_efp_elem[i], self.unique_efp_facet[i])
                 self.local_shared_efp_to_elem_map.pop(elem_facet_pair)
@@ -137,6 +215,8 @@ class MeshConnectivity:
         """
             
         if msh.gdim == 3:
+
+            self.log.write("info", "Computing global connectivity: Using facet centers")
         
             # Send unique facet centers and their element and facet id to all other ranks.
             destinations = [rank for rank in range(0, self.rt.comm.Get_size()) if rank != self.rt.comm.Get_rank()]
