@@ -2,6 +2,7 @@
 
 import numpy as np
 from ..monitoring.logger import Logger
+from .element_slicing import fetch_elem_facet_data
 
 NoneType = type(None)
 
