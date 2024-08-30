@@ -80,17 +80,21 @@ class MeshConnectivity:
 
             # For all elements, check all the vertices
             for e in range(0, msh.nelv):
+                #''' 
+                # For each vertex, find any other vertices that match the coordinates
+                for vertex in range(0, msh.vertices.shape[1]):
+                    same_x =  np.isclose(msh.vertices[e, vertex, 0],msh.vertices[:, :, 0], rtol=self.rtol)
+                    same_y =  np.isclose(msh.vertices[e, vertex, 1],msh.vertices[:, :, 1], rtol=self.rtol)
+                    same_z =  np.isclose(msh.vertices[e, vertex, 2],msh.vertices[:, :, 2], rtol=self.rtol)
+                    same_vertex = np.where(same_x & same_y & same_z)
                     
-                ## For each vertex, find any other vertices that match the coordinates
-                #for vertex in range(0, msh.vertices.shape[1]):
-                #    same_x =  np.isclose(msh.vertices[e, vertex, 0],msh.vertices[:, :, 0], rtol=self.rtol)
-                #    same_y =  np.isclose(msh.vertices[e, vertex, 1],msh.vertices[:, :, 1], rtol=self.rtol)
-                #    same_z =  np.isclose(msh.vertices[e, vertex, 2],msh.vertices[:, :, 2], rtol=self.rtol)
-                #    same_vertex = np.where(same_x & same_y & same_z)
-                #    
-                #    matching_elem = same_vertex[0]
-                #    matching_vertex = same_vertex[1]
+                    matching_elem = same_vertex[0]
+                    matching_vertex = same_vertex[1]
+                    
+                    self.local_shared_evp_to_elem_map[(e, vertex)] = matching_elem
+                    self.local_shared_evp_to_vertex_map[(e, vertex)] = matching_vertex
 
+                '''
                 # Compare all vertices of the element at once
                 sh = (1, 1, msh.vertices.shape[1])
                 sh2 = (-1, msh.vertices.shape[1], 1)
@@ -117,7 +121,7 @@ class MeshConnectivity:
 
                     self.local_shared_evp_to_elem_map[(e, vertex)] = me
                     self.local_shared_evp_to_vertex_map[(e, vertex)] = mv
-
+                '''
             # For all vertices where no match was found, indicate that they are "incomplete"
             # This means they can be boundary or shared with other ranks
 
