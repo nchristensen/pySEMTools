@@ -259,7 +259,7 @@ def fetch_elem_edge_data(field: np.ndarray = None, elem: Union[int, list[int]] =
             lz_index = [edge_to_slice_map[vertex_pair_to_edge_map[e]][0] for e in edge]
             ly_index = [edge_to_slice_map[vertex_pair_to_edge_map[e]][1] for e in edge]
             lx_index = [edge_to_slice_map[vertex_pair_to_edge_map[e]][2] for e in edge]
-        elif isinstance(edge[0], int):
+        elif isinstance(edge[0], int) or isinstance(edge[0], np.int64) or isinstance(edge[0], np.int32):
             lz_index = [edge_to_slice_map[e][0] for e in edge]
             ly_index = [edge_to_slice_map[e][1] for e in edge]
             lx_index = [edge_to_slice_map[e][2] for e in edge]
