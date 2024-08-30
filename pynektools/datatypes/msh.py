@@ -2,7 +2,8 @@
 
 import numpy as np
 from ..monitoring.logger import Logger
-from .element_slicing import fetch_elem_facet_data
+from .element_slicing import fetch_elem_facet_data as fd
+from .element_slicing import fetch_elem_vertex_data as vd
 
 NoneType = type(None)
 
@@ -234,70 +235,18 @@ class Mesh:
         if self.gdim == 2:
             self.vertices = np.zeros((self.nelv, 4, 3), dtype=self.x.dtype) # 4 vertices, 3 coords (z = 0)
 
-            # Comments based on a reference element
-            #Bottom left
-            self.vertices[:, 0, 0] = self.x[:, 0, 0, 0]
-            self.vertices[:, 0, 1] = self.y[:, 0, 0, 0]
-            self.vertices[:, 0, 2] = 0
-
-            #bottom right
-            self.vertices[:, 1, 0] = self.x[:, 0, 0, -1]
-            self.vertices[:, 1, 1] = self.y[:, 0, 0, -1]
-            self.vertices[:, 1, 2] = 0
-
-            #top left
-            self.vertices[:, 2, 0] = self.x[:, 0, -1, 0]
-            self.vertices[:, 2, 1] = self.y[:, 0, -1, 0]
-            self.vertices[:, 2, 2] = 0
-
-            #top right
-            self.vertices[:, 3, 0] = self.x[:, 0, -1, -1]
-            self.vertices[:, 3, 1] = self.y[:, 0, -1, -1]
-            self.vertices[:, 3, 2] = 0
+            for vertex in range(0, 4):
+                self.vertices[:, vertex, 0] = vd(field=self.x, vertex=vertex)
+                self.vertices[:, vertex, 1] = vd(field=self.y, vertex=vertex)
+                self.vertices[:, vertex, 2] = 0
 
         elif self.gdim == 3:
             self.vertices = np.zeros((self.nelv, 8, 3), dtype=self.x.dtype) # 4 vertices, 3 coords
 
-            # Comments based on a reference element
-            # Bottom left front
-            self.vertices[:, 0, 0] = self.x[:, 0, 0, 0]
-            self.vertices[:, 0, 1] = self.y[:, 0, 0, 0]
-            self.vertices[:, 0, 2] = self.z[:, 0, 0, 0]
-
-            # Bottom right front
-            self.vertices[:, 1, 0] = self.x[:, 0, 0, -1]
-            self.vertices[:, 1, 1] = self.y[:, 0, 0, -1]
-            self.vertices[:, 1, 2] = self.z[:, 0, 0, -1]
-
-            # Bottom left back
-            self.vertices[:, 2, 0] = self.x[:, 0, -1, 0]
-            self.vertices[:, 2, 1] = self.y[:, 0, -1, 0]
-            self.vertices[:, 2, 2] = self.z[:, 0, -1, 0]
-
-            # Bottom right back
-            self.vertices[:, 3, 0] = self.x[:, 0, -1, -1]
-            self.vertices[:, 3, 1] = self.y[:, 0, -1, -1]
-            self.vertices[:, 3, 2] = self.z[:, 0, -1, -1]
-
-            # Top left front
-            self.vertices[:, 4, 0] = self.x[:, -1, 0, 0]
-            self.vertices[:, 4, 1] = self.y[:, -1, 0, 0]
-            self.vertices[:, 4, 2] = self.z[:, -1, 0, 0]
-
-            # Top right front
-            self.vertices[:, 5, 0] = self.x[:, -1, 0, -1]
-            self.vertices[:, 5, 1] = self.y[:, -1, 0, -1]
-            self.vertices[:, 5, 2] = self.z[:, -1, 0, -1]
-
-            # Top left back
-            self.vertices[:, 6, 0] = self.x[:, -1, -1, 0]
-            self.vertices[:, 6, 1] = self.y[:, -1, -1, 0]
-            self.vertices[:, 6, 2] = self.z[:, -1, -1, 0]
-
-            # Top right back
-            self.vertices[:, 7, 0] = self.x[:, -1, -1, -1]
-            self.vertices[:, 7, 1] = self.y[:, -1, -1, -1]
-            self.vertices[:, 7, 2] = self.z[:, -1, -1, -1]
+            for vertex in range(0, 8):
+                self.vertices[:, vertex, 0] = vd(field=self.x, vertex=vertex)
+                self.vertices[:, vertex, 1] = vd(field=self.y, vertex=vertex)
+                self.vertices[:, vertex, 2] = vd(field=self.z, vertex=vertex)
 
     def get_facet_centers(self):
         '''
@@ -320,59 +269,14 @@ class Mesh:
 
             self.facet_centers = np.zeros((self.nelv, 6, 3), dtype=self.x.dtype) # 6 facets, 3 coordinates
 
-            # Facet 1
-            facet = int(1-1)
-            facet_data = self.x[:, :, :, 0]
-            self.facet_centers[:, facet, 0] = np.min(facet_data, axis=(1,2)) + (np.max(facet_data, axis=(1,2)) - np.min(facet_data, axis=(1,2))) / 2
-            facet_data = self.y[:, :, :, 0]
-            self.facet_centers[:, facet, 1] = np.min(facet_data, axis=(1,2)) + (np.max(facet_data, axis=(1,2)) - np.min(facet_data, axis=(1,2))) / 2
-            facet_data = self.z[:, :, :, 0]
-            self.facet_centers[:, facet, 2] = np.min(facet_data, axis=(1,2)) + (np.max(facet_data, axis=(1,2)) - np.min(facet_data, axis=(1,2))) / 2
-            
-            # Facet 2
-            facet = int(2-1)
-            facet_data = self.x[:, :, :, -1]
-            self.facet_centers[:, facet, 0] = np.min(facet_data, axis=(1,2)) + (np.max(facet_data, axis=(1,2)) - np.min(facet_data, axis=(1,2))) / 2
-            facet_data = self.y[:, :, :, -1]
-            self.facet_centers[:, facet, 1] = np.min(facet_data, axis=(1,2)) + (np.max(facet_data, axis=(1,2)) - np.min(facet_data, axis=(1,2))) / 2
-            facet_data = self.z[:, :, :, -1]
-            self.facet_centers[:, facet, 2] = np.min(facet_data, axis=(1,2)) + (np.max(facet_data, axis=(1,2)) - np.min(facet_data, axis=(1,2))) / 2
-            
-            # Facet 3
-            facet = int(3-1)
-            facet_data = self.x[:, :, 0, :]
-            self.facet_centers[:, facet, 0] = np.min(facet_data, axis=(1,2)) + (np.max(facet_data, axis=(1,2)) - np.min(facet_data, axis=(1,2))) / 2
-            facet_data = self.y[:, :, 0, :]
-            self.facet_centers[:, facet, 1] = np.min(facet_data, axis=(1,2)) + (np.max(facet_data, axis=(1,2)) - np.min(facet_data, axis=(1,2))) / 2
-            facet_data = self.z[:, :, 0, :]
-            self.facet_centers[:, facet, 2] = np.min(facet_data, axis=(1,2)) + (np.max(facet_data, axis=(1,2)) - np.min(facet_data, axis=(1,2))) / 2
-            
-            # Facet 4
-            facet = int(4-1)
-            facet_data = self.x[:, :, -1, :]
-            self.facet_centers[:, facet, 0] = np.min(facet_data, axis=(1,2)) + (np.max(facet_data, axis=(1,2)) - np.min(facet_data, axis=(1,2))) / 2
-            facet_data = self.y[:, :, -1, :]
-            self.facet_centers[:, facet, 1] = np.min(facet_data, axis=(1,2)) + (np.max(facet_data, axis=(1,2)) - np.min(facet_data, axis=(1,2))) / 2
-            facet_data = self.z[:, :, -1, :]
-            self.facet_centers[:, facet, 2] = np.min(facet_data, axis=(1,2)) + (np.max(facet_data, axis=(1,2)) - np.min(facet_data, axis=(1,2))) / 2
-            
-            # Facet 5
-            facet = int(5-1)
-            facet_data = self.x[:, 0, :, :]
-            self.facet_centers[:, facet, 0] = np.min(facet_data, axis=(1,2)) + (np.max(facet_data, axis=(1,2)) - np.min(facet_data, axis=(1,2))) / 2
-            facet_data = self.y[:, 0, :, :]
-            self.facet_centers[:, facet, 1] = np.min(facet_data, axis=(1,2)) + (np.max(facet_data, axis=(1,2)) - np.min(facet_data, axis=(1,2))) / 2
-            facet_data = self.z[:, 0, :, :]
-            self.facet_centers[:, facet, 2] = np.min(facet_data, axis=(1,2)) + (np.max(facet_data, axis=(1,2)) - np.min(facet_data, axis=(1,2))) / 2
-            
-            # Facet 6
-            facet = int(6-1)
-            facet_data = self.x[:, -1, :, :]
-            self.facet_centers[:, facet, 0] = np.min(facet_data, axis=(1,2)) + (np.max(facet_data, axis=(1,2)) - np.min(facet_data, axis=(1,2))) / 2
-            facet_data = self.y[:, -1, :, :]
-            self.facet_centers[:, facet, 1] = np.min(facet_data, axis=(1,2)) + (np.max(facet_data, axis=(1,2)) - np.min(facet_data, axis=(1,2))) / 2
-            facet_data = self.z[:, -1, :, :]
-            self.facet_centers[:, facet, 2] = np.min(facet_data, axis=(1,2)) + (np.max(facet_data, axis=(1,2)) - np.min(facet_data, axis=(1,2))) / 2
+            # Facet 1 - 6 -> 0 - 5
+            for facet in range(0, 6):
+                facet_data = fd(field=self.x, facet=facet)
+                self.facet_centers[:, facet, 0] = np.min(facet_data, axis=(1,2)) + (np.max(facet_data, axis=(1,2)) - np.min(facet_data, axis=(1,2))) / 2
+                facet_data = fd(field=self.y, facet=facet)
+                self.facet_centers[:, facet, 1] = np.min(facet_data, axis=(1,2)) + (np.max(facet_data, axis=(1,2)) - np.min(facet_data, axis=(1,2))) / 2
+                facet_data = fd(field=self.z, facet=facet)
+                self.facet_centers[:, facet, 2] = np.min(facet_data, axis=(1,2)) + (np.max(facet_data, axis=(1,2)) - np.min(facet_data, axis=(1,2))) / 2            
 
 
     def create_connectivity(self):
