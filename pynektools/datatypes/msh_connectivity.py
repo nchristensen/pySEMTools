@@ -33,8 +33,6 @@ class MeshConnectivity:
             # Create local connecitivy
             self.local_connectivity(msh)
 
-            #print(np.unique(self.unique_efp_elem))
-
             # Create global connectivity
             self.global_connectivity(msh)
 
@@ -134,7 +132,6 @@ class MeshConnectivity:
             for elem_vertex_pair in self.local_shared_evp_to_elem_map.keys():
 
                 if len(self.local_shared_evp_to_elem_map[elem_vertex_pair]) < min_vertex: 
-                    print(elem_vertex_pair, self.local_shared_evp_to_elem_map[elem_vertex_pair], self.local_shared_evp_to_vertex_map[elem_vertex_pair])
                     self.incomplete_evp_elem.append(elem_vertex_pair[0])
                     self.incomplete_evp_vertex.append(elem_vertex_pair[1])
             
@@ -213,7 +210,61 @@ class MeshConnectivity:
         BE MINDFUL: Later when redistributing, send the points, but also send the element and facet ID to the other ranks so the reciever 
         can know which is the facet that corresponds.
         """
-            
+
+        if msh.gdim >= 1:
+
+            self.log.write("info", "Computing global connectivity: Using vertices")
+
+            # Send incomplete vertices and their element and vertex id to all other ranks.
+            destinations = [rank for rank in range(0, self.rt.comm.Get_size()) if rank != self.rt.comm.Get_rank()]
+
+            local_incomplete_el_id = np.array(self.incomplete_evp_elem)
+            local_incomplete_vertex_id = np.array(self.incomplete_evp_vertex)
+            local_incomplete_vertex_coords = msh.vertices[self.incomplete_evp_elem, self.incomplete_evp_vertex]
+
+            sources, source_incomplete_el_id = self.rt.all_to_all(destination=destinations, data=local_incomplete_el_id, dtype=local_incomplete_el_id.dtype)
+            _ , source_incomplete_vertex_id = self.rt.all_to_all(destination=destinations, data=local_incomplete_vertex_id, dtype=local_incomplete_vertex_id.dtype)
+            _, source_incomplete_vertex_coords = self.rt.all_to_all(destination=destinations, data=local_incomplete_vertex_coords, dtype=local_incomplete_vertex_coords.dtype)
+
+            for i in range(0, len(source_incomplete_vertex_coords)):
+                source_incomplete_vertex_coords[i] = source_incomplete_vertex_coords[i].reshape(-1, 3)
+
+            # Create global dictionaries
+            self.global_shared_evp_to_rank_map = {}
+            self.global_shared_evp_to_elem_map = {}
+            self.global_shared_evp_to_vertex_map = {}
+
+            # Go through the data in each other rank.
+            for source_idx, source_vc in enumerate(source_incomplete_vertex_coords):
+
+                remove_pair_idx = []
+
+                # Loop through all my own incomplete element vertex pairs
+                for e_v_pair in range(0, len(self.incomplete_evp_elem)):
+
+                    # Check where my incomplete vertex pair coordinates match with the incomplete ...
+                    # ... vertex pair coordinates of the other rank
+                    e = self.incomplete_evp_elem[e_v_pair]
+                    vertex = self.incomplete_evp_vertex[e_v_pair]
+                    same_x =  np.isclose(msh.vertices[e, vertex, 0],source_vc[:, 0], rtol=self.rtol)
+                    same_y =  np.isclose(msh.vertices[e, vertex, 1],source_vc[:, 1], rtol=self.rtol)
+                    same_z =  np.isclose(msh.vertices[e, vertex, 2],source_vc[:, 2], rtol=self.rtol)
+                    same_vertex = np.where(same_x & same_y & same_z)
+                        
+                    # If we find a match assign it in the global dictionaries
+                    if len(same_vertex[0]) > 0:
+                        matching_id = same_vertex[0]
+                        self.global_shared_evp_to_rank_map[(e, vertex)] = sources[source_idx]
+                        self.global_shared_evp_to_elem_map[(e, vertex)] = source_incomplete_el_id[source_idx][matching_id]
+                        self.global_shared_evp_to_vertex_map[(e, vertex)] = source_incomplete_vertex_id[source_idx][matching_id]
+                        remove_pair_idx.append(e_v_pair)
+
+                # If a match is found for an element vertex pair, remove it from the list of incomplete pairs
+                remove_pair_idx = sorted(remove_pair_idx, reverse=True)
+                for idx in remove_pair_idx:
+                    self.incomplete_evp_elem.pop(idx)
+                    self.incomplete_evp_vertex.pop(idx)
+
         if msh.gdim == 3:
 
             self.log.write("info", "Computing global connectivity: Using facet centers")
