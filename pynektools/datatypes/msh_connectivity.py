@@ -100,24 +100,23 @@ class MeshConnectivity:
                 same_vertex = np.where(same_x & same_y & same_z)
 
                 # If a match is found, populate the local dictionaries
-                if 1==1:
-                    my_vertex = same_vertex[2]
-                    matching_elem = same_vertex[0]
-                    matching_vertex = same_vertex[1]
-                    
-                    for vertex in range(0, msh.vertices.shape[1]):
-                    
-                        v_match = np.where(my_vertex == vertex)
-                    
-                        if len(v_match) > 0:
-                            me = matching_elem[v_match]
-                            mv = matching_vertex[v_match]
-                        else:
-                            me = []
-                            mv = []
+                my_vertex = same_vertex[2]
+                matching_elem = same_vertex[0]
+                matching_vertex = same_vertex[1]
+                
+                for vertex in range(0, msh.vertices.shape[1]):
+                
+                    v_match = np.where(my_vertex == vertex)
+                
+                    if len(v_match) > 0:
+                        me = matching_elem[v_match]
+                        mv = matching_vertex[v_match]
+                    else:
+                        me = []
+                        mv = []
 
-                        self.local_shared_evp_to_elem_map[(e, vertex)] = me
-                        self.local_shared_evp_to_vertex_map[(e, vertex)] = mv
+                    self.local_shared_evp_to_elem_map[(e, vertex)] = me
+                    self.local_shared_evp_to_vertex_map[(e, vertex)] = mv
 
             # For all vertices where no match was found, indicate that they are "incomplete"
             # This means they can be boundary or shared with other ranks
@@ -141,7 +140,59 @@ class MeshConnectivity:
                 elem_vertex_pair = (self.incomplete_evp_elem[i], self.incomplete_evp_vertex[i])
                 self.local_shared_evp_to_elem_map[elem_vertex_pair] = self.local_shared_evp_to_elem_map[elem_vertex_pair][np.where(self.local_shared_evp_to_elem_map[elem_vertex_pair] != elem_vertex_pair[0])]
                 self.local_shared_evp_to_vertex_map[elem_vertex_pair] = self.local_shared_evp_to_vertex_map[elem_vertex_pair][np.where(self.local_shared_evp_to_elem_map[elem_vertex_pair] != elem_vertex_pair[0])]
+ 
+        if msh.gdim >= 1:
+            
+            self.log.write("info", "Computing local connectivity: Using edge centers")
+            if msh.gdim == 2:
+                num_edges = 4
+                min_edges = 2
+            else:
+                num_edges = 12
+                min_edges = 4
+
+            # Allocate local dictionaries
+            self.local_shared_eep_to_elem_map = {}
+            self.local_shared_eep_to_edge_map = {}
+
+            # For all elements, check all the edges
+            for e in range(0, msh.nelv):
                     
+                # For each edge, find any other edges that match the coordinates
+                for edge in range(0, msh.edge_centers.shape[1]):
+                    same_x =  np.isclose(msh.edge_centers[e, edge, 0],msh.edge_centers[:, :, 0], rtol=self.rtol)
+                    same_y =  np.isclose(msh.edge_centers[e, edge, 1],msh.edge_centers[:, :, 1], rtol=self.rtol)
+                    same_z =  np.isclose(msh.edge_centers[e, edge, 2],msh.edge_centers[:, :, 2], rtol=self.rtol)
+                    same_edge = np.where(same_x & same_y & same_z)
+
+                    matching_elem = same_edge[0]
+                    matching_edge = same_edge[1]
+
+                    self.local_shared_eep_to_elem_map[(e, edge)] = matching_elem
+                    self.local_shared_eep_to_edge_map[(e, edge)] = matching_edge
+            
+            # For all edges where no match was found, indicate that they are "incomplete"
+            # This means they can be boundary or shared with other ranks
+            self.incomplete_eep_elem = []
+            self.incomplete_eep_edge = []
+            for elem_edge_pair in self.local_shared_eep_to_elem_map.keys():
+                if len(self.local_shared_eep_to_elem_map[elem_edge_pair]) < min_edges: 
+                    self.incomplete_eep_elem.append(elem_edge_pair[0])
+                    self.incomplete_eep_edge.append(elem_edge_pair[1])
+
+            # Delete my own entry from the map.
+            # Keep any other shared edge I have in the map.
+            if msh.gdim == 2:
+                for i in range(0, len(self.incomplete_eep_elem)):
+                    elem_edge_pair = (self.incomplete_eep_elem[i], self.incomplete_eep_edge[i])
+                    self.local_shared_eep_to_elem_map.pop(elem_edge_pair)
+                    self.local_shared_eep_to_edge_map.pop(elem_edge_pair) 
+            else:
+                for i in range(0, len(self.incomplete_eep_elem)):
+                    elem_edge_pair = (self.incomplete_eep_elem[i], self.incomplete_eep_edge[i])
+                    self.local_shared_eep_to_elem_map[elem_edge_pair] = self.local_shared_eep_to_elem_map[elem_edge_pair][np.where(self.local_shared_eep_to_elem_map[elem_edge_pair] != elem_edge_pair[0])]
+                    self.local_shared_eep_to_edge_map[elem_edge_pair] = self.local_shared_eep_to_edge_map[elem_edge_pair][np.where(self.local_shared_eep_to_elem_map[elem_edge_pair] != elem_edge_pair[0])]        
+         
         if msh.gdim == 3:
             
             self.log.write("info", "Computing local connectivity: Using facet centers")
@@ -264,6 +315,60 @@ class MeshConnectivity:
                 for idx in remove_pair_idx:
                     self.incomplete_evp_elem.pop(idx)
                     self.incomplete_evp_vertex.pop(idx)
+
+        if msh.gdim >= 1:
+
+            self.log.write("info", "Computing global connectivity: Using edge centers")
+
+            # Send incomplete edges and their element and edge id to all other ranks.
+            destinations = [rank for rank in range(0, self.rt.comm.Get_size()) if rank != self.rt.comm.Get_rank()]
+
+            local_incomplete_el_id = np.array(self.incomplete_eep_elem)
+            local_incomplete_edge_id = np.array(self.incomplete_eep_edge)
+            local_incomplete_edge_centers = msh.edge_centers[self.incomplete_eep_elem, self.incomplete_eep_edge]
+
+            sources, source_incomplete_el_id = self.rt.all_to_all(destination=destinations, data=local_incomplete_el_id, dtype=local_incomplete_el_id.dtype)
+            _ , source_incomplete_edge_id = self.rt.all_to_all(destination=destinations, data=local_incomplete_edge_id, dtype=local_incomplete_edge_id.dtype)
+            _, source_incomplete_edge_centers = self.rt.all_to_all(destination=destinations, data=local_incomplete_edge_centers, dtype=local_incomplete_edge_centers.dtype)
+
+            for i in range(0, len(source_incomplete_edge_centers)):
+                source_incomplete_edge_centers[i] = source_incomplete_edge_centers[i].reshape(-1, 3)
+
+            # Create global dictionaries
+            self.global_shared_eep_to_rank_map = {}
+            self.global_shared_eep_to_elem_map = {}
+            self.global_shared_eep_to_edge_map = {}
+
+            # Go through the data in each other rank.
+            for source_idx, source_ec in enumerate(source_incomplete_edge_centers):
+
+                remove_pair_idx = []
+
+                # Loop through all my own incomplete element edge pairs
+                for e_e_pair in range(0, len(self.incomplete_eep_elem)):
+
+                    #check where my incomplete edge pair coordinates match with the incomplete ...
+                    # ... edge pair coordinates of the other rank
+                    e = self.incomplete_eep_elem[e_e_pair]
+                    edge = self.incomplete_eep_edge[e_e_pair]
+                    same_x =  np.isclose(msh.edge_centers[e, edge, 0],source_ec[:, 0], rtol=self.rtol)
+                    same_y =  np.isclose(msh.edge_centers[e, edge, 1],source_ec[:, 1], rtol=self.rtol)
+                    same_z =  np.isclose(msh.edge_centers[e, edge, 2],source_ec[:, 2], rtol=self.rtol)
+                    same_edge = np.where(same_x & same_y & same_z)
+
+                    # If we find a match assign it in the global dictionaries
+                    if len(same_edge[0]) > 0:
+                        matching_id = same_edge[0]
+                        self.global_shared_eep_to_rank_map[(e, edge)] = sources[source_idx]
+                        self.global_shared_eep_to_elem_map[(e, edge)] = source_incomplete_el_id[source_idx][matching_id]
+                        self.global_shared_eep_to_edge_map[(e, edge)] = source_incomplete_edge_id[source_idx][matching_id]
+                        remove_pair_idx.append(e_e_pair)
+                
+                # If a match is found for an element edge pair, remove it from the list of incomplete pairs
+                remove_pair_idx = sorted(remove_pair_idx, reverse=True)
+                for idx in remove_pair_idx:
+                    self.incomplete_eep_elem.pop(idx)
+                    self.incomplete_eep_edge.pop(idx)
 
         if msh.gdim == 3:
 
