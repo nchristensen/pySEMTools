@@ -138,12 +138,12 @@ class MeshConnectivity:
                     self.incomplete_evp_elem.append(elem_vertex_pair[0])
                     self.incomplete_evp_vertex.append(elem_vertex_pair[1])
             
-            # Delete my own entry from the map.
-            # Keep any other shared vertex I have in the map.
-            for i in range(0, len(self.incomplete_evp_elem)):
-                elem_vertex_pair = (self.incomplete_evp_elem[i], self.incomplete_evp_vertex[i])
-                self.local_shared_evp_to_elem_map[elem_vertex_pair] = self.local_shared_evp_to_elem_map[elem_vertex_pair][np.where(self.local_shared_evp_to_elem_map[elem_vertex_pair] != elem_vertex_pair[0])]
-                self.local_shared_evp_to_vertex_map[elem_vertex_pair] = self.local_shared_evp_to_vertex_map[elem_vertex_pair][np.where(self.local_shared_evp_to_elem_map[elem_vertex_pair] != elem_vertex_pair[0])]
+            ## Delete my own entry from the map.
+            ## Keep any other shared vertex I have in the map.
+            #for i in range(0, len(self.incomplete_evp_elem)):
+            #    elem_vertex_pair = (self.incomplete_evp_elem[i], self.incomplete_evp_vertex[i])
+            #    self.local_shared_evp_to_elem_map[elem_vertex_pair] = self.local_shared_evp_to_elem_map[elem_vertex_pair][np.where(self.local_shared_evp_to_elem_map[elem_vertex_pair] != elem_vertex_pair[0])]
+            #    self.local_shared_evp_to_vertex_map[elem_vertex_pair] = self.local_shared_evp_to_vertex_map[elem_vertex_pair][np.where(self.local_shared_evp_to_elem_map[elem_vertex_pair] != elem_vertex_pair[0])]
  
         if msh.gdim >= 1:
             
@@ -184,18 +184,18 @@ class MeshConnectivity:
                     self.incomplete_eep_elem.append(elem_edge_pair[0])
                     self.incomplete_eep_edge.append(elem_edge_pair[1])
 
-            # Delete my own entry from the map.
-            # Keep any other shared edge I have in the map.
-            if msh.gdim == 2:
-                for i in range(0, len(self.incomplete_eep_elem)):
-                    elem_edge_pair = (self.incomplete_eep_elem[i], self.incomplete_eep_edge[i])
-                    self.local_shared_eep_to_elem_map.pop(elem_edge_pair)
-                    self.local_shared_eep_to_edge_map.pop(elem_edge_pair) 
-            else:
-                for i in range(0, len(self.incomplete_eep_elem)):
-                    elem_edge_pair = (self.incomplete_eep_elem[i], self.incomplete_eep_edge[i])
-                    self.local_shared_eep_to_elem_map[elem_edge_pair] = self.local_shared_eep_to_elem_map[elem_edge_pair][np.where(self.local_shared_eep_to_elem_map[elem_edge_pair] != elem_edge_pair[0])]
-                    self.local_shared_eep_to_edge_map[elem_edge_pair] = self.local_shared_eep_to_edge_map[elem_edge_pair][np.where(self.local_shared_eep_to_elem_map[elem_edge_pair] != elem_edge_pair[0])]        
+            ## Delete my own entry from the map.
+            ## Keep any other shared edge I have in the map.
+            #if msh.gdim == 2:
+            #    for i in range(0, len(self.incomplete_eep_elem)):
+            #        elem_edge_pair = (self.incomplete_eep_elem[i], self.incomplete_eep_edge[i])
+            #        self.local_shared_eep_to_elem_map.pop(elem_edge_pair)
+            #        self.local_shared_eep_to_edge_map.pop(elem_edge_pair) 
+            #else:
+            #    for i in range(0, len(self.incomplete_eep_elem)):
+            #        elem_edge_pair = (self.incomplete_eep_elem[i], self.incomplete_eep_edge[i])
+            #        self.local_shared_eep_to_elem_map[elem_edge_pair] = self.local_shared_eep_to_elem_map[elem_edge_pair][np.where(self.local_shared_eep_to_elem_map[elem_edge_pair] != elem_edge_pair[0])]
+            #        self.local_shared_eep_to_edge_map[elem_edge_pair] = self.local_shared_eep_to_edge_map[elem_edge_pair][np.where(self.local_shared_eep_to_elem_map[elem_edge_pair] != elem_edge_pair[0])]        
          
         if msh.gdim == 3:
             
@@ -231,12 +231,12 @@ class MeshConnectivity:
                     self.unique_efp_elem.append(elem_facet_pair[0])
                     self.unique_efp_facet.append(elem_facet_pair[1])
                     
-            # Delete the unique element facet pairs from the local maps
-            # Since I just need to sum the values of the matching facet
-            for i in range(0, len(self.unique_efp_elem)):
-                elem_facet_pair = (self.unique_efp_elem[i], self.unique_efp_facet[i])
-                self.local_shared_efp_to_elem_map.pop(elem_facet_pair)
-                self.local_shared_efp_to_facet_map.pop(elem_facet_pair)
+            ## Delete the unique element facet pairs from the local maps
+            ## Since I just need to sum the values of the matching facet
+            #for i in range(0, len(self.unique_efp_elem)):
+            #    elem_facet_pair = (self.unique_efp_elem[i], self.unique_efp_facet[i])
+            #    self.local_shared_efp_to_elem_map.pop(elem_facet_pair)
+            #    self.local_shared_efp_to_facet_map.pop(elem_facet_pair)
 
     def global_connectivity(self, msh: Mesh):
         """ 
