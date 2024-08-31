@@ -4,6 +4,11 @@ from .msh import Mesh
 from ..comm.router import Router
 from ..monitoring.logger import Logger
 import numpy as np
+from .element_slicing import fetch_elem_facet_data as fd
+from .element_slicing import fetch_elem_edge_data as ed
+from .element_slicing import fetch_elem_vertex_data as vd
+from .element_slicing import vertex_to_slice_map_2d, vertex_to_slice_map_3d, edge_to_slice_map_2d, edge_to_slice_map_3d, facet_to_slice_map
+
 
 class MeshConnectivity:
     """
@@ -434,4 +439,169 @@ class MeshConnectivity:
             del self.unique_efp_elem
             del self.unique_efp_facet
 
+
+    def get_multiplicity(self, msh: Mesh):
+        """
+        Computes the multiplicity of the elements in the mesh
+
+        Parameters
+        ----------
+        msh : Mesh
+        """
+
+        self.multiplicity= np.zeros_like(msh.x)
+
+        if msh.gdim == 2:
+            vertex_to_slice_map = vertex_to_slice_map_2d
+            edge_to_slice_map = edge_to_slice_map_2d
+        elif msh.gdim == 3:
+            vertex_to_slice_map = vertex_to_slice_map_3d
+            edge_to_slice_map = edge_to_slice_map_3d
+
+        for e in range(0, msh.nelv):
+
+            # Add number of vertices
+            for vertex in range(0, msh.vertices.shape[1]):
+
+                local_appearances = len(self.local_shared_evp_to_elem_map.get((e, vertex), []))
+                global_appearances = len(self.global_shared_evp_to_elem_map.get((e, vertex), []))
+
+                lz_index = vertex_to_slice_map[vertex][0] 
+                ly_index = vertex_to_slice_map[vertex][1]
+                lx_index = vertex_to_slice_map[vertex][2]
+
+                self.multiplicity[e, lz_index, ly_index, lx_index] += local_appearances + global_appearances
+
+            
+            # Add number of edges
+            for edge in range(0, msh.edge_centers.shape[1]):
+
+                local_appearances = len(self.local_shared_eep_to_elem_map.get((e, edge), []))
+                global_appearances = len(self.global_shared_eep_to_elem_map.get((e, edge), []))
+
+                lz_index = edge_to_slice_map[edge][0] 
+                ly_index = edge_to_slice_map[edge][1]
+                lx_index = edge_to_slice_map[edge][2]
+
+                # Exclude vertices
+                if lz_index == slice(None):
+                    lz_index = slice(1, -1)
+                if ly_index == slice(None):
+                    ly_index = slice(1, -1)
+                if lx_index == slice(None):
+                    lx_index = slice(1, -1)
+
+                self.multiplicity[e, lz_index, ly_index, lx_index] += local_appearances + global_appearances
+
+            if msh.gdim == 3:
+
+                # Add number of facets
+                for facet in range(0, 6):
+
+                    local_appearances = len(self.local_shared_efp_to_elem_map.get((e, facet), []))
+                    global_appearances = len(self.global_shared_efp_to_elem_map.get((e, facet), []))
+
+                    lz_index = facet_to_slice_map[facet][0] 
+                    ly_index = facet_to_slice_map[facet][1]
+                    lx_index = facet_to_slice_map[facet][2]
+                
+                    # Exclude edges
+                    if lz_index == slice(None):
+                        lz_index = slice(1, -1)
+                    if ly_index == slice(None):
+                        ly_index = slice(1, -1)
+                    if lx_index == slice(None):
+                        lx_index = slice(1, -1)
+
+                    self.multiplicity[e, lz_index, ly_index, lx_index] += local_appearances + global_appearances
+
+        
+
+        # Example on how to fetch data to sum
+
+        if 1==0:
+            if msh.gdim >= 1:
+
+                for e in range(0, msh.nelv):
+
+                    
+                    for vertex in range(0, msh.vertices.shape[1]):
+
+                        if (e, vertex) in self.local_shared_evp_to_elem_map.keys():
+
+                            shared_elements = list(self.local_shared_evp_to_elem_map[(e, vertex)])
+                            shared_vertices = list(self.local_shared_evp_to_vertex_map[(e, vertex)])
+
+                            vertex_data = vd(field=msh.x, elem=shared_elements, vertex=shared_vertices)
+
+                            #print(vertex_data)
+
+                    for edge in range(0, msh.edge_centers.shape[1]):
+
+                        if (e, edge) in self.local_shared_eep_to_elem_map.keys():
+
+                            shared_elements = list(self.local_shared_eep_to_elem_map[(e, edge)])
+                            shared_edges = list(self.local_shared_eep_to_edge_map[(e, edge)])
+
+                            edge_data = ed(field=msh.x, elem=shared_elements, edge=shared_edges)
+                            
+                            is_equal = np.all(np.equal(edge_data, edge_data[0, :]))
+
+                            '''
+                            if not is_equal:
+
+                                print(e, edge)
+                                print(shared_elements)
+                                print(shared_edges)
+
+                                print(is_equal)
+                                print(edge_data)
+
+                                edge_data[-1, :] = np.flip(edge_data[-1, :])
+                                
+                                is_equal = np.all(np.equal(edge_data, edge_data[0, :]))
+                                
+                                print(is_equal)
+                                print(edge_data)
+
+                                import sys
+                                sys.exit(0)
+
+                            '''
+                        
+                    for facet in range(0, 6):
+
+                        if (e, facet) in self.local_shared_efp_to_elem_map.keys():
+
+                            shared_elements = list(self.local_shared_efp_to_elem_map[(e, facet)])
+                            shared_facets = list(self.local_shared_efp_to_facet_map[(e, facet)])
+
+                            facet_data = fd(field=msh.x, elem=shared_elements, facet=shared_facets)
+
+                            is_equal = np.all(np.equal(facet_data, facet_data[0, :]))
+
+                            if not is_equal:
+
+                                print(e, facet)
+                                print(shared_elements)
+                                print(shared_facets)
+
+                                print(is_equal)
+                                print(facet_data)
+
+                                a = facet_data[-1, :, :]
+
+
+                                #print(a)
+                                #print(np.flip(a, axis=(1)))
+
+                                facet_data[-1, :,:] = np.flip(facet_data[-1, :, :], axis=(1))
+                                
+                                is_equal = np.all(np.equal(facet_data, facet_data[0, :]))
+                                
+                                print(is_equal)
+                                print(facet_data)
+
+                                import sys
+                                sys.exit(0)
 
