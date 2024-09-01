@@ -453,7 +453,7 @@ class MeshConnectivity:
         msh : Mesh
         """
 
-        self.multiplicity= np.zeros_like(msh.x)
+        self.multiplicity= np.ones_like(msh.x)
 
         if msh.gdim == 2:
             vertex_to_slice_map = vertex_to_slice_map_2d
@@ -474,7 +474,7 @@ class MeshConnectivity:
                 ly_index = vertex_to_slice_map[vertex][1]
                 lx_index = vertex_to_slice_map[vertex][2]
 
-                self.multiplicity[e, lz_index, ly_index, lx_index] += local_appearances + global_appearances
+                self.multiplicity[e, lz_index, ly_index, lx_index] = local_appearances + global_appearances
 
             
             # Add number of edges
@@ -495,7 +495,7 @@ class MeshConnectivity:
                 if lx_index == slice(None):
                     lx_index = slice(1, -1)
 
-                self.multiplicity[e, lz_index, ly_index, lx_index] += local_appearances + global_appearances
+                self.multiplicity[e, lz_index, ly_index, lx_index] = local_appearances + global_appearances
 
             if msh.gdim == 3:
 
@@ -517,7 +517,7 @@ class MeshConnectivity:
                     if lx_index == slice(None):
                         lx_index = slice(1, -1)
 
-                    self.multiplicity[e, lz_index, ly_index, lx_index] += local_appearances + global_appearances
+                    self.multiplicity[e, lz_index, ly_index, lx_index] = local_appearances + global_appearances
 
         
 
@@ -535,6 +535,8 @@ class MeshConnectivity:
             vertex_to_slice_map = vertex_to_slice_map_3d
             edge_to_slice_map = edge_to_slice_map_3d
 
+
+        self.log.write("info", "Adding vertices")
         for e in range(0, msh.nelv):
 
             # Vertex data is pointwise and can be summed directly 
@@ -548,8 +550,8 @@ class MeshConnectivity:
 
                     # Filter out my own element from the list
                     shared_elements = [shared_elements_[ii] for ii in range(0, len(shared_elements_)) if shared_elements_[ii] != e]                    
-                    shared_vertices = [shared_vertices_[ii] for ii in range(0, len(shared_elements_)) if shared_elements_[ii] != e]                    
-                    
+                    shared_vertices = [shared_vertices_[ii] for ii in range(0, len(shared_elements_)) if shared_elements_[ii] != e]
+
                     if shared_vertices == []:
                         continue
 
@@ -562,7 +564,9 @@ class MeshConnectivity:
                     lx_index = vertex_to_slice_map[vertex][2]
 
                     avrg_field[e, lz_index, ly_index, lx_index] += np.sum(shared_vertex_data)
-            
+
+        self.log.write("info", "Adding edges")
+        for e in range(0, msh.nelv):
             # Edge data is provided as a line that might be flipped, we must compare values of the mesh
             for edge in range(0, msh.edge_centers.shape[1]):
                 
@@ -621,11 +625,91 @@ class MeshConnectivity:
                             if len(same_edge_point[0]) > 0:
                                 my_edge_data[edge_point] += shared_edge_data[sharing_elem][same_edge_point]
 
-                    avrg_field[e, lz_index, ly_index, lx_index] = np.copy(my_edge_data)
+                    # Do not assing at the vertices
+                    if lz_index == slice(None):
+                        lz_index = slice(1, -1)
+                    if ly_index == slice(None):
+                        ly_index = slice(1, -1)
+                    if lx_index == slice(None):
+                        lx_index = slice(1, -1)
+                    slice_copy = slice(1, -1)
+                    avrg_field[e, lz_index, ly_index, lx_index] = np.copy(my_edge_data[slice_copy])
+
+        if msh.gdim == 3:
+            self.log.write("info", "Adding faces")
+            for e in range(0, msh.nelv):
+
+                # Facet data might be flipper or rotated so better check coordinates
+                for facet in range(0, 6):
+
+                    if (e, facet) in self.local_shared_efp_to_elem_map.keys():
+
+                        # Get the data from other elements
+                        shared_elements_ = list(self.local_shared_efp_to_elem_map[(e, facet)])
+                        shared_facets_ = list(self.local_shared_efp_to_facet_map[(e, facet)])
+
+                        # Filter out my own element from the list
+                        shared_elements = [shared_elements_[ii] for ii in range(0, len(shared_elements_)) if shared_elements_[ii] != e]                    
+                        shared_facets = [shared_facets_[ii] for ii in range(0, len(shared_elements_)) if shared_elements_[ii] != e]                    
+
+                        if shared_facets == []:
+                            continue
+
+                        # Get the shared facet coordinates from the other elements
+                        shared_facet_coord_x = fd(field=msh.x, elem=shared_elements, facet=shared_facets)
+                        shared_facet_coord_y = fd(field=msh.y, elem=shared_elements, facet=shared_facets)
+                        shared_facet_coord_z = fd(field=msh.z, elem=shared_elements, facet=shared_facets)
+
+                        # Get the shared facet data from the other elements of the field.
+                        shared_facet_data = fd(field=field, elem=shared_elements, facet=shared_facets)
+
+                        # Get the facet location on my own elemenet
+                        lz_index = facet_to_slice_map[facet][0]
+                        ly_index = facet_to_slice_map[facet][1]
+                        lx_index = facet_to_slice_map[facet][2]
+
+                        # Get my own facet data and coordinates
+                        my_facet_coord_x = msh.x[e, lz_index, ly_index, lx_index]
+                        my_facet_coord_y = msh.y[e, lz_index, ly_index, lx_index]
+                        my_facet_coord_z = msh.z[e, lz_index, ly_index, lx_index]
+                        my_facet_data = np.copy(field[e, lz_index, ly_index, lx_index])
+
+                        # Compare coordinates excluding the edges
+                        # For each of my data points
+                        for facet_point_j in range(1, my_facet_coord_x.shape[0]-1):
+                            for facet_point_i in range(1, my_facet_coord_x.shape[1]-1):
+                                facet_point_x = my_facet_coord_x[facet_point_j, facet_point_i]
+                                facet_point_y = my_facet_coord_y[facet_point_j, facet_point_i]
+                                facet_point_z = my_facet_coord_z[facet_point_j, facet_point_i]
+
+                                # For each element that shares facet data
+                                for sharing_elem in range(0, len(shared_elements)):
+                                    sharing_elem_facet_coord_x = shared_facet_coord_x[sharing_elem]
+                                    sharing_elem_facet_coord_y = shared_facet_coord_y[sharing_elem]
+                                    sharing_elem_facet_coord_z = shared_facet_coord_z[sharing_elem]
+
+                                    # Compare
+                                    same_x = np.isclose(facet_point_x, sharing_elem_facet_coord_x, rtol=self.rtol)
+                                    same_y = np.isclose(facet_point_y, sharing_elem_facet_coord_y, rtol=self.rtol)
+                                    same_z = np.isclose(facet_point_z, sharing_elem_facet_coord_z, rtol=self.rtol)
+                                    same_facet_point = np.where(same_x & same_y & same_z)
+
+                                    # Sum where a match is found
+                                    if len(same_facet_point[0]) > 0:
+                                        my_facet_data[facet_point_j, facet_point_i] += shared_facet_data[sharing_elem][same_facet_point]
+                        
+                        # Do not assing at the edges
+                        if lz_index == slice(None):
+                            lz_index = slice(1, -1)
+                        if ly_index == slice(None):
+                            ly_index = slice(1, -1)
+                        if lx_index == slice(None):
+                            lx_index = slice(1, -1)
+                        slice_copy = slice(1, -1)
+                        avrg_field[e, lz_index, ly_index, lx_index] = np.copy(my_facet_data[slice_copy, slice_copy])
 
         # Divide by multiplicity    
-        non_zero = np.where(self.multiplicity > 0)
-        avrg_field[non_zero] = avrg_field[non_zero] / self.multiplicity[non_zero]
+        avrg_field = avrg_field / self.multiplicity
 
         self.log.write("info", "Local dssum computed")
         self.log.toc()
