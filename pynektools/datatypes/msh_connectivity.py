@@ -318,7 +318,7 @@ class MeshConnectivity:
                     # If we find a match assign it in the global dictionaries
                     if len(same_vertex[0]) > 0:
                         matching_id = same_vertex[0]
-                        self.global_shared_evp_to_rank_map[(e, vertex)] = sources[source_idx]
+                        self.global_shared_evp_to_rank_map[(e, vertex)] = [sources[source_idx]]
                         self.global_shared_evp_to_elem_map[(e, vertex)] = source_incomplete_el_id[source_idx][matching_id]
                         self.global_shared_evp_to_vertex_map[(e, vertex)] = source_incomplete_vertex_id[source_idx][matching_id]
                         remove_pair_idx.append(e_v_pair)
@@ -372,7 +372,7 @@ class MeshConnectivity:
                     # If we find a match assign it in the global dictionaries
                     if len(same_edge[0]) > 0:
                         matching_id = same_edge[0]
-                        self.global_shared_eep_to_rank_map[(e, edge)] = sources[source_idx]
+                        self.global_shared_eep_to_rank_map[(e, edge)] = [sources[source_idx]]
                         self.global_shared_eep_to_elem_map[(e, edge)] = source_incomplete_el_id[source_idx][matching_id]
                         self.global_shared_eep_to_edge_map[(e, edge)] = source_incomplete_edge_id[source_idx][matching_id]
                         remove_pair_idx.append(e_e_pair)
@@ -426,7 +426,7 @@ class MeshConnectivity:
                     # If we find a match assign it in the global dictionaries
                     if len(same_facet[0]) > 0:
                         matching_id = same_facet[0]
-                        self.global_shared_efp_to_rank_map[(e, facet)] = sources[source_idx]
+                        self.global_shared_efp_to_rank_map[(e, facet)] = [sources[source_idx]]
                         self.global_shared_efp_to_elem_map[(e, facet)] = source_unique_el_id[source_idx][matching_id]
                         self.global_shared_efp_to_facet_map[(e, facet)] = source_unique_facet_id[source_idx][matching_id]
                         remove_pair_idx.append(e_f_pair)
@@ -519,7 +519,6 @@ class MeshConnectivity:
 
                     self.multiplicity[e, lz_index, ly_index, lx_index] = local_appearances + global_appearances
 
-        
 
     def dssum_local(self, field: np.ndarray = None, msh:  Mesh = None, coef: Coef = None):
 
@@ -709,9 +708,341 @@ class MeshConnectivity:
                         avrg_field[e, lz_index, ly_index, lx_index] = np.copy(my_facet_data[slice_copy, slice_copy])
 
         # Divide by multiplicity    
+        #avrg_field = avrg_field / self.multiplicity
+
+        self.log.write("info", "Local dssum computed")
+        self.log.toc()
+
+        return avrg_field
+
+    def dssum_global(self, comm, summed_field: np.ndarray = None, field: np.ndarray = None, msh:  Mesh = None, coef: Coef = None):
+
+        self.log.write("info", "Computing global dssum")
+        self.log.tic()
+
+        avrg_field = np.copy(summed_field)
+
+        if msh.gdim == 2:
+            vertex_to_slice_map = vertex_to_slice_map_2d
+            edge_to_slice_map = edge_to_slice_map_2d
+        elif msh.gdim == 3:
+            vertex_to_slice_map = vertex_to_slice_map_3d
+            edge_to_slice_map = edge_to_slice_map_3d
+
+        # Prepare vertices to send to other ranks:
+        vertex_send_buff = {}
+        for e in range(0, msh.nelv):
+            
+            # Vertex data is pointwise and can be summed directly 
+            for vertex in range(0, msh.vertices.shape[1]):
+
+
+                if (e, vertex) in self.global_shared_evp_to_elem_map.keys():
+
+                    # Check which other rank has this vertex
+                    shared_ranks = list(self.global_shared_evp_to_rank_map[(e, vertex)])
+
+                    # Get the vertex data from the other elements of the field.
+                    my_vertex_coord_x = vd(field=msh.x, elem=e, vertex=vertex)
+                    my_vertex_coord_y = vd(field=msh.y, elem=e, vertex=vertex)
+                    my_vertex_coord_z = vd(field=msh.z, elem=e, vertex=vertex)
+                    my_vertex_data = vd(field=field, elem=e, vertex=vertex)
+
+                    for rank in shared_ranks:
+                            
+                        # Send the vertex data to the other rank
+                        if rank not in vertex_send_buff.keys():
+                            vertex_send_buff[rank] = {}
+                            vertex_send_buff[rank]['e'] = []
+                            vertex_send_buff[rank]['vertex'] = []
+                            vertex_send_buff[rank]['x_coords'] = []
+                            vertex_send_buff[rank]['y_coords'] = []
+                            vertex_send_buff[rank]['z_coords'] = []
+                            vertex_send_buff[rank]['data'] = []
+    
+                        vertex_send_buff[rank]['e'].append(e)
+                        vertex_send_buff[rank]['vertex'].append(vertex)
+                        vertex_send_buff[rank]['x_coords'].append(my_vertex_coord_x)
+                        vertex_send_buff[rank]['y_coords'].append(my_vertex_coord_y)
+                        vertex_send_buff[rank]['z_coords'].append(my_vertex_coord_z)
+                        vertex_send_buff[rank]['data'].append(my_vertex_data)
+
+
+        # Prepare edges to send to other ranks:
+        edge_send_buff = {}
+        for e in range(0, msh.nelv):
+
+            # Edge data is provided as a line that might be flipped, we must compare values of the mesh
+            for edge in range(0, msh.edge_centers.shape[1]):
+
+                if (e, edge) in self.global_shared_eep_to_elem_map.keys():
+
+                    # Check which other rank has this edge
+                    shared_ranks = list(self.global_shared_eep_to_rank_map[(e, edge)])
+
+                    # Get the edge data from the other elements of the field.
+                    my_edge_coord_x = ed(field=msh.x, elem=e, edge=edge)
+                    my_edge_coord_y = ed(field=msh.y, elem=e, edge=edge)
+                    my_edge_coord_z = ed(field=msh.z, elem=e, edge=edge)
+                    my_edge_data = ed(field=field, elem=e, edge=edge)
+
+                    for rank in shared_ranks:
+                            
+                        # Send the edge data to the other rank
+                        if rank not in edge_send_buff.keys():
+                            edge_send_buff[rank] = {}
+                            edge_send_buff[rank]['e'] = []
+                            edge_send_buff[rank]['edge'] = []
+                            edge_send_buff[rank]['x_coords'] = []
+                            edge_send_buff[rank]['y_coords'] = []
+                            edge_send_buff[rank]['z_coords'] = []
+                            edge_send_buff[rank]['data'] = []
+    
+                        edge_send_buff[rank]['e'].append(e)
+                        edge_send_buff[rank]['edge'].append(edge)
+                        edge_send_buff[rank]['x_coords'].append(my_edge_coord_x)
+                        edge_send_buff[rank]['y_coords'].append(my_edge_coord_y)
+                        edge_send_buff[rank]['z_coords'].append(my_edge_coord_z)
+                        edge_send_buff[rank]['data'].append(my_edge_data)
+
+
+        # Prepare the facets to send to other ranks:
+        if msh.gdim == 3:
+            facet_send_buff = {}
+            for e in range(0, msh.nelv):
+
+                # Facet data might be flipper or rotated so better check coordinates
+                for facet in range(0, 6):
+
+                    if (e, facet) in self.global_shared_efp_to_elem_map.keys():
+
+                        # Check which other rank has this facet
+                        shared_ranks = list(self.global_shared_efp_to_rank_map[(e, facet)])
+
+                        # Get the facet data from the other elements of the field.
+                        my_facet_coord_x = fd(field=msh.x, elem=e, facet=facet)
+                        my_facet_coord_y = fd(field=msh.y, elem=e, facet=facet)
+                        my_facet_coord_z = fd(field=msh.z, elem=e, facet=facet)
+                        my_facet_data = fd(field=field, elem=e, facet=facet)
+
+                        for rank in shared_ranks:
+                                
+                            # Send the facet data to the other rank
+                            if rank not in facet_send_buff.keys():
+                                facet_send_buff[rank] = {}
+                                facet_send_buff[rank]['e'] = []
+                                facet_send_buff[rank]['facet'] = []
+                                facet_send_buff[rank]['x_coords'] = []
+                                facet_send_buff[rank]['y_coords'] = []
+                                facet_send_buff[rank]['z_coords'] = []
+                                facet_send_buff[rank]['data'] = []
+        
+                            facet_send_buff[rank]['e'].append(e)
+                            facet_send_buff[rank]['facet'].append(facet)
+                            facet_send_buff[rank]['x_coords'].append(my_facet_coord_x)
+                            facet_send_buff[rank]['y_coords'].append(my_facet_coord_y)
+                            facet_send_buff[rank]['z_coords'].append(my_facet_coord_z)
+                            facet_send_buff[rank]['data'].append(my_facet_data)
+
+        # Now send the vertices
+        destinations = [rank for rank in vertex_send_buff.keys()]
+        local_vertex_el_id = [np.array(vertex_send_buff[rank]['e']) for rank in destinations]
+        local_vertex_id = [np.array(vertex_send_buff[rank]['vertex']) for rank in destinations]
+        local_vertex_x_coords = [np.array(vertex_send_buff[rank]['x_coords']) for rank in destinations]
+        local_vertex_y_coords = [np.array(vertex_send_buff[rank]['y_coords']) for rank in destinations]
+        local_vertex_z_coords = [np.array(vertex_send_buff[rank]['z_coords']) for rank in destinations]
+        local_vertex_data = [np.array(vertex_send_buff[rank]['data']) for rank in destinations]
+        vertex_sources, source_vertex_el_id = self.rt.all_to_all(destination=destinations, data=local_vertex_el_id, dtype=local_vertex_el_id[0].dtype)
+        _ , source_vertex_id = self.rt.all_to_all(destination=destinations, data=local_vertex_id, dtype=local_vertex_id[0].dtype)
+        _, source_vertex_x_coords = self.rt.all_to_all(destination=destinations, data=local_vertex_x_coords, dtype=local_vertex_x_coords[0].dtype)
+        _, source_vertex_y_coords = self.rt.all_to_all(destination=destinations, data=local_vertex_y_coords, dtype=local_vertex_y_coords[0].dtype)
+        _, source_vertex_z_coords = self.rt.all_to_all(destination=destinations, data=local_vertex_z_coords, dtype=local_vertex_z_coords[0].dtype)
+        _, source_vertex_data = self.rt.all_to_all(destination=destinations, data=local_vertex_data, dtype=local_vertex_data[0].dtype)
+
+        for i in range(0, len(source_vertex_x_coords)):
+            # No need to reshape the vertex data
+            pass 
+
+        # Now send the edges
+        destinations = [rank for rank in edge_send_buff.keys()]
+        local_edge_el_id = [np.array(edge_send_buff[rank]['e']) for rank in destinations]
+        local_edge_id = [np.array(edge_send_buff[rank]['edge']) for rank in destinations]
+        local_edge_x_coords = [np.array(edge_send_buff[rank]['x_coords']) for rank in destinations]
+        local_edge_y_coords = [np.array(edge_send_buff[rank]['y_coords']) for rank in destinations]
+        local_edge_z_coords = [np.array(edge_send_buff[rank]['z_coords']) for rank in destinations]
+        local_edge_data = [np.array(edge_send_buff[rank]['data']) for rank in destinations]
+        edges_sources, source_edge_el_id = self.rt.all_to_all(destination=destinations, data=local_edge_el_id, dtype=local_edge_el_id[0].dtype)
+        _ , source_edge_id = self.rt.all_to_all(destination=destinations, data=local_edge_id, dtype=local_edge_id[0].dtype)
+        _, source_edge_x_coords = self.rt.all_to_all(destination=destinations, data=local_edge_x_coords, dtype=local_edge_x_coords[0].dtype)
+        _, source_edge_y_coords = self.rt.all_to_all(destination=destinations, data=local_edge_y_coords, dtype=local_edge_y_coords[0].dtype)
+        _, source_edge_z_coords = self.rt.all_to_all(destination=destinations, data=local_edge_z_coords, dtype=local_edge_z_coords[0].dtype)
+        _, source_edge_data = self.rt.all_to_all(destination=destinations, data=local_edge_data, dtype=local_edge_data[0].dtype)
+
+        for i in range(0, len(source_edge_x_coords)):
+            source_edge_x_coords[i] = source_edge_x_coords[i].reshape(-1, msh.lx)
+            source_edge_y_coords[i] = source_edge_y_coords[i].reshape(-1, msh.lx)
+            source_edge_z_coords[i] = source_edge_z_coords[i].reshape(-1, msh.lx)
+            source_edge_data[i] = source_edge_data[i].reshape(-1, msh.lx)
+
+        # Now send the facets
+        if msh.gdim == 3:
+            destinations = [rank for rank in facet_send_buff.keys()]
+            local_facet_el_id = [np.array(facet_send_buff[rank]['e']) for rank in destinations]
+            local_facet_id = [np.array(facet_send_buff[rank]['facet']) for rank in destinations]
+            local_facet_x_coords = [np.array(facet_send_buff[rank]['x_coords']) for rank in destinations]
+            local_facet_y_coords = [np.array(facet_send_buff[rank]['y_coords']) for rank in destinations]
+            local_facet_z_coords = [np.array(facet_send_buff[rank]['z_coords']) for rank in destinations]
+            local_facet_data = [np.array(facet_send_buff[rank]['data']) for rank in destinations]
+            facet_sources, source_facet_el_id = self.rt.all_to_all(destination=destinations, data=local_facet_el_id, dtype=local_facet_el_id[0].dtype)
+            _ , source_facet_id = self.rt.all_to_all(destination=destinations, data=local_facet_id, dtype=local_facet_id[0].dtype)
+            _, source_facet_x_coords = self.rt.all_to_all(destination=destinations, data=local_facet_x_coords, dtype=local_facet_x_coords[0].dtype)
+            _, source_facet_y_coords = self.rt.all_to_all(destination=destinations, data=local_facet_y_coords, dtype=local_facet_y_coords[0].dtype)
+            _, source_facet_z_coords = self.rt.all_to_all(destination=destinations, data=local_facet_z_coords, dtype=local_facet_z_coords[0].dtype)
+            _, source_facet_data = self.rt.all_to_all(destination=destinations, data=local_facet_data, dtype=local_facet_data[0].dtype)
+
+            for i in range(0, len(source_facet_x_coords)):
+                source_facet_x_coords[i] = source_facet_x_coords[i].reshape(-1, msh.ly, msh.lx)
+                source_facet_y_coords[i] = source_facet_y_coords[i].reshape(-1, msh.ly, msh.lx)
+                source_facet_z_coords[i] = source_facet_z_coords[i].reshape(-1, msh.ly, msh.lx)
+                source_facet_data
+
+        # Summ vertices:
+        for e in range(0, msh.nelv):
+            
+            # Vertex data is pointwise and can be summed directly 
+            for vertex in range(0, msh.vertices.shape[1]):
+
+                if (e, vertex) in self.global_shared_evp_to_elem_map.keys():
+
+                    # Check which other rank has this vertex
+                    shared_ranks = list(self.global_shared_evp_to_rank_map[(e, vertex)])
+                    shared_elements = list(self.global_shared_evp_to_elem_map[(e, vertex)])
+                    shared_vertices = list(self.global_shared_evp_to_vertex_map[(e, vertex)])
+
+                    # Get the vertex data from the different ranks
+                    for sv in range(0, len(shared_vertices)):
+
+                        source_index = shared_ranks.index(shared_ranks[0]) # This one should be come a list of the same size
+
+                        # Get the data from this source
+                        shared_vertex_el_id = source_vertex_el_id[source_index]
+                        shared_vertex_id = source_vertex_id[source_index]
+                        shared_vertex_coord_x = source_vertex_x_coords[source_index]
+                        shared_vertex_coord_y = source_vertex_y_coords[source_index]
+                        shared_vertex_coord_z = source_vertex_z_coords[source_index]
+                        shared_vertex_data = source_vertex_data[source_index]
+                        
+                        # find the data that matches the element and vertex id dictionary
+                        el = shared_elements[sv]
+                        vertex_id = shared_vertices[sv]
+                        same_el = shared_vertex_el_id == el
+                        same_vertex = shared_vertex_id == vertex_id
+                        matching_index = np.where(same_el & same_vertex)
+
+                        matching_vertex_coord_x = shared_vertex_coord_x[matching_index]
+                        matching_vertex_coord_y = shared_vertex_coord_y[matching_index]
+                        matching_vertex_coord_z = shared_vertex_coord_z[matching_index]
+                        matching_vertex_data    = shared_vertex_data[matching_index]
+
+
+                        # Get my own values (It is not really needed for the vertices)
+                        my_vertex_coord_x = vd(field=msh.x, elem=e, vertex=vertex)
+                        my_vertex_coord_y = vd(field=msh.y, elem=e, vertex=vertex)
+                        my_vertex_coord_z = vd(field=msh.z, elem=e, vertex=vertex)
+                        my_vertex_data = np.copy(vd(field=field, elem=e, vertex=vertex))
+
+                        # Get the vertex location on my own elemenet
+                        lz_index = vertex_to_slice_map[vertex][0] 
+                        ly_index = vertex_to_slice_map[vertex][1]
+                        lx_index = vertex_to_slice_map[vertex][2]
+
+                        # Add the data from this rank, element, vertex triad.
+                        avrg_field[e, lz_index, ly_index, lx_index] += matching_vertex_data
+                        
+
+        # Summ edges:
+        for e in range(0, msh.nelv):
+
+            # Edge data is provided as a line that might be flipped, we must compare values of the mesh
+            for edge in range(0, msh.edge_centers.shape[1]):
+
+                if (e, edge) in self.global_shared_eep_to_elem_map.keys():
+
+                    # Check which other rank has this edge
+                    shared_ranks = list(self.global_shared_eep_to_rank_map[(e, edge)])
+                    shared_elements = list(self.global_shared_eep_to_elem_map[(e, edge)])
+                    shared_edges = list(self.global_shared_eep_to_edge_map[(e, edge)])
+
+                    # Get the edge data from the different ranks
+                    for se in range(0, len(shared_edges)):
+
+                        source_index = shared_ranks.index(shared_ranks[0])
+
+                        # Get the data from this source
+                        shared_edge_el_id = source_edge_el_id[source_index]
+                        shared_edge_id = source_edge_id[source_index]
+                        shared_edge_coord_x = source_edge_x_coords[source_index]
+                        shared_edge_coord_y = source_edge_y_coords[source_index]
+                        shared_edge_coord_z = source_edge_z_coords[source_index]
+                        shared_edge_data = source_edge_data[source_index]
+
+                        # find the data that matches the element and edge id dictionary
+                        el = shared_elements[se]
+                        edge_id = shared_edges[se]
+                        same_el = shared_edge_el_id == el
+                        same_edge = shared_edge_id == edge_id
+                        matching_index = np.where(same_el & same_edge)
+
+                        matching_edge_coord_x = shared_edge_coord_x[matching_index]
+                        matching_edge_coord_y = shared_edge_coord_y[matching_index]
+                        matching_edge_coord_z = shared_edge_coord_z[matching_index]
+                        matching_edge_data    = shared_edge_data[matching_index]
+
+                        # Get the edge location on my own elemenet
+                        lz_index = edge_to_slice_map[edge][0]
+                        ly_index = edge_to_slice_map[edge][1]
+                        lx_index = edge_to_slice_map[edge][2]
+    
+                        # Get my own edge data and coordinates
+                        my_edge_coord_x = msh.x[e, lz_index, ly_index, lx_index]
+                        my_edge_coord_y = msh.y[e, lz_index, ly_index, lx_index]
+                        my_edge_coord_z = msh.z[e, lz_index, ly_index, lx_index]
+                        my_edge_data = np.copy(summed_field[e, lz_index, ly_index, lx_index])
+
+                        # Compare coordinates excluding the vertices
+                        # For each of my data points
+                        for edge_point in range(1, my_edge_coord_x.shape[0]-1):
+                            edge_point_x = my_edge_coord_x[edge_point]
+                            edge_point_y = my_edge_coord_y[edge_point]
+                            edge_point_z = my_edge_coord_z[edge_point]
+                            
+                            # Compare
+                            same_x = np.isclose(edge_point_x, matching_edge_coord_x, rtol=self.rtol)
+                            same_y = np.isclose(edge_point_y, matching_edge_coord_y, rtol=self.rtol)
+                            same_z = np.isclose(edge_point_z, matching_edge_coord_z, rtol=self.rtol)
+                            same_edge_point = np.where(same_x & same_y & same_z)
+
+                            # Sum where a match is found
+                            if len(same_edge_point[0]) > 0:
+                                my_edge_data[edge_point] += matching_edge_data[same_edge_point]
+
+                        # Do not assing at the vertices
+                        if lz_index == slice(None):
+                            lz_index = slice(1, -1)
+                        if ly_index == slice(None):
+                            ly_index = slice(1, -1)
+                        if lx_index == slice(None):
+                            lx_index = slice(1, -1)
+                        slice_copy = slice(1, -1)
+                        avrg_field[e, lz_index, ly_index, lx_index] = np.copy(my_edge_data[slice_copy])
+
+        # Divide by multiplicity    
         avrg_field = avrg_field / self.multiplicity
 
         self.log.write("info", "Local dssum computed")
         self.log.toc()
 
-        return avrg_field     
+        return avrg_field
+                     
+
+
