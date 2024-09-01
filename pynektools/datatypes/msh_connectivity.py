@@ -1,6 +1,7 @@
 """Implements the mesh connectivity class"""
 
 from .msh import Mesh
+from .coef import Coef
 from ..comm.router import Router
 from ..monitoring.logger import Logger
 import numpy as np
@@ -8,7 +9,7 @@ from .element_slicing import fetch_elem_facet_data as fd
 from .element_slicing import fetch_elem_edge_data as ed
 from .element_slicing import fetch_elem_vertex_data as vd
 from .element_slicing import vertex_to_slice_map_2d, vertex_to_slice_map_3d, edge_to_slice_map_2d, edge_to_slice_map_3d, facet_to_slice_map
-
+import sys
 
 class MeshConnectivity:
     """
@@ -26,7 +27,7 @@ class MeshConnectivity:
         The relative tolerance to use when comparing the coordinates of the facets/edges
     """
 
-    def __init__(self, comm, msh: Mesh = None, rel_tol = 0.01):
+    def __init__(self, comm, msh: Mesh = None, rel_tol = 1e-5):
 
         self.log = Logger(comm=comm, module_name="MeshConnectivity")
         self.log.write("info", "Initializing MeshConnectivity")
@@ -40,6 +41,9 @@ class MeshConnectivity:
 
             # Create global connectivity
             self.global_connectivity(msh)
+
+            # Get the multiplicity
+            self.get_multiplicity(msh)
 
         self.log.write("info", "MeshConnectivity initialized")
         self.log.toc()
@@ -517,91 +521,113 @@ class MeshConnectivity:
 
         
 
-        # Example on how to fetch data to sum
+    def dssum_local(self, field: np.ndarray = None, msh:  Mesh = None, coef: Coef = None):
 
-        if 1==0:
-            if msh.gdim >= 1:
+        self.log.write("info", "Computing local dssum")
+        self.log.tic()
 
-                for e in range(0, msh.nelv):
+        avrg_field = np.copy(field)
 
+        if msh.gdim == 2:
+            vertex_to_slice_map = vertex_to_slice_map_2d
+            edge_to_slice_map = edge_to_slice_map_2d
+        elif msh.gdim == 3:
+            vertex_to_slice_map = vertex_to_slice_map_3d
+            edge_to_slice_map = edge_to_slice_map_3d
+
+        for e in range(0, msh.nelv):
+
+            # Vertex data is pointwise and can be summed directly 
+            for vertex in range(0, msh.vertices.shape[1]):
+
+                if (e, vertex) in self.local_shared_evp_to_elem_map.keys():
+
+                    # Get the data from other elements
+                    shared_elements_ = list(self.local_shared_evp_to_elem_map[(e, vertex)])
+                    shared_vertices_ = list(self.local_shared_evp_to_vertex_map[(e, vertex)])
+
+                    # Filter out my own element from the list
+                    shared_elements = [shared_elements_[ii] for ii in range(0, len(shared_elements_)) if shared_elements_[ii] != e]                    
+                    shared_vertices = [shared_vertices_[ii] for ii in range(0, len(shared_elements_)) if shared_elements_[ii] != e]                    
                     
-                    for vertex in range(0, msh.vertices.shape[1]):
+                    if shared_vertices == []:
+                        continue
 
-                        if (e, vertex) in self.local_shared_evp_to_elem_map.keys():
+                    # Get the vertex data from the other elements of the field.
+                    shared_vertex_data = vd(field=field, elem=shared_elements, vertex=shared_vertices)
 
-                            shared_elements = list(self.local_shared_evp_to_elem_map[(e, vertex)])
-                            shared_vertices = list(self.local_shared_evp_to_vertex_map[(e, vertex)])
+                    # Get the vertex location on my own elemenet
+                    lz_index = vertex_to_slice_map[vertex][0] 
+                    ly_index = vertex_to_slice_map[vertex][1]
+                    lx_index = vertex_to_slice_map[vertex][2]
 
-                            vertex_data = vd(field=msh.x, elem=shared_elements, vertex=shared_vertices)
+                    avrg_field[e, lz_index, ly_index, lx_index] += np.sum(shared_vertex_data)
+            
+            # Edge data is provided as a line that might be flipped, we must compare values of the mesh
+            for edge in range(0, msh.edge_centers.shape[1]):
+                
+                if (e, edge) in self.local_shared_eep_to_elem_map.keys():
+                    
+                    # Get the data from other elements
+                    shared_elements_ = list(self.local_shared_eep_to_elem_map[(e, edge)])
+                    shared_edges_ = list(self.local_shared_eep_to_edge_map[(e, edge)])
+                    
+                    # Filter out my own element from the list
+                    shared_elements = [shared_elements_[ii] for ii in range(0, len(shared_elements_)) if shared_elements_[ii] != e]                    
+                    shared_edges = [shared_edges_[ii] for ii in range(0, len(shared_elements_)) if shared_elements_[ii] != e]                    
 
-                            #print(vertex_data)
+                    if shared_edges == []:
+                        continue
 
-                    for edge in range(0, msh.edge_centers.shape[1]):
+                    # Get the shared edge coordinates from the other elements
+                    shared_edge_coord_x = ed(field=msh.x, elem=shared_elements, edge=shared_edges)
+                    shared_edge_coord_y = ed(field=msh.y, elem=shared_elements, edge=shared_edges)
+                    shared_edge_coord_z = ed(field=msh.z, elem=shared_elements, edge=shared_edges)
 
-                        if (e, edge) in self.local_shared_eep_to_elem_map.keys():
+                    # Get the shared edge data from the other elements of the field.
+                    shared_edge_data = ed(field=field, elem=shared_elements, edge=shared_edges)
 
-                            shared_elements = list(self.local_shared_eep_to_elem_map[(e, edge)])
-                            shared_edges = list(self.local_shared_eep_to_edge_map[(e, edge)])
+                    # Get the edge location on my own elemenet
+                    lz_index = edge_to_slice_map[edge][0]
+                    ly_index = edge_to_slice_map[edge][1]
+                    lx_index = edge_to_slice_map[edge][2]
+ 
+                    # Get my own edge data and coordinates
+                    my_edge_coord_x = msh.x[e, lz_index, ly_index, lx_index]
+                    my_edge_coord_y = msh.y[e, lz_index, ly_index, lx_index]
+                    my_edge_coord_z = msh.z[e, lz_index, ly_index, lx_index]
+                    my_edge_data = np.copy(field[e, lz_index, ly_index, lx_index])
 
-                            edge_data = ed(field=msh.x, elem=shared_elements, edge=shared_edges)
-                            
-                            is_equal = np.all(np.equal(edge_data, edge_data[0, :]))
+                    # Compare coordinates excluding the vertices
+                    # For each of my data points
+                    for edge_point in range(1, my_edge_coord_x.shape[0]-1):
+                        edge_point_x = my_edge_coord_x[edge_point]
+                        edge_point_y = my_edge_coord_y[edge_point]
+                        edge_point_z = my_edge_coord_z[edge_point]
 
-                            '''
-                            if not is_equal:
+                        # For each element that shares edge data
+                        for sharing_elem in range(0, len(shared_elements)):
+                            sharing_elem_edge_coord_x = shared_edge_coord_x[sharing_elem]
+                            sharing_elem_edge_coord_y = shared_edge_coord_y[sharing_elem]
+                            sharing_elem_edge_coord_z = shared_edge_coord_z[sharing_elem]
 
-                                print(e, edge)
-                                print(shared_elements)
-                                print(shared_edges)
+                            # Compare
+                            same_x = np.isclose(edge_point_x, sharing_elem_edge_coord_x, rtol=self.rtol)
+                            same_y = np.isclose(edge_point_y, sharing_elem_edge_coord_y, rtol=self.rtol)
+                            same_z = np.isclose(edge_point_z, sharing_elem_edge_coord_z, rtol=self.rtol)
+                            same_edge_point = np.where(same_x & same_y & same_z)
 
-                                print(is_equal)
-                                print(edge_data)
+                            # Sum where a match is found
+                            if len(same_edge_point[0]) > 0:
+                                my_edge_data[edge_point] += shared_edge_data[sharing_elem][same_edge_point]
 
-                                edge_data[-1, :] = np.flip(edge_data[-1, :])
-                                
-                                is_equal = np.all(np.equal(edge_data, edge_data[0, :]))
-                                
-                                print(is_equal)
-                                print(edge_data)
+                    avrg_field[e, lz_index, ly_index, lx_index] = np.copy(my_edge_data)
 
-                                import sys
-                                sys.exit(0)
+        # Divide by multiplicity    
+        non_zero = np.where(self.multiplicity > 0)
+        avrg_field[non_zero] = avrg_field[non_zero] / self.multiplicity[non_zero]
 
-                            '''
-                        
-                    for facet in range(0, 6):
+        self.log.write("info", "Local dssum computed")
+        self.log.toc()
 
-                        if (e, facet) in self.local_shared_efp_to_elem_map.keys():
-
-                            shared_elements = list(self.local_shared_efp_to_elem_map[(e, facet)])
-                            shared_facets = list(self.local_shared_efp_to_facet_map[(e, facet)])
-
-                            facet_data = fd(field=msh.x, elem=shared_elements, facet=shared_facets)
-
-                            is_equal = np.all(np.equal(facet_data, facet_data[0, :]))
-
-                            if not is_equal:
-
-                                print(e, facet)
-                                print(shared_elements)
-                                print(shared_facets)
-
-                                print(is_equal)
-                                print(facet_data)
-
-                                a = facet_data[-1, :, :]
-
-
-                                #print(a)
-                                #print(np.flip(a, axis=(1)))
-
-                                facet_data[-1, :,:] = np.flip(facet_data[-1, :, :], axis=(1))
-                                
-                                is_equal = np.all(np.equal(facet_data, facet_data[0, :]))
-                                
-                                print(is_equal)
-                                print(facet_data)
-
-                                import sys
-                                sys.exit(0)
-
+        return avrg_field     
