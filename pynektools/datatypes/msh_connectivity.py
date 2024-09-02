@@ -172,40 +172,44 @@ class MeshConnectivity:
 
         for e in range(0, msh.nelv):
 
-            # Add number of vertices
-            for vertex in range(0, msh.vertices.shape[1]):
+            if msh.gdim >= 1:
 
-                local_appearances = len(self.local_shared_evp_to_elem_map.get((e, vertex), []))
-                global_appearances = len(self.global_shared_evp_to_elem_map.get((e, vertex), []))
+                # Add number of vertices
+                for vertex in range(0, msh.vertices.shape[1]):
 
-                lz_index = vertex_to_slice_map[vertex][0] 
-                ly_index = vertex_to_slice_map[vertex][1]
-                lx_index = vertex_to_slice_map[vertex][2]
+                    local_appearances = len(self.local_shared_evp_to_elem_map.get((e, vertex), []))
+                    global_appearances = len(self.global_shared_evp_to_elem_map.get((e, vertex), []))
 
-                self.multiplicity[e, lz_index, ly_index, lx_index] = local_appearances + global_appearances
+                    lz_index = vertex_to_slice_map[vertex][0] 
+                    ly_index = vertex_to_slice_map[vertex][1]
+                    lx_index = vertex_to_slice_map[vertex][2]
+
+                    self.multiplicity[e, lz_index, ly_index, lx_index] = local_appearances + global_appearances
 
             
-            # Add number of edges
-            for edge in range(0, msh.edge_centers.shape[1]):
+            if msh.gdim >= 2:
 
-                local_appearances = len(self.local_shared_eep_to_elem_map.get((e, edge), []))
-                global_appearances = len(self.global_shared_eep_to_elem_map.get((e, edge), []))
+                # Add number of edges
+                for edge in range(0, msh.edge_centers.shape[1]):
 
-                lz_index = edge_to_slice_map[edge][0] 
-                ly_index = edge_to_slice_map[edge][1]
-                lx_index = edge_to_slice_map[edge][2]
+                    local_appearances = len(self.local_shared_eep_to_elem_map.get((e, edge), []))
+                    global_appearances = len(self.global_shared_eep_to_elem_map.get((e, edge), []))
 
-                # Exclude vertices
-                if lz_index == slice(None):
-                    lz_index = slice(1, -1)
-                if ly_index == slice(None):
-                    ly_index = slice(1, -1)
-                if lx_index == slice(None):
-                    lx_index = slice(1, -1)
+                    lz_index = edge_to_slice_map[edge][0] 
+                    ly_index = edge_to_slice_map[edge][1]
+                    lx_index = edge_to_slice_map[edge][2]
 
-                self.multiplicity[e, lz_index, ly_index, lx_index] = local_appearances + global_appearances
+                    # Exclude vertices
+                    if lz_index == slice(None):
+                        lz_index = slice(1, -1)
+                    if ly_index == slice(None):
+                        ly_index = slice(1, -1)
+                    if lx_index == slice(None):
+                        lx_index = slice(1, -1)
 
-            if msh.gdim == 3:
+                    self.multiplicity[e, lz_index, ly_index, lx_index] = local_appearances + global_appearances
+
+            if msh.gdim >= 3:
 
                 # Add number of facets
                 for facet in range(0, 6):
