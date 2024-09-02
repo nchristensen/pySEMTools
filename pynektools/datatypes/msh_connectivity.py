@@ -318,16 +318,25 @@ class MeshConnectivity:
                     # If we find a match assign it in the global dictionaries
                     if len(same_vertex[0]) > 0:
                         matching_id = same_vertex[0]
-                        self.global_shared_evp_to_rank_map[(e, vertex)] = [sources[source_idx]]
-                        self.global_shared_evp_to_elem_map[(e, vertex)] = source_incomplete_el_id[source_idx][matching_id]
-                        self.global_shared_evp_to_vertex_map[(e, vertex)] = source_incomplete_vertex_id[source_idx][matching_id]
-                        remove_pair_idx.append(e_v_pair)
+                        sources_list = np.ones_like(source_incomplete_vertex_id[source_idx][matching_id]) * sources[source_idx]
+                        if (e, vertex) in self.global_shared_evp_to_rank_map.keys():
+                            self.global_shared_evp_to_rank_map[(e, vertex)] = np.append(self.global_shared_evp_to_rank_map[(e, vertex)], sources_list)
+                            self.global_shared_evp_to_elem_map[(e, vertex)] = np.append(self.global_shared_evp_to_elem_map[(e, vertex)], source_incomplete_el_id[source_idx][matching_id])
+                            self.global_shared_evp_to_vertex_map[(e, vertex)] = np.append(self.global_shared_evp_to_vertex_map[(e, vertex)], source_incomplete_vertex_id[source_idx][matching_id])
+                        else:
+                            self.global_shared_evp_to_rank_map[(e, vertex)] = sources_list
+                            self.global_shared_evp_to_elem_map[(e, vertex)] = source_incomplete_el_id[source_idx][matching_id]
+                            self.global_shared_evp_to_vertex_map[(e, vertex)] = source_incomplete_vertex_id[source_idx][matching_id]
+                                                
+                        #remove_pair_idx.append(e_v_pair)
 
                 # If a match is found for an element vertex pair, remove it from the list of incomplete pairs
-                remove_pair_idx = sorted(remove_pair_idx, reverse=True)
-                for idx in remove_pair_idx:
-                    self.incomplete_evp_elem.pop(idx)
-                    self.incomplete_evp_vertex.pop(idx)
+                #remove_pair_idx = sorted(remove_pair_idx, reverse=True)
+                #for idx in remove_pair_idx:
+                #    self.incomplete_evp_elem.pop(idx)
+                #    self.incomplete_evp_vertex.pop(idx)
+
+        
 
         if msh.gdim >= 1:
 
@@ -372,16 +381,23 @@ class MeshConnectivity:
                     # If we find a match assign it in the global dictionaries
                     if len(same_edge[0]) > 0:
                         matching_id = same_edge[0]
-                        self.global_shared_eep_to_rank_map[(e, edge)] = [sources[source_idx]]
-                        self.global_shared_eep_to_elem_map[(e, edge)] = source_incomplete_el_id[source_idx][matching_id]
-                        self.global_shared_eep_to_edge_map[(e, edge)] = source_incomplete_edge_id[source_idx][matching_id]
-                        remove_pair_idx.append(e_e_pair)
+                        source_list = np.ones_like(source_incomplete_edge_id[source_idx][matching_id]) * sources[source_idx]
+                        if (e, edge) in self.global_shared_eep_to_rank_map.keys():
+                            self.global_shared_eep_to_rank_map[(e, edge)] = np.append(self.global_shared_eep_to_rank_map[(e, edge)], source_list)
+                            self.global_shared_eep_to_elem_map[(e, edge)] = np.append(self.global_shared_eep_to_elem_map[(e, edge)], source_incomplete_el_id[source_idx][matching_id])
+                            self.global_shared_eep_to_edge_map[(e, edge)] = np.append(self.global_shared_eep_to_edge_map[(e, edge)], source_incomplete_edge_id[source_idx][matching_id]) 
+                        else:
+                            self.global_shared_eep_to_rank_map[(e, edge)] = source_list
+                            self.global_shared_eep_to_elem_map[(e, edge)] = source_incomplete_el_id[source_idx][matching_id]
+                            self.global_shared_eep_to_edge_map[(e, edge)] = source_incomplete_edge_id[source_idx][matching_id]
+
+                        #remove_pair_idx.append(e_e_pair)
                 
                 # If a match is found for an element edge pair, remove it from the list of incomplete pairs
-                remove_pair_idx = sorted(remove_pair_idx, reverse=True)
-                for idx in remove_pair_idx:
-                    self.incomplete_eep_elem.pop(idx)
-                    self.incomplete_eep_edge.pop(idx)
+                #remove_pair_idx = sorted(remove_pair_idx, reverse=True)
+                #for idx in remove_pair_idx:
+                #    self.incomplete_eep_elem.pop(idx)
+                #    self.incomplete_eep_edge.pop(idx)
 
         if msh.gdim == 3:
 
@@ -748,8 +764,8 @@ class MeshConnectivity:
                     my_vertex_coord_z = vd(field=msh.z, elem=e, vertex=vertex)
                     my_vertex_data = vd(field=field, elem=e, vertex=vertex)
 
-                    for rank in shared_ranks:
-                            
+                    for rank in list(np.unique(shared_ranks)):
+                        
                         # Send the vertex data to the other rank
                         if rank not in vertex_send_buff.keys():
                             vertex_send_buff[rank] = {}
@@ -766,7 +782,6 @@ class MeshConnectivity:
                         vertex_send_buff[rank]['y_coords'].append(my_vertex_coord_y)
                         vertex_send_buff[rank]['z_coords'].append(my_vertex_coord_z)
                         vertex_send_buff[rank]['data'].append(my_vertex_data)
-
 
         # Prepare edges to send to other ranks:
         edge_send_buff = {}
@@ -786,7 +801,7 @@ class MeshConnectivity:
                     my_edge_coord_z = ed(field=msh.z, elem=e, edge=edge)
                     my_edge_data = ed(field=field, elem=e, edge=edge)
 
-                    for rank in shared_ranks:
+                    for rank in list(np.unique(shared_ranks)):
                             
                         # Send the edge data to the other rank
                         if rank not in edge_send_buff.keys():
@@ -922,7 +937,7 @@ class MeshConnectivity:
                     # Get the vertex data from the different ranks
                     for sv in range(0, len(shared_vertices)):
 
-                        source_index = shared_ranks.index(shared_ranks[0]) # This one should be come a list of the same size
+                        source_index = list(vertex_sources).index(shared_ranks[sv]) # This one should be come a list of the same size
 
                         # Get the data from this source
                         shared_vertex_el_id = source_vertex_el_id[source_index]
@@ -976,7 +991,7 @@ class MeshConnectivity:
                     # Get the edge data from the different ranks
                     for se in range(0, len(shared_edges)):
 
-                        source_index = shared_ranks.index(shared_ranks[0])
+                        source_index = list(edges_sources).index(shared_ranks[se]) # This one should be come a list of the same size
 
                         # Get the data from this source
                         shared_edge_el_id = source_edge_el_id[source_index]
