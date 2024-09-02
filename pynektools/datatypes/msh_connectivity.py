@@ -442,9 +442,16 @@ class MeshConnectivity:
                     # If we find a match assign it in the global dictionaries
                     if len(same_facet[0]) > 0:
                         matching_id = same_facet[0]
-                        self.global_shared_efp_to_rank_map[(e, facet)] = [sources[source_idx]]
-                        self.global_shared_efp_to_elem_map[(e, facet)] = source_unique_el_id[source_idx][matching_id]
-                        self.global_shared_efp_to_facet_map[(e, facet)] = source_unique_facet_id[source_idx][matching_id]
+                        source_list = np.ones_like(source_unique_facet_id[source_idx][matching_id]) * sources[source_idx]
+                        if (e, facet) in self.global_shared_efp_to_rank_map.keys():
+                            self.global_shared_efp_to_rank_map[(e, facet)] = np.append(self.global_shared_efp_to_rank_map[(e, facet)], source_list)
+                            self.global_shared_efp_to_elem_map[(e, facet)] = np.append(self.global_shared_efp_to_elem_map[(e, facet)], source_unique_el_id[source_idx][matching_id])
+                            self.global_shared_efp_to_facet_map[(e, facet)] = np.append(self.global_shared_efp_to_facet_map[(e, facet)], source_unique_facet_id[source_idx][matching_id])
+                        else:
+                            self.global_shared_efp_to_rank_map[(e, facet)] = source_list
+                            self.global_shared_efp_to_elem_map[(e, facet)] = source_unique_el_id[source_idx][matching_id]
+                            self.global_shared_efp_to_facet_map[(e, facet)] = source_unique_facet_id[source_idx][matching_id]
+
                         remove_pair_idx.append(e_f_pair)
 
                 # If a match is found for an element facet pair, remove it from the list of unique pairs
@@ -840,7 +847,7 @@ class MeshConnectivity:
                         my_facet_coord_z = fd(field=msh.z, elem=e, facet=facet)
                         my_facet_data = fd(field=field, elem=e, facet=facet)
 
-                        for rank in shared_ranks:
+                        for rank in list(np.unique(shared_ranks)):
                                 
                             # Send the facet data to the other rank
                             if rank not in facet_send_buff.keys():
@@ -908,6 +915,7 @@ class MeshConnectivity:
             local_facet_y_coords = [np.array(facet_send_buff[rank]['y_coords']) for rank in destinations]
             local_facet_z_coords = [np.array(facet_send_buff[rank]['z_coords']) for rank in destinations]
             local_facet_data = [np.array(facet_send_buff[rank]['data']) for rank in destinations]
+
             facet_sources, source_facet_el_id = self.rt.all_to_all(destination=destinations, data=local_facet_el_id, dtype=local_facet_el_id[0].dtype)
             _ , source_facet_id = self.rt.all_to_all(destination=destinations, data=local_facet_id, dtype=local_facet_id[0].dtype)
             _, source_facet_x_coords = self.rt.all_to_all(destination=destinations, data=local_facet_x_coords, dtype=local_facet_x_coords[0].dtype)
@@ -919,7 +927,7 @@ class MeshConnectivity:
                 source_facet_x_coords[i] = source_facet_x_coords[i].reshape(-1, msh.ly, msh.lx)
                 source_facet_y_coords[i] = source_facet_y_coords[i].reshape(-1, msh.ly, msh.lx)
                 source_facet_z_coords[i] = source_facet_z_coords[i].reshape(-1, msh.ly, msh.lx)
-                source_facet_data
+                source_facet_data[i] = source_facet_data[i].reshape(-1, msh.ly, msh.lx)
 
         # Summ vertices:
         for e in range(0, msh.nelv):
@@ -1050,6 +1058,86 @@ class MeshConnectivity:
                             lx_index = slice(1, -1)
                         slice_copy = slice(1, -1)
                         avrg_field[e, lz_index, ly_index, lx_index] = np.copy(my_edge_data[slice_copy])
+        
+        if msh.gdim == 3:
+            # Summ facets:
+            for e in range(0, msh.nelv):
+
+                # Facet data might be flipper or rotated so better check coordinates
+                for facet in range(0, 6):
+
+                    if (e, facet) in self.global_shared_efp_to_elem_map.keys():
+
+                        # Check which other rank has this facet
+                        shared_ranks = list(self.global_shared_efp_to_rank_map[(e, facet)])
+                        shared_elements = list(self.global_shared_efp_to_elem_map[(e, facet)])
+                        shared_facets = list(self.global_shared_efp_to_facet_map[(e, facet)])
+
+                        # Get the facet data from the different ranks
+                        for sf in range(0, len(shared_facets)):
+
+                            source_index = list(facet_sources).index(shared_ranks[sf])
+
+                            # Get the data from this source
+                            shared_facet_el_id = source_facet_el_id[source_index]
+                            shared_facet_id = source_facet_id[source_index]
+                            shared_facet_coord_x = source_facet_x_coords[source_index]
+                            shared_facet_coord_y = source_facet_y_coords[source_index]
+                            shared_facet_coord_z = source_facet_z_coords[source_index]
+                            shared_facet_data = source_facet_data[source_index]
+
+                            # find the data that matches the element and facet id dictionary
+                            el = shared_elements[sf]
+                            facet_id = shared_facets[sf]
+                            same_el = shared_facet_el_id == el
+                            same_facet = shared_facet_id == facet_id
+                            matching_index = np.where(same_el & same_facet)
+
+                            matching_facet_coord_x = shared_facet_coord_x[matching_index]
+                            matching_facet_coord_y = shared_facet_coord_y[matching_index]
+                            matching_facet_coord_z = shared_facet_coord_z[matching_index]
+                            matching_facet_data    = shared_facet_data[matching_index]
+
+                            # Get the facet location on my own elemenet
+                            lz_index = facet_to_slice_map[facet][0]
+                            ly_index = facet_to_slice_map[facet][1]
+                            lx_index = facet_to_slice_map[facet][2]
+
+                            # Get my own facet data and coordinates
+                            my_facet_coord_x = msh.x[e, lz_index, ly_index, lx_index]
+                            my_facet_coord_y = msh.y[e, lz_index, ly_index, lx_index]
+                            my_facet_coord_z = msh.z[e, lz_index, ly_index, lx_index]
+                            my_facet_data = np.copy(summed_field[e, lz_index, ly_index, lx_index])
+
+                            # Compare coordinates excluding the edges
+                            # For each of my data points
+                            for facet_point_j in range(1, my_facet_coord_x.shape[0]-1):
+                                for facet_point_i in range(1, my_facet_coord_x.shape[1]-1):
+                                    facet_point_x = my_facet_coord_x[facet_point_j, facet_point_i]
+                                    facet_point_y = my_facet_coord_y[facet_point_j, facet_point_i]
+                                    facet_point_z = my_facet_coord_z[facet_point_j, facet_point_i]
+
+                                    # Compare
+                                    same_x = np.isclose(facet_point_x, matching_facet_coord_x, rtol=self.rtol)
+                                    same_y = np.isclose(facet_point_y, matching_facet_coord_y, rtol=self.rtol)
+                                    same_z = np.isclose(facet_point_z, matching_facet_coord_z, rtol=self.rtol)
+                                    same_facet_point = np.where(same_x & same_y & same_z)
+
+                                    # Sum where a match is found
+                                    if len(same_facet_point[0]) > 0:
+ 
+                                        my_facet_data[facet_point_j, facet_point_i] += matching_facet_data[same_facet_point]
+
+                            # Do not assing at the edges
+                            if lz_index == slice(None):
+                                lz_index = slice(1, -1)
+                            if ly_index == slice(None):
+                                ly_index = slice(1, -1)
+                            if lx_index == slice(None):
+                                lx_index = slice(1, -1)
+                            slice_copy = slice(1, -1)
+                            avrg_field[e, lz_index, ly_index, lx_index] = np.copy(my_facet_data[slice_copy, slice_copy])
+
 
         # Divide by multiplicity    
         avrg_field = avrg_field / self.multiplicity
