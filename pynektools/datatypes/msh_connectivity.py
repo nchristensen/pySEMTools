@@ -83,170 +83,32 @@ class MeshConnectivity:
             
             self.log.write("info", "Computing local connectivity: Using vertices")
 
-            # Allocate local dictionaries
-            self.local_shared_evp_to_elem_map = {}
-            self.local_shared_evp_to_vertex_map = {}
-
-            # For all elements, check all the vertices
-            for e in range(0, msh.nelv):
-                #''' 
-                # For each vertex, find any other vertices that match the coordinates
-                for vertex in range(0, msh.vertices.shape[1]):
-                    same_x =  np.isclose(msh.vertices[e, vertex, 0],msh.vertices[:, :, 0], rtol=self.rtol)
-                    same_y =  np.isclose(msh.vertices[e, vertex, 1],msh.vertices[:, :, 1], rtol=self.rtol)
-                    same_z =  np.isclose(msh.vertices[e, vertex, 2],msh.vertices[:, :, 2], rtol=self.rtol)
-                    same_vertex = np.where(same_x & same_y & same_z)
-                    
-                    matching_elem = same_vertex[0]
-                    matching_vertex = same_vertex[1]
-                    
-                    self.local_shared_evp_to_elem_map[(e, vertex)] = matching_elem
-                    self.local_shared_evp_to_vertex_map[(e, vertex)] = matching_vertex
-
-                '''
-                # Compare all vertices of the element at once
-                sh = (1, 1, msh.vertices.shape[1])
-                sh2 = (-1, msh.vertices.shape[1], 1)
-                same_x = np.isclose(msh.vertices[e, :, 0].reshape(sh), msh.vertices[:, :, 0].reshape(sh2), rtol=self.rtol)
-                same_y = np.isclose(msh.vertices[e, :, 1].reshape(sh), msh.vertices[:, :, 1].reshape(sh2), rtol=self.rtol)
-                same_z = np.isclose(msh.vertices[e, :, 2].reshape(sh), msh.vertices[:, :, 2].reshape(sh2), rtol=self.rtol)                
-                same_vertex = np.where(same_x & same_y & same_z)
-
-                # If a match is found, populate the local dictionaries
-                my_vertex = same_vertex[2]
-                matching_elem = same_vertex[0]
-                matching_vertex = same_vertex[1]
-                
-                for vertex in range(0, msh.vertices.shape[1]):
-                
-                    v_match = np.where(my_vertex == vertex)
-                
-                    if len(v_match) > 0:
-                        me = matching_elem[v_match]
-                        mv = matching_vertex[v_match]
-                    else:
-                        me = []
-                        mv = []
-
-                    self.local_shared_evp_to_elem_map[(e, vertex)] = me
-                    self.local_shared_evp_to_vertex_map[(e, vertex)] = mv
-                '''
-            # For all vertices where no match was found, indicate that they are "incomplete"
-            # This means they can be boundary or shared with other ranks
-
             if msh.gdim == 2:
                 min_vertex = 4 # Anything less than 4 means that a vertex might be in another rank
             else:
                 min_vertex = 8 # Anything less than 8 means that a vertex might be in another rank
 
-            self.incomplete_evp_elem = []
-            self.incomplete_evp_vertex = []
-            for elem_vertex_pair in self.local_shared_evp_to_elem_map.keys():
+            self.local_shared_evp_to_elem_map, self.local_shared_evp_to_vertex_map, self.incomplete_evp_elem, self.incomplete_evp_vertex = find_local_shared_vef(vef_coords=msh.vertices, rtol=self.rtol, min_shared=min_vertex)
 
-                if len(self.local_shared_evp_to_elem_map[elem_vertex_pair]) < min_vertex: 
-                    self.incomplete_evp_elem.append(elem_vertex_pair[0])
-                    self.incomplete_evp_vertex.append(elem_vertex_pair[1])
-            
-            ## Delete my own entry from the map.
-            ## Keep any other shared vertex I have in the map.
-            #for i in range(0, len(self.incomplete_evp_elem)):
-            #    elem_vertex_pair = (self.incomplete_evp_elem[i], self.incomplete_evp_vertex[i])
-            #    self.local_shared_evp_to_elem_map[elem_vertex_pair] = self.local_shared_evp_to_elem_map[elem_vertex_pair][np.where(self.local_shared_evp_to_elem_map[elem_vertex_pair] != elem_vertex_pair[0])]
-            #    self.local_shared_evp_to_vertex_map[elem_vertex_pair] = self.local_shared_evp_to_vertex_map[elem_vertex_pair][np.where(self.local_shared_evp_to_elem_map[elem_vertex_pair] != elem_vertex_pair[0])]
- 
-        if msh.gdim >= 1:
+        if msh.gdim >= 2:
             
             self.log.write("info", "Computing local connectivity: Using edge centers")
             if msh.gdim == 2:
-                num_edges = 4
                 min_edges = 2
             else:
-                num_edges = 12
                 min_edges = 4
-
-            # Allocate local dictionaries
-            self.local_shared_eep_to_elem_map = {}
-            self.local_shared_eep_to_edge_map = {}
-
-            # For all elements, check all the edges
-            for e in range(0, msh.nelv):
-                    
-                # For each edge, find any other edges that match the coordinates
-                for edge in range(0, msh.edge_centers.shape[1]):
-                    same_x =  np.isclose(msh.edge_centers[e, edge, 0],msh.edge_centers[:, :, 0], rtol=self.rtol)
-                    same_y =  np.isclose(msh.edge_centers[e, edge, 1],msh.edge_centers[:, :, 1], rtol=self.rtol)
-                    same_z =  np.isclose(msh.edge_centers[e, edge, 2],msh.edge_centers[:, :, 2], rtol=self.rtol)
-                    same_edge = np.where(same_x & same_y & same_z)
-
-                    matching_elem = same_edge[0]
-                    matching_edge = same_edge[1]
-
-                    self.local_shared_eep_to_elem_map[(e, edge)] = matching_elem
-                    self.local_shared_eep_to_edge_map[(e, edge)] = matching_edge
             
-            # For all edges where no match was found, indicate that they are "incomplete"
-            # This means they can be boundary or shared with other ranks
-            self.incomplete_eep_elem = []
-            self.incomplete_eep_edge = []
-            for elem_edge_pair in self.local_shared_eep_to_elem_map.keys():
-                if len(self.local_shared_eep_to_elem_map[elem_edge_pair]) < min_edges: 
-                    self.incomplete_eep_elem.append(elem_edge_pair[0])
-                    self.incomplete_eep_edge.append(elem_edge_pair[1])
-
-            ## Delete my own entry from the map.
-            ## Keep any other shared edge I have in the map.
-            #if msh.gdim == 2:
-            #    for i in range(0, len(self.incomplete_eep_elem)):
-            #        elem_edge_pair = (self.incomplete_eep_elem[i], self.incomplete_eep_edge[i])
-            #        self.local_shared_eep_to_elem_map.pop(elem_edge_pair)
-            #        self.local_shared_eep_to_edge_map.pop(elem_edge_pair) 
-            #else:
-            #    for i in range(0, len(self.incomplete_eep_elem)):
-            #        elem_edge_pair = (self.incomplete_eep_elem[i], self.incomplete_eep_edge[i])
-            #        self.local_shared_eep_to_elem_map[elem_edge_pair] = self.local_shared_eep_to_elem_map[elem_edge_pair][np.where(self.local_shared_eep_to_elem_map[elem_edge_pair] != elem_edge_pair[0])]
-            #        self.local_shared_eep_to_edge_map[elem_edge_pair] = self.local_shared_eep_to_edge_map[elem_edge_pair][np.where(self.local_shared_eep_to_elem_map[elem_edge_pair] != elem_edge_pair[0])]        
-         
-        if msh.gdim == 3:
+            self.local_shared_eep_to_elem_map, self.local_shared_eep_to_edge_map, self.incomplete_eep_elem, self.incomplete_eep_edge = find_local_shared_vef(vef_coords=msh.edge_centers, rtol=self.rtol, min_shared=min_edges)
+ 
+        if msh.gdim >= 3:
             
             self.log.write("info", "Computing local connectivity: Using facet centers")
 
-            # Allocate local dictionaries
-            self.local_shared_efp_to_elem_map = {}
-            self.local_shared_efp_to_facet_map = {}
+            min_facets = 2
 
-            # For all elements, check all the facets
-            for e in range(0, msh.nelv):
+            self.local_shared_efp_to_elem_map, self.local_shared_efp_to_facet_map, self.unique_efp_elem, self.unique_efp_facet = find_local_shared_vef(vef_coords=msh.facet_centers, rtol=self.rtol, min_shared=min_facets)
 
-                # For each facets, find any other facets that match the coordinates
-                for facet in range(0, 6):
-                    same_x =  np.isclose(msh.facet_centers[e, facet, 0],msh.facet_centers[:, :, 0], rtol=self.rtol)
-                    same_y =  np.isclose(msh.facet_centers[e, facet, 1],msh.facet_centers[:, :, 1], rtol=self.rtol)
-                    same_z =  np.isclose(msh.facet_centers[e, facet, 2],msh.facet_centers[:, :, 2], rtol=self.rtol)
-
-                    same_facet = np.where(same_x & same_y & same_z)
-                    matching_elem = same_facet[0]
-                    matching_facet = same_facet[1]
-
-                    self.local_shared_efp_to_elem_map[(e, facet)] = matching_elem
-                    self.local_shared_efp_to_facet_map[(e, facet)] = matching_facet
-
-            # For all facets where no match was found, indicate that they are "unique"
-            # This means they can be boundary or shared with other ranks
-            self.unique_efp_elem = []
-            self.unique_efp_facet = []
-            for elem_facet_pair in self.local_shared_efp_to_elem_map.keys():
-
-                if len(self.local_shared_efp_to_elem_map[elem_facet_pair]) < 2: # All facets will appear at least once
-                    self.unique_efp_elem.append(elem_facet_pair[0])
-                    self.unique_efp_facet.append(elem_facet_pair[1])
                     
-            ## Delete the unique element facet pairs from the local maps
-            ## Since I just need to sum the values of the matching facet
-            #for i in range(0, len(self.unique_efp_elem)):
-            #    elem_facet_pair = (self.unique_efp_elem[i], self.unique_efp_facet[i])
-            #    self.local_shared_efp_to_elem_map.pop(elem_facet_pair)
-            #    self.local_shared_efp_to_facet_map.pop(elem_facet_pair)
-
     def global_connectivity(self, msh: Mesh):
         """ 
         Computes the global connectivity of the mesh
@@ -278,194 +140,17 @@ class MeshConnectivity:
         if msh.gdim >= 1:
 
             self.log.write("info", "Computing global connectivity: Using vertices")
+            self.global_shared_evp_to_rank_map, self.global_shared_evp_to_elem_map, self.global_shared_evp_to_vertex_map = find_global_shared_evp(self.rt, msh.vertices, self.incomplete_evp_elem, self.incomplete_evp_vertex, self.rtol) 
 
-            # Send incomplete vertices and their element and vertex id to all other ranks.
-            destinations = [rank for rank in range(0, self.rt.comm.Get_size()) if rank != self.rt.comm.Get_rank()]
-
-            local_incomplete_el_id = np.array(self.incomplete_evp_elem)
-            local_incomplete_vertex_id = np.array(self.incomplete_evp_vertex)
-            local_incomplete_vertex_coords = msh.vertices[self.incomplete_evp_elem, self.incomplete_evp_vertex]
-
-            sources, source_incomplete_el_id = self.rt.all_to_all(destination=destinations, data=local_incomplete_el_id, dtype=local_incomplete_el_id.dtype)
-            _ , source_incomplete_vertex_id = self.rt.all_to_all(destination=destinations, data=local_incomplete_vertex_id, dtype=local_incomplete_vertex_id.dtype)
-            _, source_incomplete_vertex_coords = self.rt.all_to_all(destination=destinations, data=local_incomplete_vertex_coords, dtype=local_incomplete_vertex_coords.dtype)
-
-            for i in range(0, len(source_incomplete_vertex_coords)):
-                source_incomplete_vertex_coords[i] = source_incomplete_vertex_coords[i].reshape(-1, 3)
-
-            # Create global dictionaries
-            self.global_shared_evp_to_rank_map = {}
-            self.global_shared_evp_to_elem_map = {}
-            self.global_shared_evp_to_vertex_map = {}
-
-            # Go through the data in each other rank.
-            for source_idx, source_vc in enumerate(source_incomplete_vertex_coords):
-
-                remove_pair_idx = []
-
-                # Loop through all my own incomplete element vertex pairs
-                for e_v_pair in range(0, len(self.incomplete_evp_elem)):
-
-                    # Check where my incomplete vertex pair coordinates match with the incomplete ...
-                    # ... vertex pair coordinates of the other rank
-                    e = self.incomplete_evp_elem[e_v_pair]
-                    vertex = self.incomplete_evp_vertex[e_v_pair]
-                    same_x =  np.isclose(msh.vertices[e, vertex, 0],source_vc[:, 0], rtol=self.rtol)
-                    same_y =  np.isclose(msh.vertices[e, vertex, 1],source_vc[:, 1], rtol=self.rtol)
-                    same_z =  np.isclose(msh.vertices[e, vertex, 2],source_vc[:, 2], rtol=self.rtol)
-                    same_vertex = np.where(same_x & same_y & same_z)
-                        
-                    # If we find a match assign it in the global dictionaries
-                    if len(same_vertex[0]) > 0:
-                        matching_id = same_vertex[0]
-                        sources_list = np.ones_like(source_incomplete_vertex_id[source_idx][matching_id]) * sources[source_idx]
-                        if (e, vertex) in self.global_shared_evp_to_rank_map.keys():
-                            self.global_shared_evp_to_rank_map[(e, vertex)] = np.append(self.global_shared_evp_to_rank_map[(e, vertex)], sources_list)
-                            self.global_shared_evp_to_elem_map[(e, vertex)] = np.append(self.global_shared_evp_to_elem_map[(e, vertex)], source_incomplete_el_id[source_idx][matching_id])
-                            self.global_shared_evp_to_vertex_map[(e, vertex)] = np.append(self.global_shared_evp_to_vertex_map[(e, vertex)], source_incomplete_vertex_id[source_idx][matching_id])
-                        else:
-                            self.global_shared_evp_to_rank_map[(e, vertex)] = sources_list
-                            self.global_shared_evp_to_elem_map[(e, vertex)] = source_incomplete_el_id[source_idx][matching_id]
-                            self.global_shared_evp_to_vertex_map[(e, vertex)] = source_incomplete_vertex_id[source_idx][matching_id]
-                                                
-                        #remove_pair_idx.append(e_v_pair)
-
-                # If a match is found for an element vertex pair, remove it from the list of incomplete pairs
-                #remove_pair_idx = sorted(remove_pair_idx, reverse=True)
-                #for idx in remove_pair_idx:
-                #    self.incomplete_evp_elem.pop(idx)
-                #    self.incomplete_evp_vertex.pop(idx)
-
-        
-
-        if msh.gdim >= 1:
+        if msh.gdim >= 2:
 
             self.log.write("info", "Computing global connectivity: Using edge centers")
-
-            # Send incomplete edges and their element and edge id to all other ranks.
-            destinations = [rank for rank in range(0, self.rt.comm.Get_size()) if rank != self.rt.comm.Get_rank()]
-
-            local_incomplete_el_id = np.array(self.incomplete_eep_elem)
-            local_incomplete_edge_id = np.array(self.incomplete_eep_edge)
-            local_incomplete_edge_centers = msh.edge_centers[self.incomplete_eep_elem, self.incomplete_eep_edge]
-
-            sources, source_incomplete_el_id = self.rt.all_to_all(destination=destinations, data=local_incomplete_el_id, dtype=local_incomplete_el_id.dtype)
-            _ , source_incomplete_edge_id = self.rt.all_to_all(destination=destinations, data=local_incomplete_edge_id, dtype=local_incomplete_edge_id.dtype)
-            _, source_incomplete_edge_centers = self.rt.all_to_all(destination=destinations, data=local_incomplete_edge_centers, dtype=local_incomplete_edge_centers.dtype)
-
-            for i in range(0, len(source_incomplete_edge_centers)):
-                source_incomplete_edge_centers[i] = source_incomplete_edge_centers[i].reshape(-1, 3)
-
-            # Create global dictionaries
-            self.global_shared_eep_to_rank_map = {}
-            self.global_shared_eep_to_elem_map = {}
-            self.global_shared_eep_to_edge_map = {}
-
-            # Go through the data in each other rank.
-            for source_idx, source_ec in enumerate(source_incomplete_edge_centers):
-
-                remove_pair_idx = []
-
-                # Loop through all my own incomplete element edge pairs
-                for e_e_pair in range(0, len(self.incomplete_eep_elem)):
-
-                    #check where my incomplete edge pair coordinates match with the incomplete ...
-                    # ... edge pair coordinates of the other rank
-                    e = self.incomplete_eep_elem[e_e_pair]
-                    edge = self.incomplete_eep_edge[e_e_pair]
-                    same_x =  np.isclose(msh.edge_centers[e, edge, 0],source_ec[:, 0], rtol=self.rtol)
-                    same_y =  np.isclose(msh.edge_centers[e, edge, 1],source_ec[:, 1], rtol=self.rtol)
-                    same_z =  np.isclose(msh.edge_centers[e, edge, 2],source_ec[:, 2], rtol=self.rtol)
-                    same_edge = np.where(same_x & same_y & same_z)
-
-                    # If we find a match assign it in the global dictionaries
-                    if len(same_edge[0]) > 0:
-                        matching_id = same_edge[0]
-                        source_list = np.ones_like(source_incomplete_edge_id[source_idx][matching_id]) * sources[source_idx]
-                        if (e, edge) in self.global_shared_eep_to_rank_map.keys():
-                            self.global_shared_eep_to_rank_map[(e, edge)] = np.append(self.global_shared_eep_to_rank_map[(e, edge)], source_list)
-                            self.global_shared_eep_to_elem_map[(e, edge)] = np.append(self.global_shared_eep_to_elem_map[(e, edge)], source_incomplete_el_id[source_idx][matching_id])
-                            self.global_shared_eep_to_edge_map[(e, edge)] = np.append(self.global_shared_eep_to_edge_map[(e, edge)], source_incomplete_edge_id[source_idx][matching_id]) 
-                        else:
-                            self.global_shared_eep_to_rank_map[(e, edge)] = source_list
-                            self.global_shared_eep_to_elem_map[(e, edge)] = source_incomplete_el_id[source_idx][matching_id]
-                            self.global_shared_eep_to_edge_map[(e, edge)] = source_incomplete_edge_id[source_idx][matching_id]
-
-                        #remove_pair_idx.append(e_e_pair)
-                
-                # If a match is found for an element edge pair, remove it from the list of incomplete pairs
-                #remove_pair_idx = sorted(remove_pair_idx, reverse=True)
-                #for idx in remove_pair_idx:
-                #    self.incomplete_eep_elem.pop(idx)
-                #    self.incomplete_eep_edge.pop(idx)
+            self.global_shared_eep_to_rank_map, self.global_shared_eep_to_elem_map, self.global_shared_eep_to_edge_map = find_global_shared_evp(self.rt, msh.edge_centers, self.incomplete_eep_elem, self.incomplete_eep_edge, self.rtol)
 
         if msh.gdim == 3:
 
             self.log.write("info", "Computing global connectivity: Using facet centers")
-        
-            # Send unique facet centers and their element and facet id to all other ranks.
-            destinations = [rank for rank in range(0, self.rt.comm.Get_size()) if rank != self.rt.comm.Get_rank()]
-
-            local_unique_el_id = np.array(self.unique_efp_elem)
-            local_unique_facet_id = np.array(self.unique_efp_facet)
-            local_unique_facet_centers = msh.facet_centers[self.unique_efp_elem, self.unique_efp_facet]
-
-            sources, source_unique_el_id = self.rt.all_to_all(destination=destinations, data=local_unique_el_id, dtype=local_unique_el_id.dtype)
-            _ , source_unique_facet_id = self.rt.all_to_all(destination=destinations, data=local_unique_facet_id, dtype=local_unique_facet_id.dtype)
-            _, source_unique_facet_centers = self.rt.all_to_all(destination=destinations, data=local_unique_facet_centers, dtype=local_unique_facet_centers.dtype)
-
-            for i in range(0, len(source_unique_facet_centers)):
-                source_unique_facet_centers[i] = source_unique_facet_centers[i].reshape(-1, 3)
-
-            # Create global dictionaries
-            self.global_shared_efp_to_rank_map = {}
-            self.global_shared_efp_to_elem_map = {}
-            self.global_shared_efp_to_facet_map = {}
-
-            # Go through the data in each other rank.
-            for source_idx, source_fc in enumerate(source_unique_facet_centers):
-
-                remove_pair_idx = []
-
-                # Loop through all my own unique element facet pair coordinates
-                for e_f_pair in range(0, len(self.unique_efp_elem)):
-
-                    # Check where my unique facet pair coordinates match with the unique ...
-                    # ... facet pair coordinates of the other rank
-                    e = self.unique_efp_elem[e_f_pair]
-                    facet = self.unique_efp_facet[e_f_pair]
-                    same_x =  np.isclose(msh.facet_centers[e, facet, 0],source_fc[:, 0], rtol=self.rtol)
-                    same_y =  np.isclose(msh.facet_centers[e, facet, 1],source_fc[:, 1], rtol=self.rtol)
-                    same_z =  np.isclose(msh.facet_centers[e, facet, 2],source_fc[:, 2], rtol=self.rtol)
-                    same_facet = np.where(same_x & same_y & same_z)
-                        
-                    # If we find a match assign it in the global dictionaries
-                    if len(same_facet[0]) > 0:
-                        matching_id = same_facet[0]
-                        source_list = np.ones_like(source_unique_facet_id[source_idx][matching_id]) * sources[source_idx]
-                        if (e, facet) in self.global_shared_efp_to_rank_map.keys():
-                            self.global_shared_efp_to_rank_map[(e, facet)] = np.append(self.global_shared_efp_to_rank_map[(e, facet)], source_list)
-                            self.global_shared_efp_to_elem_map[(e, facet)] = np.append(self.global_shared_efp_to_elem_map[(e, facet)], source_unique_el_id[source_idx][matching_id])
-                            self.global_shared_efp_to_facet_map[(e, facet)] = np.append(self.global_shared_efp_to_facet_map[(e, facet)], source_unique_facet_id[source_idx][matching_id])
-                        else:
-                            self.global_shared_efp_to_rank_map[(e, facet)] = source_list
-                            self.global_shared_efp_to_elem_map[(e, facet)] = source_unique_el_id[source_idx][matching_id]
-                            self.global_shared_efp_to_facet_map[(e, facet)] = source_unique_facet_id[source_idx][matching_id]
-
-                        remove_pair_idx.append(e_f_pair)
-
-                # If a match is found for an element facet pair, remove it from the list of unique pairs
-                remove_pair_idx = sorted(remove_pair_idx, reverse=True)
-                for idx in remove_pair_idx:
-                    self.unique_efp_elem.pop(idx)
-                    self.unique_efp_facet.pop(idx)
-                
-            # Any of my unique facets that remain, should be a boundary facet
-            self.boundary_efp_elem = self.unique_efp_elem
-            self.boundary_efp_facet = self.unique_efp_facet
-            del self.unique_efp_elem
-            del self.unique_efp_facet
-
+            self.global_shared_efp_to_rank_map, self.global_shared_efp_to_elem_map, self.global_shared_efp_to_facet_map = find_global_shared_evp(self.rt, msh.facet_centers, self.unique_efp_elem, self.unique_efp_facet, self.rtol)
 
     def get_multiplicity(self, msh: Mesh):
         """
@@ -1159,5 +844,91 @@ class MeshConnectivity:
 
         return avrg_field
                      
+def find_local_shared_vef(vef_coords: np.ndarray = None, rtol: float = 1e-5, min_shared: int = 0) -> tuple[dict[tuple[int, int], np.ndarray], dict[tuple[int, int], np.ndarray], list[int], list[int]]: 
+    
+    # Define the maps
+    shared_e_vef_p_to_elem_map = {}
+    shared_e_vef_p_to_vef_map = {}
 
+    # Iterate over each element
+    for e in range(0, vef_coords.shape[0]):
+        # Iterate over each vertex/edge/facet
+        for vef in range(0, vef_coords.shape[1]):
+            same_x =  np.isclose(vef_coords[e, vef, 0], vef_coords[:, :, 0], rtol=rtol)
+            same_y =  np.isclose(vef_coords[e, vef, 1], vef_coords[:, :, 1], rtol=rtol)
+            same_z =  np.isclose(vef_coords[e, vef, 2], vef_coords[:, :, 2], rtol=rtol)
+            same_geometric_entity = np.where(same_x & same_y & same_z)
 
+            matching_elem = same_geometric_entity[0]
+            matching_geometric_entity = same_geometric_entity[1]
+
+            # Assig the matching element and vertex/edge/facet to the dictionary
+            shared_e_vef_p_to_elem_map[(e, vef)] = matching_elem
+            shared_e_vef_p_to_vef_map[(e, vef)] = matching_geometric_entity
+
+    # If the number of shared vertices/edges/facets is less than min_shared, then the vertex/edge/facet is incomplete
+    # and the rest might be in anothe rank 
+    incomplete_e_vef_p_elem = []
+    incomplete_e_vef_p_vef = []
+    for elem_vef_pair in shared_e_vef_p_to_elem_map.keys():
+        if len(shared_e_vef_p_to_elem_map[elem_vef_pair]) < min_shared:
+            incomplete_e_vef_p_elem.append(elem_vef_pair[0])
+            incomplete_e_vef_p_vef.append(elem_vef_pair[1])
+
+    return shared_e_vef_p_to_elem_map, shared_e_vef_p_to_vef_map, incomplete_e_vef_p_elem, incomplete_e_vef_p_vef
+
+def find_global_shared_evp(rt: Router, vef_coords: np.ndarray, incomplete_e_vef_p_elem: list[int], incomplete_e_vef_p_vef: list[int], rtol: float = 1e-5) -> tuple[dict[tuple[int, int], np.ndarray], dict[tuple[int, int], np.ndarray], dict[tuple[int, int], np.ndarray]]:
+    
+    # Send incomplete vertices and their element and vertex id to all other ranks.
+    destinations = [rank for rank in range(0, rt.comm.Get_size()) if rank != rt.comm.Get_rank()]
+    
+    # Set up send buffers
+    local_incomplete_el_id = np.array(incomplete_e_vef_p_elem)
+    local_incomplete_vef_id = np.array(incomplete_e_vef_p_vef)
+    local_incomplete_vef_coords = vef_coords[incomplete_e_vef_p_elem, incomplete_e_vef_p_vef]
+    
+    # Send and recieve
+    sources, source_incomplete_el_id = rt.all_to_all(destination=destinations, data=local_incomplete_el_id, dtype=local_incomplete_el_id.dtype)
+    _ , source_incomplete_vef_id = rt.all_to_all(destination=destinations, data=local_incomplete_vef_id, dtype=local_incomplete_vef_id.dtype)
+    _, source_incomplete_vef_coords = rt.all_to_all(destination=destinations, data=local_incomplete_vef_coords, dtype=local_incomplete_vef_coords.dtype)
+    
+    # Reshape flattened arrays
+    for i in range(0, len(source_incomplete_vef_coords)):
+        source_incomplete_vef_coords[i] = source_incomplete_vef_coords[i].reshape(-1, 3)
+
+    # Create global dictionaries
+    global_shared_e_vef_p_to_rank_map = {}
+    global_shared_e_vef_p_to_elem_map = {}
+    global_shared_e_vef_p_to_vertex_map = {}
+
+    # Go through the data in each other rank.
+    for source_idx, source_vef in enumerate(source_incomplete_vef_coords):
+
+        remove_pair_idx = []
+
+        # Loop through all my own incomplete element vertex pairs
+        for e_vef_pair in range(0, len(incomplete_e_vef_p_elem)):
+
+            # Check where my incomplete vertex pair coordinates match with the incomplete ...
+            # ... vertex pair coordinates of the other rank
+            e = incomplete_e_vef_p_elem[e_vef_pair]
+            vef = incomplete_e_vef_p_vef[e_vef_pair]
+            same_x =  np.isclose(vef_coords[e, vef, 0],source_vef[:, 0], rtol=rtol)
+            same_y =  np.isclose(vef_coords[e, vef, 1],source_vef[:, 1], rtol=rtol)
+            same_z =  np.isclose(vef_coords[e, vef, 2],source_vef[:, 2], rtol=rtol)
+            same_vef = np.where(same_x & same_y & same_z)
+                
+            # If we find a match assign it in the global dictionaries
+            if len(same_vef[0]) > 0:
+                matching_id = same_vef[0]
+                sources_list = np.ones_like(source_incomplete_vef_id[source_idx][matching_id]) * sources[source_idx]
+                if (e, vef) in global_shared_e_vef_p_to_rank_map.keys():
+                    global_shared_e_vef_p_to_rank_map[(e, vef)] = np.append(global_shared_e_vef_p_to_rank_map[(e, vef)], sources_list)
+                    global_shared_e_vef_p_to_elem_map[(e, vef)] = np.append(global_shared_e_vef_p_to_elem_map[(e, vef)], source_incomplete_el_id[source_idx][matching_id])
+                    global_shared_e_vef_p_to_vertex_map[(e, vef)] = np.append(global_shared_e_vef_p_to_vertex_map[(e, vef)], source_incomplete_vef_id[source_idx][matching_id])
+                else:
+                    global_shared_e_vef_p_to_rank_map[(e, vef)] = sources_list
+                    global_shared_e_vef_p_to_elem_map[(e, vef)] = source_incomplete_el_id[source_idx][matching_id]
+                    global_shared_e_vef_p_to_vertex_map[(e, vef)] = source_incomplete_vef_id[source_idx][matching_id]
+                                     
+    return global_shared_e_vef_p_to_rank_map, global_shared_e_vef_p_to_elem_map, global_shared_e_vef_p_to_vertex_map
