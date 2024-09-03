@@ -439,79 +439,26 @@ class MeshConnectivity:
             vertex_to_slice_map = vertex_to_slice_map_3d
             edge_to_slice_map = edge_to_slice_map_3d
 
-        # Prepare data to send to other ranks:
         if msh.gdim >= 1:
+            # Prepare data to send to other ranks:
             vertex_send_buff = prepare_send_buffers(msh=msh, field=field, vef_to_rank_map=self.global_shared_evp_to_rank_map, data_to_fetch="vertex")
 
+            # Send and receive the data
+            vertex_sources, source_vertex_el_id, source_vertex_id, source_vertex_x_coords, source_vertex_y_coords, source_vertex_z_coords, source_vertex_data = send_recv_data(rt=self.rt, send_buff=vertex_send_buff, data_to_send="vertex", lx=msh.lx)
+
         if msh.gdim >= 2:
+            # Prepare data to send to other ranks:
             edge_send_buff = prepare_send_buffers(msh=msh, field=field, vef_to_rank_map=self.global_shared_eep_to_rank_map, data_to_fetch="edge")
 
+            # Send and receive the data
+            edges_sources, source_edge_el_id, source_edge_id, source_edge_x_coords, source_edge_y_coords, source_edge_z_coords, source_edge_data = send_recv_data(rt=self.rt, send_buff=edge_send_buff, data_to_send="edge", lx=msh.lx)
+
         if msh.gdim >= 3:
+            # Prepare data to send to other ranks:
             facet_send_buff = prepare_send_buffers(msh=msh, field=field, vef_to_rank_map=self.global_shared_efp_to_rank_map, data_to_fetch="facet")
 
-
-        # Now send the vertices
-        destinations = [rank for rank in vertex_send_buff.keys()]
-        local_vertex_el_id = [np.array(vertex_send_buff[rank]['e']) for rank in destinations]
-        local_vertex_id = [np.array(vertex_send_buff[rank]['vertex']) for rank in destinations]
-        local_vertex_x_coords = [np.array(vertex_send_buff[rank]['x_coords']) for rank in destinations]
-        local_vertex_y_coords = [np.array(vertex_send_buff[rank]['y_coords']) for rank in destinations]
-        local_vertex_z_coords = [np.array(vertex_send_buff[rank]['z_coords']) for rank in destinations]
-        local_vertex_data = [np.array(vertex_send_buff[rank]['data']) for rank in destinations]
-        vertex_sources, source_vertex_el_id = self.rt.all_to_all(destination=destinations, data=local_vertex_el_id, dtype=local_vertex_el_id[0].dtype)
-        _ , source_vertex_id = self.rt.all_to_all(destination=destinations, data=local_vertex_id, dtype=local_vertex_id[0].dtype)
-        _, source_vertex_x_coords = self.rt.all_to_all(destination=destinations, data=local_vertex_x_coords, dtype=local_vertex_x_coords[0].dtype)
-        _, source_vertex_y_coords = self.rt.all_to_all(destination=destinations, data=local_vertex_y_coords, dtype=local_vertex_y_coords[0].dtype)
-        _, source_vertex_z_coords = self.rt.all_to_all(destination=destinations, data=local_vertex_z_coords, dtype=local_vertex_z_coords[0].dtype)
-        _, source_vertex_data = self.rt.all_to_all(destination=destinations, data=local_vertex_data, dtype=local_vertex_data[0].dtype)
-
-        for i in range(0, len(source_vertex_x_coords)):
-            # No need to reshape the vertex data
-            pass 
-
-        # Now send the edges
-        destinations = [rank for rank in edge_send_buff.keys()]
-        local_edge_el_id = [np.array(edge_send_buff[rank]['e']) for rank in destinations]
-        local_edge_id = [np.array(edge_send_buff[rank]['edge']) for rank in destinations]
-        local_edge_x_coords = [np.array(edge_send_buff[rank]['x_coords']) for rank in destinations]
-        local_edge_y_coords = [np.array(edge_send_buff[rank]['y_coords']) for rank in destinations]
-        local_edge_z_coords = [np.array(edge_send_buff[rank]['z_coords']) for rank in destinations]
-        local_edge_data = [np.array(edge_send_buff[rank]['data']) for rank in destinations]
-        edges_sources, source_edge_el_id = self.rt.all_to_all(destination=destinations, data=local_edge_el_id, dtype=local_edge_el_id[0].dtype)
-        _ , source_edge_id = self.rt.all_to_all(destination=destinations, data=local_edge_id, dtype=local_edge_id[0].dtype)
-        _, source_edge_x_coords = self.rt.all_to_all(destination=destinations, data=local_edge_x_coords, dtype=local_edge_x_coords[0].dtype)
-        _, source_edge_y_coords = self.rt.all_to_all(destination=destinations, data=local_edge_y_coords, dtype=local_edge_y_coords[0].dtype)
-        _, source_edge_z_coords = self.rt.all_to_all(destination=destinations, data=local_edge_z_coords, dtype=local_edge_z_coords[0].dtype)
-        _, source_edge_data = self.rt.all_to_all(destination=destinations, data=local_edge_data, dtype=local_edge_data[0].dtype)
-
-        for i in range(0, len(source_edge_x_coords)):
-            source_edge_x_coords[i] = source_edge_x_coords[i].reshape(-1, msh.lx)
-            source_edge_y_coords[i] = source_edge_y_coords[i].reshape(-1, msh.lx)
-            source_edge_z_coords[i] = source_edge_z_coords[i].reshape(-1, msh.lx)
-            source_edge_data[i] = source_edge_data[i].reshape(-1, msh.lx)
-
-        # Now send the facets
-        if msh.gdim == 3:
-            destinations = [rank for rank in facet_send_buff.keys()]
-            local_facet_el_id = [np.array(facet_send_buff[rank]['e']) for rank in destinations]
-            local_facet_id = [np.array(facet_send_buff[rank]['facet']) for rank in destinations]
-            local_facet_x_coords = [np.array(facet_send_buff[rank]['x_coords']) for rank in destinations]
-            local_facet_y_coords = [np.array(facet_send_buff[rank]['y_coords']) for rank in destinations]
-            local_facet_z_coords = [np.array(facet_send_buff[rank]['z_coords']) for rank in destinations]
-            local_facet_data = [np.array(facet_send_buff[rank]['data']) for rank in destinations]
-
-            facet_sources, source_facet_el_id = self.rt.all_to_all(destination=destinations, data=local_facet_el_id, dtype=local_facet_el_id[0].dtype)
-            _ , source_facet_id = self.rt.all_to_all(destination=destinations, data=local_facet_id, dtype=local_facet_id[0].dtype)
-            _, source_facet_x_coords = self.rt.all_to_all(destination=destinations, data=local_facet_x_coords, dtype=local_facet_x_coords[0].dtype)
-            _, source_facet_y_coords = self.rt.all_to_all(destination=destinations, data=local_facet_y_coords, dtype=local_facet_y_coords[0].dtype)
-            _, source_facet_z_coords = self.rt.all_to_all(destination=destinations, data=local_facet_z_coords, dtype=local_facet_z_coords[0].dtype)
-            _, source_facet_data = self.rt.all_to_all(destination=destinations, data=local_facet_data, dtype=local_facet_data[0].dtype)
-
-            for i in range(0, len(source_facet_x_coords)):
-                source_facet_x_coords[i] = source_facet_x_coords[i].reshape(-1, msh.ly, msh.lx)
-                source_facet_y_coords[i] = source_facet_y_coords[i].reshape(-1, msh.ly, msh.lx)
-                source_facet_z_coords[i] = source_facet_z_coords[i].reshape(-1, msh.ly, msh.lx)
-                source_facet_data[i] = source_facet_data[i].reshape(-1, msh.ly, msh.lx)
+            # Send and receive the data
+            facet_sources, source_facet_el_id, source_facet_id, source_facet_x_coords, source_facet_y_coords, source_facet_z_coords, source_facet_data = send_recv_data(rt=self.rt, send_buff=facet_send_buff, data_to_send="facet", lx=msh.lx)
 
         # Summ vertices:
         for e in range(0, msh.nelv):
@@ -883,3 +830,50 @@ def prepare_send_buffers(msh: Mesh = None, field: np.ndarray = None, vef_to_rank
                     send_buff[rank]['data'].append(my_vef_data)
 
     return send_buff
+
+def send_recv_data(rt: Router = None, send_buff: dict=None, data_to_send: str = None, lx: int = None) -> tuple[list[int], list[np.ndarray], list[np.ndarray], list[np.ndarray], list[np.ndarray], list[np.ndarray], list[np.ndarray]]:
+
+    # Populate a list with the destinations
+    destinations = [rank for rank in send_buff.keys()]
+
+    # Populate individual list for each data that must be sent to each destination
+    #1. The element id
+    local_vef_el_id = [np.array(send_buff[rank]['e']) for rank in destinations]
+    #2. The vertex/edge/facet id inside the element
+    local_vef_id = [np.array(send_buff[rank][data_to_send]) for rank in destinations]
+    #3. The x coordinates if the vertex/edge/facet
+    local_vef_x_coords = [np.array(send_buff[rank]['x_coords']) for rank in destinations]
+    #4. The y coordinates if the vertex/edge/facet
+    local_vef_y_coords = [np.array(send_buff[rank]['y_coords']) for rank in destinations]
+    #5. The z coordinates if the vertex/edge/facet
+    local_vef_z_coords = [np.array(send_buff[rank]['z_coords']) for rank in destinations]
+    #6. The data of the vertex/edge/facet that will be summed
+    local_vef_data = [np.array(send_buff[rank]['data']) for rank in destinations]
+
+    # Send and recieve the data
+    vef_sources, source_vef_el_id = rt.all_to_all(destination=destinations, data=local_vef_el_id, dtype=local_vef_el_id[0].dtype)
+    _ , source_vef_id = rt.all_to_all(destination=destinations, data=local_vef_id, dtype=local_vef_id[0].dtype)
+    _, source_vef_x_coords = rt.all_to_all(destination=destinations, data=local_vef_x_coords, dtype=local_vef_x_coords[0].dtype)
+    _, source_vef_y_coords = rt.all_to_all(destination=destinations, data=local_vef_y_coords, dtype=local_vef_y_coords[0].dtype)
+    _, source_vef_z_coords = rt.all_to_all(destination=destinations, data=local_vef_z_coords, dtype=local_vef_z_coords[0].dtype)
+    _, source_vef_data = rt.all_to_all(destination=destinations, data=local_vef_data, dtype=local_vef_data[0].dtype)
+
+    # Reshape the flattened arrays
+    if data_to_send == "vertex":
+        for i in range(0, len(source_vef_x_coords)):
+            # No need to reshape the vertex data
+            pass 
+    elif data_to_send == "edge":
+        for i in range(0, len(source_vef_x_coords)):
+            source_vef_x_coords[i] = source_vef_x_coords[i].reshape(-1, lx)
+            source_vef_y_coords[i] = source_vef_y_coords[i].reshape(-1, lx)
+            source_vef_z_coords[i] = source_vef_z_coords[i].reshape(-1, lx)
+            source_vef_data[i] = source_vef_data[i].reshape(-1, lx)
+    elif data_to_send == "facet":
+        for i in range(0, len(source_vef_x_coords)):
+            source_vef_x_coords[i] = source_vef_x_coords[i].reshape(-1, lx, lx)
+            source_vef_y_coords[i] = source_vef_y_coords[i].reshape(-1, lx, lx)
+            source_vef_z_coords[i] = source_vef_z_coords[i].reshape(-1, lx, lx)
+            source_vef_data[i] = source_vef_data[i].reshape(-1, lx, lx)
+
+    return vef_sources, source_vef_el_id, source_vef_id, source_vef_x_coords, source_vef_y_coords, source_vef_z_coords, source_vef_data
