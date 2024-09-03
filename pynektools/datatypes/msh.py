@@ -2,6 +2,9 @@
 
 import numpy as np
 from ..monitoring.logger import Logger
+from .element_slicing import fetch_elem_facet_data as fd
+from .element_slicing import fetch_elem_edge_data as ed
+from .element_slicing import fetch_elem_vertex_data as vd
 
 NoneType = type(None)
 
@@ -205,11 +208,116 @@ class Mesh:
         else:
             self.gdim = 2
 
+        self.get_vertices()
+
+        self.get_edge_centers()
+
+        self.get_facet_centers()
+
         self.create_connectivity()
 
         self.global_element_number = np.arange(
             self.offset_el, self.offset_el + self.nelv, dtype=np.int64
         )
+
+    def get_vertices(self):
+        '''
+        Get the vertices of the domain.
+        
+        Get all the vertices of the domain in 2D or 3D.
+
+        Notes
+        -----
+
+        We need 4 vertices for 2D and 8 vertices for 3D. For all cases,
+        we store 3 coordinates for each vertex.
+        '''
+
+        self.log.write("info", "Getting vertices")
+
+        if self.gdim == 2:
+            self.vertices = np.zeros((self.nelv, 4, 3), dtype=self.x.dtype) # 4 vertices, 3 coords (z = 0)
+
+            for vertex in range(0, 4):
+                self.vertices[:, vertex, 0] = vd(field=self.x, vertex=vertex)
+                self.vertices[:, vertex, 1] = vd(field=self.y, vertex=vertex)
+                self.vertices[:, vertex, 2] = 0
+
+        elif self.gdim == 3:
+            self.vertices = np.zeros((self.nelv, 8, 3), dtype=self.x.dtype) # 4 vertices, 3 coords
+
+            for vertex in range(0, 8):
+                self.vertices[:, vertex, 0] = vd(field=self.x, vertex=vertex)
+                self.vertices[:, vertex, 1] = vd(field=self.y, vertex=vertex)
+                self.vertices[:, vertex, 2] = vd(field=self.z, vertex=vertex)
+
+    def get_edge_centers(self):
+        '''
+        Get the edge centers of the domain.
+        
+        Get all the edge centers of the domain in 2D or 3D.
+
+        Notes
+        -----
+
+        We need 4 edges for 2D and 12 edges for 3D. For all cases
+        we store 3 coordinates for each edge.
+        '''
+
+        self.log.write("info", "Getting vertices")
+
+        if self.gdim == 2:
+            self.edge_centers = np.zeros((self.nelv, 4, 3), dtype=self.x.dtype) # 4 vertices, 3 coords (z = 0)
+
+            for edge in range(0, 4):
+                edge_data = ed(field=self.x, edge=edge)
+                self.edge_centers[:, edge, 0] = np.min(edge_data, axis=(1)) + (np.max(edge_data, axis=(1)) - np.min(edge_data, axis=(1))) / 2
+                edge_data = ed(field=self.y, edge=edge)
+                self.edge_centers[:, edge, 1] = np.min(edge_data, axis=(1)) + (np.max(edge_data, axis=(1)) - np.min(edge_data, axis=(1))) / 2
+                edge_data = ed(field=self.z, edge=edge)
+                self.edge_centers[:, edge, 2] = np.min(edge_data, axis=(1)) + (np.max(edge_data, axis=(1)) - np.min(edge_data, axis=(1))) / 2            
+                
+        elif self.gdim == 3:
+            self.edge_centers = np.zeros((self.nelv, 12, 3), dtype=self.x.dtype) # 4 vertices, 3 coords
+            
+            for edge in range(0, 12):
+                edge_data = ed(field=self.x, edge=edge)
+                self.edge_centers[:, edge, 0] = np.min(edge_data, axis=(1)) + (np.max(edge_data, axis=(1)) - np.min(edge_data, axis=(1))) / 2
+                edge_data = ed(field=self.y, edge=edge)
+                self.edge_centers[:, edge, 1] = np.min(edge_data, axis=(1)) + (np.max(edge_data, axis=(1)) - np.min(edge_data, axis=(1))) / 2
+                edge_data = ed(field=self.z, edge=edge)
+                self.edge_centers[:, edge, 2] = np.min(edge_data, axis=(1)) + (np.max(edge_data, axis=(1)) - np.min(edge_data, axis=(1))) / 2            
+
+    def get_facet_centers(self):
+        '''
+        Get the centroid of each facet
+        
+        Find the "centroid of each facet. This is used to find the shared facets between elements.
+
+        Notes
+        -----
+
+        This is not really the centroid, as we also find a coordinate in the dimension perpendicular to the facet.
+        This means that these values can be outside or inside the element. However the same behaviour should be seen in the matching elements. 
+        '''
+
+        if self.gdim == 2:
+            self.log.write("info", "Facet centers not available for 2D")
+
+        elif self.gdim == 3:
+            self.log.write("info", "Getting facet centers")
+
+            self.facet_centers = np.zeros((self.nelv, 6, 3), dtype=self.x.dtype) # 6 facets, 3 coordinates
+
+            # Facet 1 - 6 -> 0 - 5
+            for facet in range(0, 6):
+                facet_data = fd(field=self.x, facet=facet)
+                self.facet_centers[:, facet, 0] = np.min(facet_data, axis=(1,2)) + (np.max(facet_data, axis=(1,2)) - np.min(facet_data, axis=(1,2))) / 2
+                facet_data = fd(field=self.y, facet=facet)
+                self.facet_centers[:, facet, 1] = np.min(facet_data, axis=(1,2)) + (np.max(facet_data, axis=(1,2)) - np.min(facet_data, axis=(1,2))) / 2
+                facet_data = fd(field=self.z, facet=facet)
+                self.facet_centers[:, facet, 2] = np.min(facet_data, axis=(1,2)) + (np.max(facet_data, axis=(1,2)) - np.min(facet_data, axis=(1,2))) / 2            
+
 
     def create_connectivity(self):
 
