@@ -439,118 +439,16 @@ class MeshConnectivity:
             vertex_to_slice_map = vertex_to_slice_map_3d
             edge_to_slice_map = edge_to_slice_map_3d
 
-        # Prepare vertices to send to other ranks:
-        vertex_send_buff = {}
-        for e in range(0, msh.nelv):
-            
-            # Vertex data is pointwise and can be summed directly 
-            for vertex in range(0, msh.vertices.shape[1]):
+        # Prepare data to send to other ranks:
+        if msh.gdim >= 1:
+            vertex_send_buff = prepare_send_buffers(msh=msh, field=field, vef_to_rank_map=self.global_shared_evp_to_rank_map, data_to_fetch="vertex")
 
-                if (e, vertex) in self.global_shared_evp_to_elem_map.keys():
+        if msh.gdim >= 2:
+            edge_send_buff = prepare_send_buffers(msh=msh, field=field, vef_to_rank_map=self.global_shared_eep_to_rank_map, data_to_fetch="edge")
 
-                    # Check which other rank has this vertex
-                    shared_ranks = list(self.global_shared_evp_to_rank_map[(e, vertex)])
+        if msh.gdim >= 3:
+            facet_send_buff = prepare_send_buffers(msh=msh, field=field, vef_to_rank_map=self.global_shared_efp_to_rank_map, data_to_fetch="facet")
 
-                    # Get the vertex data from the other elements of the field.
-                    my_vertex_coord_x = vd(field=msh.x, elem=e, vertex=vertex)
-                    my_vertex_coord_y = vd(field=msh.y, elem=e, vertex=vertex)
-                    my_vertex_coord_z = vd(field=msh.z, elem=e, vertex=vertex)
-                    my_vertex_data = vd(field=field, elem=e, vertex=vertex)
-
-                    for rank in list(np.unique(shared_ranks)):
-                        
-                        # Send the vertex data to the other rank
-                        if rank not in vertex_send_buff.keys():
-                            vertex_send_buff[rank] = {}
-                            vertex_send_buff[rank]['e'] = []
-                            vertex_send_buff[rank]['vertex'] = []
-                            vertex_send_buff[rank]['x_coords'] = []
-                            vertex_send_buff[rank]['y_coords'] = []
-                            vertex_send_buff[rank]['z_coords'] = []
-                            vertex_send_buff[rank]['data'] = []
-    
-                        vertex_send_buff[rank]['e'].append(e)
-                        vertex_send_buff[rank]['vertex'].append(vertex)
-                        vertex_send_buff[rank]['x_coords'].append(my_vertex_coord_x)
-                        vertex_send_buff[rank]['y_coords'].append(my_vertex_coord_y)
-                        vertex_send_buff[rank]['z_coords'].append(my_vertex_coord_z)
-                        vertex_send_buff[rank]['data'].append(my_vertex_data)
-
-        # Prepare edges to send to other ranks:
-        edge_send_buff = {}
-        for e in range(0, msh.nelv):
-
-            # Edge data is provided as a line that might be flipped, we must compare values of the mesh
-            for edge in range(0, msh.edge_centers.shape[1]):
-
-                if (e, edge) in self.global_shared_eep_to_elem_map.keys():
-
-                    # Check which other rank has this edge
-                    shared_ranks = list(self.global_shared_eep_to_rank_map[(e, edge)])
-
-                    # Get the edge data from the other elements of the field.
-                    my_edge_coord_x = ed(field=msh.x, elem=e, edge=edge)
-                    my_edge_coord_y = ed(field=msh.y, elem=e, edge=edge)
-                    my_edge_coord_z = ed(field=msh.z, elem=e, edge=edge)
-                    my_edge_data = ed(field=field, elem=e, edge=edge)
-
-                    for rank in list(np.unique(shared_ranks)):
-                            
-                        # Send the edge data to the other rank
-                        if rank not in edge_send_buff.keys():
-                            edge_send_buff[rank] = {}
-                            edge_send_buff[rank]['e'] = []
-                            edge_send_buff[rank]['edge'] = []
-                            edge_send_buff[rank]['x_coords'] = []
-                            edge_send_buff[rank]['y_coords'] = []
-                            edge_send_buff[rank]['z_coords'] = []
-                            edge_send_buff[rank]['data'] = []
-    
-                        edge_send_buff[rank]['e'].append(e)
-                        edge_send_buff[rank]['edge'].append(edge)
-                        edge_send_buff[rank]['x_coords'].append(my_edge_coord_x)
-                        edge_send_buff[rank]['y_coords'].append(my_edge_coord_y)
-                        edge_send_buff[rank]['z_coords'].append(my_edge_coord_z)
-                        edge_send_buff[rank]['data'].append(my_edge_data)
-
-
-        # Prepare the facets to send to other ranks:
-        if msh.gdim == 3:
-            facet_send_buff = {}
-            for e in range(0, msh.nelv):
-
-                # Facet data might be flipper or rotated so better check coordinates
-                for facet in range(0, 6):
-
-                    if (e, facet) in self.global_shared_efp_to_elem_map.keys():
-
-                        # Check which other rank has this facet
-                        shared_ranks = list(self.global_shared_efp_to_rank_map[(e, facet)])
-
-                        # Get the facet data from the other elements of the field.
-                        my_facet_coord_x = fd(field=msh.x, elem=e, facet=facet)
-                        my_facet_coord_y = fd(field=msh.y, elem=e, facet=facet)
-                        my_facet_coord_z = fd(field=msh.z, elem=e, facet=facet)
-                        my_facet_data = fd(field=field, elem=e, facet=facet)
-
-                        for rank in list(np.unique(shared_ranks)):
-                                
-                            # Send the facet data to the other rank
-                            if rank not in facet_send_buff.keys():
-                                facet_send_buff[rank] = {}
-                                facet_send_buff[rank]['e'] = []
-                                facet_send_buff[rank]['facet'] = []
-                                facet_send_buff[rank]['x_coords'] = []
-                                facet_send_buff[rank]['y_coords'] = []
-                                facet_send_buff[rank]['z_coords'] = []
-                                facet_send_buff[rank]['data'] = []
-        
-                            facet_send_buff[rank]['e'].append(e)
-                            facet_send_buff[rank]['facet'].append(facet)
-                            facet_send_buff[rank]['x_coords'].append(my_facet_coord_x)
-                            facet_send_buff[rank]['y_coords'].append(my_facet_coord_y)
-                            facet_send_buff[rank]['z_coords'].append(my_facet_coord_z)
-                            facet_send_buff[rank]['data'].append(my_facet_data)
 
         # Now send the vertices
         destinations = [rank for rank in vertex_send_buff.keys()]
@@ -930,3 +828,58 @@ def find_global_shared_evp(rt: Router, vef_coords: np.ndarray, incomplete_e_vef_
                     global_shared_e_vef_p_to_vertex_map[(e, vef)] = source_incomplete_vef_id[source_idx][matching_id]
                                      
     return global_shared_e_vef_p_to_rank_map, global_shared_e_vef_p_to_elem_map, global_shared_e_vef_p_to_vertex_map
+
+def prepare_send_buffers(msh: Mesh = None, field: np.ndarray = None, vef_to_rank_map: dict[tuple[int, int], np.ndarray] = None, data_to_fetch: str = None) -> dict:
+
+    # Prepare vertices to send to other ranks:
+    send_buff = {}
+
+    # Select the data to fetch
+    if data_to_fetch == "vertex":
+        n_vef = msh.vertices.shape[1]
+        df = vd
+    elif data_to_fetch == "edge":
+        n_vef = msh.edge_centers.shape[1]
+        df = ed
+    elif data_to_fetch == "facet":
+        n_vef = 6
+        df = fd
+        
+    # Iterate over all elements
+    for e in range(0, msh.nelv):
+        
+        # Iterate over the vertex/edge/facet of the element
+        for vef in range(0, n_vef):
+
+            if (e, vef) in vef_to_rank_map.keys():
+
+                # Check which other rank has this vertex/edge/facet
+                shared_ranks = list(vef_to_rank_map[(e, vef)])
+
+                # Get the data for this vertex/edge/facet on this element
+                my_vef_coord_x = df(msh.x, e, vef)
+                my_vef_coord_y = df(msh.y, e, vef)
+                my_vef_coord_z = df(msh.z, e, vef)
+                my_vef_data = df(field, e, vef)
+
+                # Go over all ranks that share this vertex/edge/facet
+                # and for that rank, append the data to the send buffer
+                for rank in list(np.unique(shared_ranks)):
+                    
+                    if rank not in send_buff.keys():
+                        send_buff[rank] = {}
+                        send_buff[rank]['e'] = []
+                        send_buff[rank][data_to_fetch] = []
+                        send_buff[rank]['x_coords'] = []
+                        send_buff[rank]['y_coords'] = []
+                        send_buff[rank]['z_coords'] = []
+                        send_buff[rank]['data'] = []
+
+                    send_buff[rank]['e'].append(e)
+                    send_buff[rank][data_to_fetch].append(vef)
+                    send_buff[rank]['x_coords'].append(my_vef_coord_x)
+                    send_buff[rank]['y_coords'].append(my_vef_coord_y)
+                    send_buff[rank]['z_coords'].append(my_vef_coord_z)
+                    send_buff[rank]['data'].append(my_vef_data)
+
+    return send_buff
