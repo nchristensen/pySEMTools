@@ -237,7 +237,7 @@ class MeshConnectivity:
         self.log.write("info", "Computing local dssum")
         self.log.tic()
 
-        avrg_field = np.copy(field)
+        local_dssum_field = np.copy(field)
 
         if msh.gdim == 2:
             vertex_to_slice_map = vertex_to_slice_map_2d
@@ -274,7 +274,7 @@ class MeshConnectivity:
                         ly_index = vertex_to_slice_map[vertex][1]
                         lx_index = vertex_to_slice_map[vertex][2]
 
-                        avrg_field[e, lz_index, ly_index, lx_index] += np.sum(shared_vertex_data)
+                        local_dssum_field[e, lz_index, ly_index, lx_index] += np.sum(shared_vertex_data)
 
         if msh.gdim >= 2:
             self.log.write("info", "Adding edges")
@@ -345,7 +345,7 @@ class MeshConnectivity:
                         if lx_index == slice(None):
                             lx_index = slice(1, -1)
                         slice_copy = slice(1, -1)
-                        avrg_field[e, lz_index, ly_index, lx_index] = np.copy(my_edge_data[slice_copy])
+                        local_dssum_field[e, lz_index, ly_index, lx_index] = np.copy(my_edge_data[slice_copy])
 
         if msh.gdim >= 3:
             self.log.write("info", "Adding faces")
@@ -418,19 +418,19 @@ class MeshConnectivity:
                         if lx_index == slice(None):
                             lx_index = slice(1, -1)
                         slice_copy = slice(1, -1)
-                        avrg_field[e, lz_index, ly_index, lx_index] = np.copy(my_facet_data[slice_copy, slice_copy])
+                        local_dssum_field[e, lz_index, ly_index, lx_index] = np.copy(my_facet_data[slice_copy, slice_copy])
 
         self.log.write("info", "Local dssum computed")
         self.log.toc()
 
-        return avrg_field
+        return local_dssum_field
 
-    def dssum_global(self, comm, summed_field: np.ndarray = None, field: np.ndarray = None, msh:  Mesh = None, coef: Coef = None):
+    def dssum_global(self, comm, local_dssum_field: np.ndarray = None, field: np.ndarray = None, msh:  Mesh = None, coef: Coef = None):
 
         self.log.write("info", "Computing global dssum")
         self.log.tic()
 
-        avrg_field = np.copy(summed_field)
+        global_dssum_field = np.copy(local_dssum_field)
 
         if msh.gdim == 2:
             vertex_to_slice_map = vertex_to_slice_map_2d
@@ -497,7 +497,7 @@ class MeshConnectivity:
                             lx_index = vertex_to_slice_map[vertex][2]
 
                             # Add the data from this rank, element, vertex triad.
-                            avrg_field[e, lz_index, ly_index, lx_index] += matching_vertex_data
+                            global_dssum_field[e, lz_index, ly_index, lx_index] += matching_vertex_data
 
         if msh.gdim >= 2:
             # Prepare data to send to other ranks:
@@ -556,9 +556,9 @@ class MeshConnectivity:
                             my_edge_coord_z = msh.z[e, lz_index, ly_index, lx_index]
                             # Since edge can be in many elements and ranks, only copy the clean data once
                             if shared_edge_index == 0:
-                                my_edge_data = np.copy(summed_field[e, lz_index, ly_index, lx_index])
+                                my_edge_data = np.copy(local_dssum_field[e, lz_index, ly_index, lx_index])
                             else:
-                                my_edge_data = np.copy(avrg_field[e, lz_index, ly_index, lx_index])
+                                my_edge_data = np.copy(global_dssum_field[e, lz_index, ly_index, lx_index])
 
                             # Compare coordinates excluding the vertices
                             # For each of the data points in the current edge
@@ -585,7 +585,7 @@ class MeshConnectivity:
                             if lx_index == slice(None):
                                 lx_index = slice(1, -1)
                             slice_copy = slice(1, -1)
-                            avrg_field[e, lz_index, ly_index, lx_index] = np.copy(my_edge_data[slice_copy])
+                            global_dssum_field[e, lz_index, ly_index, lx_index] = np.copy(my_edge_data[slice_copy])
 
                             shared_edge_index += 1
 
@@ -645,9 +645,9 @@ class MeshConnectivity:
                             my_facet_coord_y = msh.y[e, lz_index, ly_index, lx_index]
                             my_facet_coord_z = msh.z[e, lz_index, ly_index, lx_index]
                             if shared_facet_index == 0:
-                                my_facet_data = np.copy(summed_field[e, lz_index, ly_index, lx_index])
+                                my_facet_data = np.copy(local_dssum_field[e, lz_index, ly_index, lx_index])
                             else:
-                                my_facet_data = np.copy(avrg_field[e, lz_index, ly_index, lx_index])
+                                my_facet_data = np.copy(global_dssum_field[e, lz_index, ly_index, lx_index])
 
                             # Compare coordinates excluding the edges
                             # For each of my data points
@@ -676,14 +676,14 @@ class MeshConnectivity:
                             if lx_index == slice(None):
                                 lx_index = slice(1, -1)
                             slice_copy = slice(1, -1)
-                            avrg_field[e, lz_index, ly_index, lx_index] = np.copy(my_facet_data[slice_copy, slice_copy])
+                            global_dssum_field[e, lz_index, ly_index, lx_index] = np.copy(my_facet_data[slice_copy, slice_copy])
 
                             shared_facet_index += 1
 
         self.log.write("info", "Global dssum computed")
         self.log.toc()
 
-        return avrg_field
+        return global_dssum_field
                      
 def find_local_shared_vef(vef_coords: np.ndarray = None, rtol: float = 1e-5, min_shared: int = 0) -> tuple[dict[tuple[int, int], np.ndarray], dict[tuple[int, int], np.ndarray], list[int], list[int]]: 
     
