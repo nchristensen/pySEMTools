@@ -159,6 +159,11 @@ class MeshConnectivity:
         Parameters
         ----------
         msh : Mesh
+
+        Notes
+        -----
+        The multiplicity is the number of times a point in a element is shared with its own element or others.
+        The minimum multiplicity is 1, since the point is always shared with itself.
         """
 
         self.multiplicity= np.ones_like(msh.x)
@@ -231,8 +236,54 @@ class MeshConnectivity:
 
                     self.multiplicity[e, lz_index, ly_index, lx_index] = local_appearances + global_appearances
 
+    def dssum(self, field: np.ndarray = None, msh:  Mesh = None, average: str = "multiplicity"):
+        """
+        Computes the dssum of the field
 
-    def dssum_local(self, field: np.ndarray = None, msh:  Mesh = None, coef: Coef = None):
+        Parameters
+        ----------
+        field : np.ndarray
+            The field to compute the dssum
+        msh : Mesh
+            The mesh object
+        average : str
+            The averaging weights to use. Can be "multiplicity"
+
+        Returns
+        -------
+        np.ndarray
+            The dssum of the field
+        """
+
+        # Always compute local dssum
+        dssum_field = self.dssum_local(field=field, msh=msh)
+        
+        # If running in parallel, compute the global ds sum
+        if self.rt.comm.Get_size() > 1:        
+            dssum_field = self.dssum_global(local_dssum_field=dssum_field, field=field, msh=msh)
+
+        if average == "multiplicity":
+            dssum_field = dssum_field / self.multiplicity
+
+        return dssum_field
+
+
+    def dssum_local(self, field: np.ndarray = None, msh:  Mesh = None):
+        """
+        Computes the local dssum of the field
+
+        Parameters
+        ----------
+        field : np.ndarray
+            The field to compute the dssum
+        msh : Mesh
+            The mesh object
+
+        Returns
+        -------
+        np.ndarray
+            The local dssum of the field
+        """
 
         self.log.write("info", "Computing local dssum")
         self.log.tic()
@@ -425,7 +476,24 @@ class MeshConnectivity:
 
         return local_dssum_field
 
-    def dssum_global(self, comm, local_dssum_field: np.ndarray = None, field: np.ndarray = None, msh:  Mesh = None, coef: Coef = None):
+    def dssum_global(self, local_dssum_field: np.ndarray = None, field: np.ndarray = None, msh:  Mesh = None):
+        """
+        Computes the global dssum of the field
+
+        Parameters
+        ----------
+        local_dssum_field : np.ndarray
+            The local dssum of the field, computed with dssum_local
+        field : np.ndarray
+            The field to compute the dssum
+        msh : Mesh
+            The mesh object
+
+        Returns
+        -------
+        np.ndarray
+            The global dssum of the field
+        """
 
         self.log.write("info", "Computing global dssum")
         self.log.tic()
@@ -686,7 +754,28 @@ class MeshConnectivity:
         return global_dssum_field
                      
 def find_local_shared_vef(vef_coords: np.ndarray = None, rtol: float = 1e-5, min_shared: int = 0) -> tuple[dict[tuple[int, int], np.ndarray], dict[tuple[int, int], np.ndarray], list[int], list[int]]: 
-    
+    '''
+    Find the shared vertices/edges/facets in the local rank
+
+    Here we will compare vertices, edge centers and facet centers to find the shared vertices/edges/facets in the local rank.
+
+    Parameters
+    ----------
+    vef_coords : np.ndarray
+        The coordinates of the vertices/edges/facets
+    rtol : float
+        The relative tolerance to use when comparing the coordinates
+    min_shared : int
+        The minimum number of shared vertices/edges/facets to consider them found in a rank.
+        In 2D, min vertices = 4, min edges = 2
+        In 3D, min vertices = 8, min edges = 4, min facets = 2
+
+    Returns
+    -------
+    tuple[dict[tuple[int, int], np.ndarray], dict[tuple[int, int], np.ndarray], list[int], list[int]
+        The shared vertices/edges/facets to element map, the shared vertices/edges/facets to vertex/edge/facet map, the incomplete vertices/edges/facets element list and the incomplete vertices/edges/facets vertex/edge/facet list
+    '''
+
     # Define the maps
     shared_e_vef_p_to_elem_map = {}
     shared_e_vef_p_to_vef_map = {}
@@ -719,7 +808,30 @@ def find_local_shared_vef(vef_coords: np.ndarray = None, rtol: float = 1e-5, min
     return shared_e_vef_p_to_elem_map, shared_e_vef_p_to_vef_map, incomplete_e_vef_p_elem, incomplete_e_vef_p_vef
 
 def find_global_shared_evp(rt: Router, vef_coords: np.ndarray, incomplete_e_vef_p_elem: list[int], incomplete_e_vef_p_vef: list[int], rtol: float = 1e-5) -> tuple[dict[tuple[int, int], np.ndarray], dict[tuple[int, int], np.ndarray], dict[tuple[int, int], np.ndarray]]:
+    '''
+    Find the shared vertices/edges/facets in the global ranks
+
+    Here we will compare the incomplete vertices/edges/facets in the local rank with the vertices/edges/facets in the global ranks.
+
+    Parameters
+    ----------
+    rt : Router
+        The router object
+    vef_coords : np.ndarray
+        The coordinates of the vertices/edges/facets
+    incomplete_e_vef_p_elem : list[int]
+        The incomplete vertices/edges/facets element list
+    incomplete_e_vef_p_vef : list[int]
+        The incomplete vertices/edges/facets vertex/edge/facet list
+    rtol : float
+        The relative tolerance to use when comparing the coordinates
     
+    Returns
+    -------
+    tuple[dict[tuple[int, int], np.ndarray], dict[tuple[int, int], np.ndarray], dict[tuple[int, int], np.ndarray]
+        The shared vertices/edges/facets to rank map, the shared vertices/edges/facets to element map and the shared vertices/edges/facets to vertex/edge/facet map
+    '''
+
     # Send incomplete vertices and their element and vertex id to all other ranks.
     destinations = [rank for rank in range(0, rt.comm.Get_size()) if rank != rt.comm.Get_rank()]
     
@@ -775,6 +887,25 @@ def find_global_shared_evp(rt: Router, vef_coords: np.ndarray, incomplete_e_vef_
     return global_shared_e_vef_p_to_rank_map, global_shared_e_vef_p_to_elem_map, global_shared_e_vef_p_to_vertex_map
 
 def prepare_send_buffers(msh: Mesh = None, field: np.ndarray = None, vef_to_rank_map: dict[tuple[int, int], np.ndarray] = None, data_to_fetch: str = None) -> dict:
+    '''
+    Prepare the data to send to other ranks
+
+    Parameters
+    ----------
+    msh : Mesh
+        The mesh object
+    field : np.ndarray
+        The field to send
+    vef_to_rank_map : dict[tuple[int, int], np.ndarray]
+        The map of vertices/edges/facets to ranks
+    data_to_fetch : str
+        The data to fetch, either vertex, edge or facet
+
+    Returns
+    -------
+    dict
+        The data to send to other ranks
+    '''
 
     # Prepare vertices to send to other ranks:
     send_buff = {}
@@ -830,7 +961,26 @@ def prepare_send_buffers(msh: Mesh = None, field: np.ndarray = None, vef_to_rank
     return send_buff
 
 def send_recv_data(rt: Router = None, send_buff: dict=None, data_to_send: str = None, lx: int = None) -> tuple[list[int], list[np.ndarray], list[np.ndarray], list[np.ndarray], list[np.ndarray], list[np.ndarray], list[np.ndarray]]:
+    '''
+    Send and receive the data
 
+    Parameters
+    ----------
+    rt : Router
+        The router object
+    send_buff : dict
+        The data to send to other ranks
+    data_to_send : str
+        The data to send, either vertex, edge or facet
+    lx : int
+        The number of gll points in one direction of the element
+
+    Returns
+    -------
+    tuple[list[int], list[np.ndarray], list[np.ndarray], list[np.ndarray], list[np.ndarray], list[np.ndarray], list[np.ndarray]
+        The source ranks, the source element id, the source vertex/edge/facet id, the source x coordinates, the source y coordinates, the source z coordinates and the source data
+    '''
+    
     # Populate a list with the destinations
     destinations = [rank for rank in send_buff.keys()]
 
