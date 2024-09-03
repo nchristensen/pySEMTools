@@ -246,107 +246,108 @@ class MeshConnectivity:
             vertex_to_slice_map = vertex_to_slice_map_3d
             edge_to_slice_map = edge_to_slice_map_3d
 
+        if msh.gdim >= 1:
+            self.log.write("info", "Adding vertices")
+            for e in range(0, msh.nelv):
 
-        self.log.write("info", "Adding vertices")
-        for e in range(0, msh.nelv):
+                # Vertex data is pointwise and can be summed directly 
+                for vertex in range(0, msh.vertices.shape[1]):
 
-            # Vertex data is pointwise and can be summed directly 
-            for vertex in range(0, msh.vertices.shape[1]):
+                    if (e, vertex) in self.local_shared_evp_to_elem_map.keys():
 
-                if (e, vertex) in self.local_shared_evp_to_elem_map.keys():
+                        # Get the data from other elements
+                        shared_elements_ = list(self.local_shared_evp_to_elem_map[(e, vertex)])
+                        shared_vertices_ = list(self.local_shared_evp_to_vertex_map[(e, vertex)])
 
-                    # Get the data from other elements
-                    shared_elements_ = list(self.local_shared_evp_to_elem_map[(e, vertex)])
-                    shared_vertices_ = list(self.local_shared_evp_to_vertex_map[(e, vertex)])
+                        # Filter out my own element from the list
+                        shared_elements = [shared_elements_[ii] for ii in range(0, len(shared_elements_)) if shared_elements_[ii] != e]                    
+                        shared_vertices = [shared_vertices_[ii] for ii in range(0, len(shared_elements_)) if shared_elements_[ii] != e]
 
-                    # Filter out my own element from the list
-                    shared_elements = [shared_elements_[ii] for ii in range(0, len(shared_elements_)) if shared_elements_[ii] != e]                    
-                    shared_vertices = [shared_vertices_[ii] for ii in range(0, len(shared_elements_)) if shared_elements_[ii] != e]
+                        if shared_vertices == []:
+                            continue
 
-                    if shared_vertices == []:
-                        continue
+                        # Get the vertex data from the other elements of the field.
+                        shared_vertex_data = vd(field=field, elem=shared_elements, vertex=shared_vertices)
 
-                    # Get the vertex data from the other elements of the field.
-                    shared_vertex_data = vd(field=field, elem=shared_elements, vertex=shared_vertices)
+                        # Get the vertex location on my own elemenet
+                        lz_index = vertex_to_slice_map[vertex][0] 
+                        ly_index = vertex_to_slice_map[vertex][1]
+                        lx_index = vertex_to_slice_map[vertex][2]
 
-                    # Get the vertex location on my own elemenet
-                    lz_index = vertex_to_slice_map[vertex][0] 
-                    ly_index = vertex_to_slice_map[vertex][1]
-                    lx_index = vertex_to_slice_map[vertex][2]
+                        avrg_field[e, lz_index, ly_index, lx_index] += np.sum(shared_vertex_data)
 
-                    avrg_field[e, lz_index, ly_index, lx_index] += np.sum(shared_vertex_data)
-
-        self.log.write("info", "Adding edges")
-        for e in range(0, msh.nelv):
-            # Edge data is provided as a line that might be flipped, we must compare values of the mesh
-            for edge in range(0, msh.edge_centers.shape[1]):
-                
-                if (e, edge) in self.local_shared_eep_to_elem_map.keys():
+        if msh.gdim >= 2:
+            self.log.write("info", "Adding edges")
+            for e in range(0, msh.nelv):
+                # Edge data is provided as a line that might be flipped, we must compare values of the mesh
+                for edge in range(0, msh.edge_centers.shape[1]):
                     
-                    # Get the data from other elements
-                    shared_elements_ = list(self.local_shared_eep_to_elem_map[(e, edge)])
-                    shared_edges_ = list(self.local_shared_eep_to_edge_map[(e, edge)])
-                    
-                    # Filter out my own element from the list
-                    shared_elements = [shared_elements_[ii] for ii in range(0, len(shared_elements_)) if shared_elements_[ii] != e]                    
-                    shared_edges = [shared_edges_[ii] for ii in range(0, len(shared_elements_)) if shared_elements_[ii] != e]                    
+                    if (e, edge) in self.local_shared_eep_to_elem_map.keys():
+                        
+                        # Get the data from other elements
+                        shared_elements_ = list(self.local_shared_eep_to_elem_map[(e, edge)])
+                        shared_edges_ = list(self.local_shared_eep_to_edge_map[(e, edge)])
+                        
+                        # Filter out my own element from the list
+                        shared_elements = [shared_elements_[ii] for ii in range(0, len(shared_elements_)) if shared_elements_[ii] != e]                    
+                        shared_edges = [shared_edges_[ii] for ii in range(0, len(shared_elements_)) if shared_elements_[ii] != e]                    
 
-                    if shared_edges == []:
-                        continue
+                        if shared_edges == []:
+                            continue
 
-                    # Get the shared edge coordinates from the other elements
-                    shared_edge_coord_x = ed(field=msh.x, elem=shared_elements, edge=shared_edges)
-                    shared_edge_coord_y = ed(field=msh.y, elem=shared_elements, edge=shared_edges)
-                    shared_edge_coord_z = ed(field=msh.z, elem=shared_elements, edge=shared_edges)
+                        # Get the shared edge coordinates from the other elements
+                        shared_edge_coord_x = ed(field=msh.x, elem=shared_elements, edge=shared_edges)
+                        shared_edge_coord_y = ed(field=msh.y, elem=shared_elements, edge=shared_edges)
+                        shared_edge_coord_z = ed(field=msh.z, elem=shared_elements, edge=shared_edges)
 
-                    # Get the shared edge data from the other elements of the field.
-                    shared_edge_data = ed(field=field, elem=shared_elements, edge=shared_edges)
+                        # Get the shared edge data from the other elements of the field.
+                        shared_edge_data = ed(field=field, elem=shared_elements, edge=shared_edges)
 
-                    # Get the edge location on my own elemenet
-                    lz_index = edge_to_slice_map[edge][0]
-                    ly_index = edge_to_slice_map[edge][1]
-                    lx_index = edge_to_slice_map[edge][2]
- 
-                    # Get my own edge data and coordinates
-                    my_edge_coord_x = msh.x[e, lz_index, ly_index, lx_index]
-                    my_edge_coord_y = msh.y[e, lz_index, ly_index, lx_index]
-                    my_edge_coord_z = msh.z[e, lz_index, ly_index, lx_index]
-                    my_edge_data = np.copy(field[e, lz_index, ly_index, lx_index])
+                        # Get the edge location on my own elemenet
+                        lz_index = edge_to_slice_map[edge][0]
+                        ly_index = edge_to_slice_map[edge][1]
+                        lx_index = edge_to_slice_map[edge][2]
+    
+                        # Get my own edge data and coordinates
+                        my_edge_coord_x = msh.x[e, lz_index, ly_index, lx_index]
+                        my_edge_coord_y = msh.y[e, lz_index, ly_index, lx_index]
+                        my_edge_coord_z = msh.z[e, lz_index, ly_index, lx_index]
+                        my_edge_data = np.copy(field[e, lz_index, ly_index, lx_index])
 
-                    # Compare coordinates excluding the vertices
-                    # For each of my data points
-                    for edge_point in range(1, my_edge_coord_x.shape[0]-1):
-                        edge_point_x = my_edge_coord_x[edge_point]
-                        edge_point_y = my_edge_coord_y[edge_point]
-                        edge_point_z = my_edge_coord_z[edge_point]
+                        # Compare coordinates excluding the vertices
+                        # For each of my data points
+                        for edge_point in range(1, my_edge_coord_x.shape[0]-1):
+                            edge_point_x = my_edge_coord_x[edge_point]
+                            edge_point_y = my_edge_coord_y[edge_point]
+                            edge_point_z = my_edge_coord_z[edge_point]
 
-                        # For each element that shares edge data
-                        for sharing_elem in range(0, len(shared_elements)):
-                            sharing_elem_edge_coord_x = shared_edge_coord_x[sharing_elem]
-                            sharing_elem_edge_coord_y = shared_edge_coord_y[sharing_elem]
-                            sharing_elem_edge_coord_z = shared_edge_coord_z[sharing_elem]
+                            # For each element that shares edge data
+                            for sharing_elem in range(0, len(shared_elements)):
+                                sharing_elem_edge_coord_x = shared_edge_coord_x[sharing_elem]
+                                sharing_elem_edge_coord_y = shared_edge_coord_y[sharing_elem]
+                                sharing_elem_edge_coord_z = shared_edge_coord_z[sharing_elem]
 
-                            # Compare
-                            same_x = np.isclose(edge_point_x, sharing_elem_edge_coord_x, rtol=self.rtol)
-                            same_y = np.isclose(edge_point_y, sharing_elem_edge_coord_y, rtol=self.rtol)
-                            same_z = np.isclose(edge_point_z, sharing_elem_edge_coord_z, rtol=self.rtol)
-                            same_edge_point = np.where(same_x & same_y & same_z)
+                                # Compare
+                                same_x = np.isclose(edge_point_x, sharing_elem_edge_coord_x, rtol=self.rtol)
+                                same_y = np.isclose(edge_point_y, sharing_elem_edge_coord_y, rtol=self.rtol)
+                                same_z = np.isclose(edge_point_z, sharing_elem_edge_coord_z, rtol=self.rtol)
+                                same_edge_point = np.where(same_x & same_y & same_z)
 
-                            # Sum where a match is found
-                            if len(same_edge_point[0]) > 0:
-                                my_edge_data[edge_point] += shared_edge_data[sharing_elem][same_edge_point]
+                                # Sum where a match is found
+                                if len(same_edge_point[0]) > 0:
+                                    my_edge_data[edge_point] += shared_edge_data[sharing_elem][same_edge_point]
 
-                    # Do not assing at the vertices
-                    if lz_index == slice(None):
-                        lz_index = slice(1, -1)
-                    if ly_index == slice(None):
-                        ly_index = slice(1, -1)
-                    if lx_index == slice(None):
-                        lx_index = slice(1, -1)
-                    slice_copy = slice(1, -1)
-                    avrg_field[e, lz_index, ly_index, lx_index] = np.copy(my_edge_data[slice_copy])
+                        # Do not assing at the vertices
+                        if lz_index == slice(None):
+                            lz_index = slice(1, -1)
+                        if ly_index == slice(None):
+                            ly_index = slice(1, -1)
+                        if lx_index == slice(None):
+                            lx_index = slice(1, -1)
+                        slice_copy = slice(1, -1)
+                        avrg_field[e, lz_index, ly_index, lx_index] = np.copy(my_edge_data[slice_copy])
 
-        if msh.gdim == 3:
+        if msh.gdim >= 3:
             self.log.write("info", "Adding faces")
             for e in range(0, msh.nelv):
 
@@ -418,9 +419,6 @@ class MeshConnectivity:
                             lx_index = slice(1, -1)
                         slice_copy = slice(1, -1)
                         avrg_field[e, lz_index, ly_index, lx_index] = np.copy(my_facet_data[slice_copy, slice_copy])
-
-        # Divide by multiplicity    
-        #avrg_field = avrg_field / self.multiplicity
 
         self.log.write("info", "Local dssum computed")
         self.log.toc()
@@ -839,11 +837,7 @@ class MeshConnectivity:
 
                             shared_facet_index += 1
 
-
-        # Divide by multiplicity    
-        #avrg_field = avrg_field / self.multiplicity
-
-        self.log.write("info", "Local dssum computed")
+        self.log.write("info", "Global dssum computed")
         self.log.toc()
 
         return avrg_field
