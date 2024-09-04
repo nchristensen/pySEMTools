@@ -486,8 +486,7 @@ class MeshConnectivity:
                         my_edge_coord_y = msh.y[e, lz_index, ly_index, lx_index]
                         my_edge_coord_z = msh.z[e, lz_index, ly_index, lx_index]
                         my_edge_data = np.copy(field[e, lz_index, ly_index, lx_index])
-
-                        
+ 
                         # Figure out if the edges are flipped.
                         ## First find the vertices of my edge
                         my_edge_vertices = edge_to_vertex_map[edge]
@@ -495,7 +494,6 @@ class MeshConnectivity:
                         shared_edge_vertices = [edge_to_vertex_map[se] for se in shared_edges]
                         ## Now create a list of how the vertices should match for them to be aligned
                         vertex_matching_if_aligned = [((my_edge_vertices[0], shared_edge_vertex[0]), (my_edge_vertices[1], shared_edge_vertex[1])) for shared_edge_vertex in shared_edge_vertices]
-
 
                         ## Now check how they are actually aligned to see if they are flipped
                         ### Find which are the shared vertices of my own edge vertices that are in each entry of shared element
@@ -591,61 +589,52 @@ class MeshConnectivity:
                         my_facet_coord_z = msh.z[e, lz_index, ly_index, lx_index]
                         my_facet_data = np.copy(field[e, lz_index, ly_index, lx_index])
 
-                        # Compare coordinates excluding the edges
-                        # For each of my data points
-                        for facet_point_j in range(1, my_facet_coord_x.shape[0] - 1):
-                            for facet_point_i in range(
-                                1, my_facet_coord_x.shape[1] - 1
-                            ):
-                                facet_point_x = my_facet_coord_x[
-                                    facet_point_j, facet_point_i
-                                ]
-                                facet_point_y = my_facet_coord_y[
-                                    facet_point_j, facet_point_i
-                                ]
-                                facet_point_z = my_facet_coord_z[
-                                    facet_point_j, facet_point_i
-                                ]
+                        # Figure out if the facets are flipped.
+                        ## First find the vertices of my facet
+                        my_facet_vertices = facet_to_vertex_map[facet]
+                        ## Then find the vertices of the shared facets
+                        shared_facet_vertices = [facet_to_vertex_map[se] for se in shared_facets]
+                        ## Now create a list of how the vertices should match for them to be aligned
+                        ## The 0 and 2 come from the way that my facet vertices are defined. Check the element slicing module to see
+                        vertex_matching_if_aligned_in_axis_1 = [((my_facet_vertices[0][0], shared_facet_vertex[0][0]), (my_facet_vertices[0][1], shared_facet_vertex[0][1])) for shared_facet_vertex in shared_facet_vertices]
+                        vertex_matching_if_aligned_in_axis_0 = [((my_facet_vertices[2][0], shared_facet_vertex[2][0]), (my_facet_vertices[2][1], shared_facet_vertex[2][1])) for shared_facet_vertex in shared_facet_vertices]
 
-                                # For each element that shares facet data
-                                for sharing_elem in range(0, len(shared_elements)):
-                                    sharing_elem_facet_coord_x = shared_facet_coord_x[
-                                        sharing_elem
-                                    ]
-                                    sharing_elem_facet_coord_y = shared_facet_coord_y[
-                                        sharing_elem
-                                    ]
-                                    sharing_elem_facet_coord_z = shared_facet_coord_z[
-                                        sharing_elem
-                                    ]
+                        ## Now check how they are actually aligned to see if they are flipped
+                        ### Find which are the shared vertices of my own facet vertices that are in each entry of shared element
+                        ### Note that in general, each vertex in one element will have 1 matching vertex in another... otherwise something is weird
+                        ### For axis 1
+                        shared_vertex_idx_of_my_facet_vertex_0 = [self.local_shared_evp_to_vertex_map[(e, my_facet_vertices[0][0])][np.where(np.array(self.local_shared_evp_to_elem_map[(e, my_facet_vertices[0][0])]) == se)][0] for se in shared_elements]
+                        shared_vertex_idx_of_my_facet_vertex_1 = [self.local_shared_evp_to_vertex_map[(e, my_facet_vertices[0][1])][np.where(np.array(self.local_shared_evp_to_elem_map[(e, my_facet_vertices[0][1])]) == se)][0] for se in shared_elements]
+                        #### Create a list of actual vertex matching
+                        actual_vertex_matching_in_axis_1 = [((my_facet_vertices[0][0], int(shared_vertex_idx_of_my_facet_vertex_0[i])),(my_facet_vertices[0][1], int(shared_vertex_idx_of_my_facet_vertex_1[i]))) for i in range(len(shared_elements))] 
+                        ### For axis 0
+                        shared_vertex_idx_of_my_facet_vertex_0 = [self.local_shared_evp_to_vertex_map[(e, my_facet_vertices[2][0])][np.where(np.array(self.local_shared_evp_to_elem_map[(e, my_facet_vertices[2][0])]) == se)][0] for se in shared_elements]
+                        shared_vertex_idx_of_my_facet_vertex_1 = [self.local_shared_evp_to_vertex_map[(e, my_facet_vertices[2][1])][np.where(np.array(self.local_shared_evp_to_elem_map[(e, my_facet_vertices[2][1])]) == se)][0] for se in shared_elements]
+                        #### Create a list of actual vertex matching
+                        actual_vertex_matching_in_axis_0 = [((my_facet_vertices[2][0], int(shared_vertex_idx_of_my_facet_vertex_0[i])),(my_facet_vertices[2][1], int(shared_vertex_idx_of_my_facet_vertex_1[i]))) for i in range(len(shared_elements))]
 
-                                    # Compare
-                                    same_x = np.isclose(
-                                        facet_point_x,
-                                        sharing_elem_facet_coord_x,
-                                        rtol=self.rtol,
-                                    )
-                                    same_y = np.isclose(
-                                        facet_point_y,
-                                        sharing_elem_facet_coord_y,
-                                        rtol=self.rtol,
-                                    )
-                                    same_z = np.isclose(
-                                        facet_point_z,
-                                        sharing_elem_facet_coord_z,
-                                        rtol=self.rtol,
-                                    )
-                                    same_facet_point = np.where(
-                                        same_x & same_y & same_z
-                                    )
+                        ### Now compare, if they are not the same, then you must flip the facet data
+                        flip_facet_axis_1 = []
+                        flip_facet_axis_0 = []
+                        for i in range(len(shared_elements)):
+                            if vertex_matching_if_aligned_in_axis_1[i] != actual_vertex_matching_in_axis_1[i]:
+                                flip_facet_axis_1.append(True)
+                            else:
+                                flip_facet_axis_1.append(False)
 
-                                    # Sum where a match is found
-                                    if len(same_facet_point[0]) > 0:
-                                        my_facet_data[
-                                            facet_point_j, facet_point_i
-                                        ] += shared_facet_data[sharing_elem][
-                                            same_facet_point
-                                        ]
+                            if vertex_matching_if_aligned_in_axis_0[i] != actual_vertex_matching_in_axis_0[i]:
+                                flip_facet_axis_0.append(True)
+                            else:
+                                flip_facet_axis_0.append(False)
+
+                        # Sum the data
+                        for idx in range(0, len(shared_elements)):
+                            if flip_facet_axis_1[idx]:
+                                shared_facet_data[idx] = np.flip(shared_facet_data[idx], axis=1)
+                            if flip_facet_axis_0[idx]:
+                                shared_facet_data[idx] = np.flip(shared_facet_data[idx], axis=0)
+                            
+                            my_facet_data += shared_facet_data[idx]
 
                         # Do not assing at the edges
                         if lz_index == slice(None):
