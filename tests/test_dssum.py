@@ -109,7 +109,7 @@ def test_dssum():
     if comm.Get_rank()==0: 
         os.system(f"rm {fname_single_rank}")
 
-    #assert np.all([passed_single_rank, passed])
+    assert np.all([passed_single_rank, passed])
 
 
 test_dssum()
