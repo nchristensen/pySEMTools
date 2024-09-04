@@ -14,6 +14,9 @@ from .element_slicing import (
     edge_to_slice_map_2d,
     edge_to_slice_map_3d,
     facet_to_slice_map,
+    edge_to_vertex_map_2d,
+    edge_to_vertex_map_3d,
+    facet_to_vertex_map,
 )
 import sys
 
@@ -34,22 +37,26 @@ class MeshConnectivity:
         The relative tolerance to use when comparing the coordinates of the facets/edges
     """
 
-    def __init__(self, comm, msh: Mesh = None, rel_tol=1e-5):
+    def __init__(self, comm, msh: Mesh = None, rel_tol=1e-5, use_hashtable=False):
 
         self.log = Logger(comm=comm, module_name="MeshConnectivity")
         self.log.write("info", "Initializing MeshConnectivity")
         self.log.tic()
         self.rt = Router(comm)
         self.rtol = rel_tol
+        self.use_hashtable = use_hashtable
 
         if isinstance(msh, Mesh):
             # Create local connecitivy
+            self.log.write("info", "Computing local connectivity")
             self.local_connectivity(msh)
 
             # Create global connectivity
+            self.log.write("info", "Computing global connectivity")
             self.global_connectivity(msh)
 
             # Get the multiplicity
+            self.log.write("info", "Computing multiplicity")
             self.get_multiplicity(msh)
 
         self.log.write("info", "MeshConnectivity initialized")
@@ -88,7 +95,7 @@ class MeshConnectivity:
 
         if msh.gdim >= 1:
 
-            self.log.write("info", "Computing local connectivity: Using vertices")
+            self.log.write("debug", "Computing local connectivity: Using vertices")
 
             if msh.gdim == 2:
                 min_vertex = 4  # Anything less than 4 means that a vertex might be in another rank
@@ -101,12 +108,15 @@ class MeshConnectivity:
                 self.incomplete_evp_elem,
                 self.incomplete_evp_vertex,
             ) = find_local_shared_vef(
-                vef_coords=msh.vertices, rtol=self.rtol, min_shared=min_vertex
+                vef_coords=msh.vertices,
+                rtol=self.rtol,
+                min_shared=min_vertex,
+                use_hashtable=self.use_hashtable,
             )
 
         if msh.gdim >= 2:
 
-            self.log.write("info", "Computing local connectivity: Using edge centers")
+            self.log.write("debug", "Computing local connectivity: Using edge centers")
             if msh.gdim == 2:
                 min_edges = 2
             else:
@@ -118,12 +128,15 @@ class MeshConnectivity:
                 self.incomplete_eep_elem,
                 self.incomplete_eep_edge,
             ) = find_local_shared_vef(
-                vef_coords=msh.edge_centers, rtol=self.rtol, min_shared=min_edges
+                vef_coords=msh.edge_centers,
+                rtol=self.rtol,
+                min_shared=min_edges,
+                use_hashtable=self.use_hashtable,
             )
 
         if msh.gdim >= 3:
 
-            self.log.write("info", "Computing local connectivity: Using facet centers")
+            self.log.write("debug", "Computing local connectivity: Using facet centers")
 
             min_facets = 2
 
@@ -133,7 +146,10 @@ class MeshConnectivity:
                 self.unique_efp_elem,
                 self.unique_efp_facet,
             ) = find_local_shared_vef(
-                vef_coords=msh.facet_centers, rtol=self.rtol, min_shared=min_facets
+                vef_coords=msh.facet_centers,
+                rtol=self.rtol,
+                min_shared=min_facets,
+                use_hashtable=self.use_hashtable,
             )
 
     def global_connectivity(self, msh: Mesh):
@@ -166,7 +182,7 @@ class MeshConnectivity:
 
         if msh.gdim >= 1:
 
-            self.log.write("info", "Computing global connectivity: Using vertices")
+            self.log.write("debug", "Computing global connectivity: Using vertices")
             (
                 self.global_shared_evp_to_rank_map,
                 self.global_shared_evp_to_elem_map,
@@ -177,11 +193,12 @@ class MeshConnectivity:
                 self.incomplete_evp_elem,
                 self.incomplete_evp_vertex,
                 self.rtol,
+                self.use_hashtable,
             )
 
         if msh.gdim >= 2:
 
-            self.log.write("info", "Computing global connectivity: Using edge centers")
+            self.log.write("debug", "Computing global connectivity: Using edge centers")
             (
                 self.global_shared_eep_to_rank_map,
                 self.global_shared_eep_to_elem_map,
@@ -192,11 +209,14 @@ class MeshConnectivity:
                 self.incomplete_eep_elem,
                 self.incomplete_eep_edge,
                 self.rtol,
+                self.use_hashtable,
             )
 
         if msh.gdim == 3:
 
-            self.log.write("info", "Computing global connectivity: Using facet centers")
+            self.log.write(
+                "debug", "Computing global connectivity: Using facet centers"
+            )
             (
                 self.global_shared_efp_to_rank_map,
                 self.global_shared_efp_to_elem_map,
@@ -207,6 +227,7 @@ class MeshConnectivity:
                 self.unique_efp_elem,
                 self.unique_efp_facet,
                 self.rtol,
+                self.use_hashtable,
             )
 
     def get_multiplicity(self, msh: Mesh):
@@ -341,6 +362,7 @@ class MeshConnectivity:
             )
 
         if average == "multiplicity":
+            self.log.write("info", "Averaging using the multiplicity")
             dssum_field = dssum_field / self.multiplicity
 
         return dssum_field
@@ -370,12 +392,14 @@ class MeshConnectivity:
         if msh.gdim == 2:
             vertex_to_slice_map = vertex_to_slice_map_2d
             edge_to_slice_map = edge_to_slice_map_2d
+            edge_to_vertex_map = edge_to_vertex_map_2d
         elif msh.gdim == 3:
             vertex_to_slice_map = vertex_to_slice_map_3d
             edge_to_slice_map = edge_to_slice_map_3d
+            edge_to_vertex_map = edge_to_vertex_map_3d
 
         if msh.gdim >= 1:
-            self.log.write("info", "Adding vertices")
+            self.log.write("debug", "Adding vertices")
             for e in range(0, msh.nelv):
 
                 # Vertex data is pointwise and can be summed directly
@@ -421,7 +445,7 @@ class MeshConnectivity:
                         )
 
         if msh.gdim >= 2:
-            self.log.write("info", "Adding edges")
+            self.log.write("debug", "Adding edges")
             for e in range(0, msh.nelv):
                 # Edge data is provided as a line that might be flipped, we must compare values of the mesh
                 for edge in range(0, msh.edge_centers.shape[1]):
@@ -478,48 +502,76 @@ class MeshConnectivity:
                         my_edge_coord_z = msh.z[e, lz_index, ly_index, lx_index]
                         my_edge_data = np.copy(field[e, lz_index, ly_index, lx_index])
 
-                        # Compare coordinates excluding the vertices
-                        # For each of my data points
-                        for edge_point in range(1, my_edge_coord_x.shape[0] - 1):
-                            edge_point_x = my_edge_coord_x[edge_point]
-                            edge_point_y = my_edge_coord_y[edge_point]
-                            edge_point_z = my_edge_coord_z[edge_point]
+                        # Figure out if the edges are flipped.
+                        ## First find the vertices of my edge
+                        my_edge_vertices = edge_to_vertex_map[edge]
 
-                            # For each element that shares edge data
-                            for sharing_elem in range(0, len(shared_elements)):
-                                sharing_elem_edge_coord_x = shared_edge_coord_x[
-                                    sharing_elem
-                                ]
-                                sharing_elem_edge_coord_y = shared_edge_coord_y[
-                                    sharing_elem
-                                ]
-                                sharing_elem_edge_coord_z = shared_edge_coord_z[
-                                    sharing_elem
-                                ]
+                        ## Now check how they are actually aligned to see if they are flipped
+                        ### Find which are the shared vertices of my own edge vertices that are in each entry of shared element
+                        ### Note that in general, each vertex in one element will have 1 matching vertex in another... otherwise something is weird
+                        shared_vertex_idx_of_my_edge_vertex_0 = [
+                            self.local_shared_evp_to_vertex_map[
+                                (e, my_edge_vertices[0])
+                            ][
+                                np.where(
+                                    np.array(
+                                        self.local_shared_evp_to_elem_map[
+                                            (e, my_edge_vertices[0])
+                                        ]
+                                    )
+                                    == se
+                                )
+                            ][
+                                0
+                            ]
+                            for se in shared_elements
+                        ]
+                        shared_vertex_idx_of_my_edge_vertex_1 = [
+                            self.local_shared_evp_to_vertex_map[
+                                (e, my_edge_vertices[1])
+                            ][
+                                np.where(
+                                    np.array(
+                                        self.local_shared_evp_to_elem_map[
+                                            (e, my_edge_vertices[1])
+                                        ]
+                                    )
+                                    == se
+                                )
+                            ][
+                                0
+                            ]
+                            for se in shared_elements
+                        ]
 
-                                # Compare
-                                same_x = np.isclose(
-                                    edge_point_x,
-                                    sharing_elem_edge_coord_x,
-                                    rtol=self.rtol,
-                                )
-                                same_y = np.isclose(
-                                    edge_point_y,
-                                    sharing_elem_edge_coord_y,
-                                    rtol=self.rtol,
-                                )
-                                same_z = np.isclose(
-                                    edge_point_z,
-                                    sharing_elem_edge_coord_z,
-                                    rtol=self.rtol,
-                                )
-                                same_edge_point = np.where(same_x & same_y & same_z)
+                        ### create a list of how the shared vetices are actually oriented
+                        shared_vertex_orientation = [
+                            (
+                                int(shared_vertex_idx_of_my_edge_vertex_0[i]),
+                                int(shared_vertex_idx_of_my_edge_vertex_1[i]),
+                            )
+                            for i in range(len(shared_elements))
+                        ]
 
-                                # Sum where a match is found
-                                if len(same_edge_point[0]) > 0:
-                                    my_edge_data[edge_point] += shared_edge_data[
-                                        sharing_elem
-                                    ][same_edge_point]
+                        ### Now compare, if they are not the same, then you must flip the edge data
+                        flip_edge = []
+                        for i in range(len(shared_elements)):
+                            # if vertex_matching_if_aligned[i] != actual_vertex_matching[i]:
+                            if (
+                                shared_vertex_orientation[i][1]
+                                - shared_vertex_orientation[i][0]
+                                < 0
+                            ):
+                                flip_edge.append(True)
+                            else:
+                                flip_edge.append(False)
+
+                        # Sum the data
+                        for idx in range(0, len(shared_elements)):
+                            if flip_edge[idx]:
+                                shared_edge_data[idx] = np.flip(shared_edge_data[idx])
+
+                            my_edge_data += shared_edge_data[idx]
 
                         # Do not assing at the vertices
                         if lz_index == slice(None):
@@ -534,7 +586,7 @@ class MeshConnectivity:
                         )
 
         if msh.gdim >= 3:
-            self.log.write("info", "Adding faces")
+            self.log.write("debug", "Adding faces")
             for e in range(0, msh.nelv):
 
                 # Facet data might be flipper or rotated so better check coordinates
@@ -592,61 +644,139 @@ class MeshConnectivity:
                         my_facet_coord_z = msh.z[e, lz_index, ly_index, lx_index]
                         my_facet_data = np.copy(field[e, lz_index, ly_index, lx_index])
 
-                        # Compare coordinates excluding the edges
-                        # For each of my data points
-                        for facet_point_j in range(1, my_facet_coord_x.shape[0] - 1):
-                            for facet_point_i in range(
-                                1, my_facet_coord_x.shape[1] - 1
-                            ):
-                                facet_point_x = my_facet_coord_x[
-                                    facet_point_j, facet_point_i
-                                ]
-                                facet_point_y = my_facet_coord_y[
-                                    facet_point_j, facet_point_i
-                                ]
-                                facet_point_z = my_facet_coord_z[
-                                    facet_point_j, facet_point_i
-                                ]
+                        # Figure out if the facets are flipped.
+                        ## First find the vertices of my facet
+                        my_facet_vertices = facet_to_vertex_map[facet]
 
-                                # For each element that shares facet data
-                                for sharing_elem in range(0, len(shared_elements)):
-                                    sharing_elem_facet_coord_x = shared_facet_coord_x[
-                                        sharing_elem
-                                    ]
-                                    sharing_elem_facet_coord_y = shared_facet_coord_y[
-                                        sharing_elem
-                                    ]
-                                    sharing_elem_facet_coord_z = shared_facet_coord_z[
-                                        sharing_elem
-                                    ]
-
-                                    # Compare
-                                    same_x = np.isclose(
-                                        facet_point_x,
-                                        sharing_elem_facet_coord_x,
-                                        rtol=self.rtol,
-                                    )
-                                    same_y = np.isclose(
-                                        facet_point_y,
-                                        sharing_elem_facet_coord_y,
-                                        rtol=self.rtol,
-                                    )
-                                    same_z = np.isclose(
-                                        facet_point_z,
-                                        sharing_elem_facet_coord_z,
-                                        rtol=self.rtol,
-                                    )
-                                    same_facet_point = np.where(
-                                        same_x & same_y & same_z
-                                    )
-
-                                    # Sum where a match is found
-                                    if len(same_facet_point[0]) > 0:
-                                        my_facet_data[
-                                            facet_point_j, facet_point_i
-                                        ] += shared_facet_data[sharing_elem][
-                                            same_facet_point
+                        ## Now check how my vertices pair with the ones from the shared element
+                        ### Find which are the shared vertices of my own facet vertices that are in each entry of shared element
+                        ### Note that in general, each vertex in one element will have 1 matching vertex in another... otherwise something is weird
+                        ### For axis 1
+                        shared_vertex_idx_of_my_facet_vertex_0_ax1 = [
+                            self.local_shared_evp_to_vertex_map[
+                                (e, my_facet_vertices[0][0])
+                            ][
+                                np.where(
+                                    np.array(
+                                        self.local_shared_evp_to_elem_map[
+                                            (e, my_facet_vertices[0][0])
                                         ]
+                                    )
+                                    == se
+                                )
+                            ][
+                                0
+                            ]
+                            for se in shared_elements
+                        ]
+                        shared_vertex_idx_of_my_facet_vertex_1_ax1 = [
+                            self.local_shared_evp_to_vertex_map[
+                                (e, my_facet_vertices[0][1])
+                            ][
+                                np.where(
+                                    np.array(
+                                        self.local_shared_evp_to_elem_map[
+                                            (e, my_facet_vertices[0][1])
+                                        ]
+                                    )
+                                    == se
+                                )
+                            ][
+                                0
+                            ]
+                            for se in shared_elements
+                        ]
+                        ### For axis 0
+                        shared_vertex_idx_of_my_facet_vertex_0_ax0 = [
+                            self.local_shared_evp_to_vertex_map[
+                                (e, my_facet_vertices[2][0])
+                            ][
+                                np.where(
+                                    np.array(
+                                        self.local_shared_evp_to_elem_map[
+                                            (e, my_facet_vertices[2][0])
+                                        ]
+                                    )
+                                    == se
+                                )
+                            ][
+                                0
+                            ]
+                            for se in shared_elements
+                        ]
+                        shared_vertex_idx_of_my_facet_vertex_1_ax0 = [
+                            self.local_shared_evp_to_vertex_map[
+                                (e, my_facet_vertices[2][1])
+                            ][
+                                np.where(
+                                    np.array(
+                                        self.local_shared_evp_to_elem_map[
+                                            (e, my_facet_vertices[2][1])
+                                        ]
+                                    )
+                                    == se
+                                )
+                            ][
+                                0
+                            ]
+                            for se in shared_elements
+                        ]
+
+                        ### Create a list of how the shared vetices are actually oriented
+                        shared_vertex_orientation_axis_1 = [
+                            (
+                                int(shared_vertex_idx_of_my_facet_vertex_0_ax1[i]),
+                                int(shared_vertex_idx_of_my_facet_vertex_1_ax1[i]),
+                            )
+                            for i in range(len(shared_elements))
+                        ]
+                        shared_vertex_orientation_axis_0 = [
+                            (
+                                int(shared_vertex_idx_of_my_facet_vertex_0_ax0[i]),
+                                int(shared_vertex_idx_of_my_facet_vertex_1_ax0[i]),
+                            )
+                            for i in range(len(shared_elements))
+                        ]
+
+                        ### Now compare. If the vertex index of the shared facet orientation are not increasing, then it is flipped.
+                        ### Note: A more general way to do this is to check the sign of the difference of the vertex indices. If it is the same as the sign of the difference of the vertex indices of my facet, then it is not flipped.
+                        ### however since my_facet_vertices is always increasing by construction in the dictionary, we can just check if the shared vertex indices are increasing.
+                        flip_facet_axis_1 = []
+                        flip_facet_axis_0 = []
+                        for i in range(len(shared_elements)):
+
+                            if (
+                                shared_vertex_orientation_axis_1[i][1]
+                                - shared_vertex_orientation_axis_1[i][0]
+                                < 0
+                            ):
+                                # if np.sign(shared_vertex_orientation_axis_1[i][1] - shared_vertex_orientation_axis_1[i][0]) != np.sign(my_facet_vertices[2][1] - my_facet_vertices[2][0]):
+                                flip_facet_axis_1.append(True)
+                            else:
+                                flip_facet_axis_1.append(False)
+                            if (
+                                shared_vertex_orientation_axis_0[i][1]
+                                - shared_vertex_orientation_axis_0[i][0]
+                                < 0
+                            ):
+                                # if np.sign(shared_vertex_orientation_axis_0[i][1] - shared_vertex_orientation_axis_0[i][0]) != np.sign(my_facet_vertices[0][1] - my_facet_vertices[0][0]):
+                                flip_facet_axis_0.append(True)
+                            else:
+                                flip_facet_axis_0.append(False)
+
+                        # Sum the data
+                        for idx in range(0, len(shared_elements)):
+
+                            if flip_facet_axis_1[idx]:
+                                shared_facet_data[idx] = np.flip(
+                                    shared_facet_data[idx], axis=1
+                                )
+                            if flip_facet_axis_0[idx]:
+                                shared_facet_data[idx] = np.flip(
+                                    shared_facet_data[idx], axis=0
+                                )
+
+                            my_facet_data += shared_facet_data[idx]
 
                         # Do not assing at the edges
                         if lz_index == slice(None):
@@ -697,11 +827,14 @@ class MeshConnectivity:
         if msh.gdim == 2:
             vertex_to_slice_map = vertex_to_slice_map_2d
             edge_to_slice_map = edge_to_slice_map_2d
+            edge_to_vertex_map = edge_to_vertex_map_2d
         elif msh.gdim == 3:
             vertex_to_slice_map = vertex_to_slice_map_3d
             edge_to_slice_map = edge_to_slice_map_3d
+            edge_to_vertex_map = edge_to_vertex_map_3d
 
         if msh.gdim >= 1:
+            self.log.write("debug", "Adding vertices")
             # Prepare data to send to other ranks:
             vertex_send_buff = prepare_send_buffers(
                 msh=msh,
@@ -792,6 +925,7 @@ class MeshConnectivity:
                             ] += matching_vertex_data
 
         if msh.gdim >= 2:
+            self.log.write("debug", "Adding edges")
             # Prepare data to send to other ranks:
             edge_send_buff = prepare_send_buffers(
                 msh=msh,
@@ -853,6 +987,8 @@ class MeshConnectivity:
                             same_edge = shared_edge_id == edge_id
                             matching_index = np.where(same_el & same_edge)
 
+                            matching_element = shared_edge_el_id[matching_index]
+                            matching_edge = shared_edge_id[matching_index]
                             matching_edge_coord_x = shared_edge_coord_x[matching_index]
                             matching_edge_coord_y = shared_edge_coord_y[matching_index]
                             matching_edge_coord_z = shared_edge_coord_z[matching_index]
@@ -877,30 +1013,78 @@ class MeshConnectivity:
                                     global_dssum_field[e, lz_index, ly_index, lx_index]
                                 )
 
-                            # Compare coordinates excluding the vertices
-                            # For each of the data points in the current edge
-                            for edge_point in range(1, my_edge_coord_x.shape[0] - 1):
-                                edge_point_x = my_edge_coord_x[edge_point]
-                                edge_point_y = my_edge_coord_y[edge_point]
-                                edge_point_z = my_edge_coord_z[edge_point]
+                            # Figure out if the edges are flipped.
+                            ## First find the vertices of my edge
+                            my_edge_vertices = edge_to_vertex_map[edge]
 
-                                # Compare
-                                same_x = np.isclose(
-                                    edge_point_x, matching_edge_coord_x, rtol=self.rtol
-                                )
-                                same_y = np.isclose(
-                                    edge_point_y, matching_edge_coord_y, rtol=self.rtol
-                                )
-                                same_z = np.isclose(
-                                    edge_point_z, matching_edge_coord_z, rtol=self.rtol
-                                )
-                                same_edge_point = np.where(same_x & same_y & same_z)
+                            ## Now check how they are actually aligned to see if they are flipped
+                            ### Find which are the shared vertices of my own edge vertices that are in each entry of shared element
+                            ### Note that in general, each vertex in one element will have 1 matching vertex in another... otherwise something is weird
+                            shared_vertex_idx_of_my_edge_vertex_0 = [
+                                self.global_shared_evp_to_vertex_map[
+                                    (e, my_edge_vertices[0])
+                                ][
+                                    np.where(
+                                        np.array(
+                                            self.global_shared_evp_to_elem_map[
+                                                (e, my_edge_vertices[0])
+                                            ]
+                                        )
+                                        == se
+                                    )
+                                ][
+                                    0
+                                ]
+                                for se in matching_element
+                            ]
+                            shared_vertex_idx_of_my_edge_vertex_1 = [
+                                self.global_shared_evp_to_vertex_map[
+                                    (e, my_edge_vertices[1])
+                                ][
+                                    np.where(
+                                        np.array(
+                                            self.global_shared_evp_to_elem_map[
+                                                (e, my_edge_vertices[1])
+                                            ]
+                                        )
+                                        == se
+                                    )
+                                ][
+                                    0
+                                ]
+                                for se in matching_element
+                            ]
 
-                                # Sum where a match is found
-                                if len(same_edge_point[0]) > 0:
-                                    my_edge_data[edge_point] += matching_edge_data[
-                                        same_edge_point
-                                    ]
+                            ### Create a list of how the shared vetices are actually oriented
+                            shared_vertex_orientation = [
+                                (
+                                    int(shared_vertex_idx_of_my_edge_vertex_0[i]),
+                                    int(shared_vertex_idx_of_my_edge_vertex_1[i]),
+                                )
+                                for i in range(len(matching_element))
+                            ]
+
+                            ### Now compare, if they are not the same, then you must flip the edge data
+                            flip_edge = []
+                            for i in range(len(matching_element)):
+                                # if vertex_matching_if_aligned[i] != actual_vertex_matching[i]:
+                                if (
+                                    shared_vertex_orientation[i][1]
+                                    - shared_vertex_orientation[i][0]
+                                    < 0
+                                ):
+                                    flip_edge.append(True)
+                                else:
+                                    flip_edge.append(False)
+
+                            # Sum the data
+                            for idx in range(0, len(matching_element)):
+                                if flip_edge[idx]:
+                                    matching_edge_data[idx] = np.flip(
+                                        matching_edge_data[idx]
+                                    )
+
+                                my_edge_data += matching_edge_data[idx]
 
                             # Do not assing at the vertices
                             if lz_index == slice(None):
@@ -917,6 +1101,7 @@ class MeshConnectivity:
                             shared_edge_index += 1
 
         if msh.gdim >= 3:
+            self.log.write("debug", "Adding faces")
             # Prepare data to send to other ranks:
             facet_send_buff = prepare_send_buffers(
                 msh=msh,
@@ -978,6 +1163,8 @@ class MeshConnectivity:
                             same_facet = shared_facet_id == facet_id
                             matching_index = np.where(same_el & same_facet)
 
+                            matching_element = shared_facet_el_id[matching_index]
+                            matching_facet = shared_facet_id[matching_index]
                             matching_facet_coord_x = shared_facet_coord_x[
                                 matching_index
                             ]
@@ -1007,50 +1194,138 @@ class MeshConnectivity:
                                     global_dssum_field[e, lz_index, ly_index, lx_index]
                                 )
 
-                            # Compare coordinates excluding the edges
-                            # For each of my data points
-                            for facet_point_j in range(
-                                1, my_facet_coord_x.shape[0] - 1
-                            ):
-                                for facet_point_i in range(
-                                    1, my_facet_coord_x.shape[1] - 1
+                            # Figure out if the facets are flipped.
+                            ## First find the vertices of my facet
+                            my_facet_vertices = facet_to_vertex_map[facet]
+
+                            ## Now check how they are actually aligned to see if they are flipped
+                            ### Find which are the shared vertices of my own facet vertices that are in each entry of shared element
+                            ### Note that in general, each vertex in one element will have 1 matching vertex in another... otherwise something is weird
+                            ### For axis 1
+                            shared_vertex_idx_of_my_facet_vertex_0_ax1 = [
+                                self.global_shared_evp_to_vertex_map[
+                                    (e, my_facet_vertices[0][0])
+                                ][
+                                    np.where(
+                                        np.array(
+                                            self.global_shared_evp_to_elem_map[
+                                                (e, my_facet_vertices[0][0])
+                                            ]
+                                        )
+                                        == se
+                                    )
+                                ][
+                                    0
+                                ]
+                                for se in matching_element
+                            ]
+                            shared_vertex_idx_of_my_facet_vertex_1_ax1 = [
+                                self.global_shared_evp_to_vertex_map[
+                                    (e, my_facet_vertices[0][1])
+                                ][
+                                    np.where(
+                                        np.array(
+                                            self.global_shared_evp_to_elem_map[
+                                                (e, my_facet_vertices[0][1])
+                                            ]
+                                        )
+                                        == se
+                                    )
+                                ][
+                                    0
+                                ]
+                                for se in matching_element
+                            ]
+                            ### For axis 0
+                            shared_vertex_idx_of_my_facet_vertex_0_ax0 = [
+                                self.global_shared_evp_to_vertex_map[
+                                    (e, my_facet_vertices[2][0])
+                                ][
+                                    np.where(
+                                        np.array(
+                                            self.global_shared_evp_to_elem_map[
+                                                (e, my_facet_vertices[2][0])
+                                            ]
+                                        )
+                                        == se
+                                    )
+                                ][
+                                    0
+                                ]
+                                for se in matching_element
+                            ]
+                            shared_vertex_idx_of_my_facet_vertex_1_ax0 = [
+                                self.global_shared_evp_to_vertex_map[
+                                    (e, my_facet_vertices[2][1])
+                                ][
+                                    np.where(
+                                        np.array(
+                                            self.global_shared_evp_to_elem_map[
+                                                (e, my_facet_vertices[2][1])
+                                            ]
+                                        )
+                                        == se
+                                    )
+                                ][
+                                    0
+                                ]
+                                for se in matching_element
+                            ]
+
+                            ### Create a list of how the shared vetices are actually oriented
+                            shared_vertex_orientation_axis_1 = [
+                                (
+                                    int(shared_vertex_idx_of_my_facet_vertex_0_ax1[i]),
+                                    int(shared_vertex_idx_of_my_facet_vertex_1_ax1[i]),
+                                )
+                                for i in range(len(matching_element))
+                            ]
+                            shared_vertex_orientation_axis_0 = [
+                                (
+                                    int(shared_vertex_idx_of_my_facet_vertex_0_ax0[i]),
+                                    int(shared_vertex_idx_of_my_facet_vertex_1_ax0[i]),
+                                )
+                                for i in range(len(matching_element))
+                            ]
+
+                            ### Now compare. If the vertex index of the shared facet orientation are not increasing, then it is flipped.
+                            ### Note: A more general way to do this is to check the sign of the difference of the vertex indices. If it is the same as the sign of the difference of the vertex indices of my facet, then it is not flipped.
+                            ### however since my_facet_vertices is always increasing by construction in the dictionary, we can just check if the shared vertex indices are increasing.
+                            flip_facet_axis_1 = []
+                            flip_facet_axis_0 = []
+                            for i in range(len(matching_element)):
+
+                                if (
+                                    shared_vertex_orientation_axis_1[i][1]
+                                    - shared_vertex_orientation_axis_1[i][0]
+                                    < 0
                                 ):
-                                    facet_point_x = my_facet_coord_x[
-                                        facet_point_j, facet_point_i
-                                    ]
-                                    facet_point_y = my_facet_coord_y[
-                                        facet_point_j, facet_point_i
-                                    ]
-                                    facet_point_z = my_facet_coord_z[
-                                        facet_point_j, facet_point_i
-                                    ]
+                                    # if np.sign(shared_vertex_orientation_axis_1[i][1] - shared_vertex_orientation_axis_1[i][0]) != np.sign(my_facet_vertices[2][1] - my_facet_vertices[2][0]):
+                                    flip_facet_axis_1.append(True)
+                                else:
+                                    flip_facet_axis_1.append(False)
+                                if (
+                                    shared_vertex_orientation_axis_0[i][1]
+                                    - shared_vertex_orientation_axis_0[i][0]
+                                    < 0
+                                ):
+                                    # if np.sign(shared_vertex_orientation_axis_0[i][1] - shared_vertex_orientation_axis_0[i][0]) != np.sign(my_facet_vertices[0][1] - my_facet_vertices[0][0]):
+                                    flip_facet_axis_0.append(True)
+                                else:
+                                    flip_facet_axis_0.append(False)
 
-                                    # Compare
-                                    same_x = np.isclose(
-                                        facet_point_x,
-                                        matching_facet_coord_x,
-                                        rtol=self.rtol,
+                            # Sum the data
+                            for idx in range(0, len(matching_element)):
+                                if flip_facet_axis_1[idx]:
+                                    matching_facet_data[idx] = np.flip(
+                                        matching_facet_data[idx], axis=1
                                     )
-                                    same_y = np.isclose(
-                                        facet_point_y,
-                                        matching_facet_coord_y,
-                                        rtol=self.rtol,
-                                    )
-                                    same_z = np.isclose(
-                                        facet_point_z,
-                                        matching_facet_coord_z,
-                                        rtol=self.rtol,
-                                    )
-                                    same_facet_point = np.where(
-                                        same_x & same_y & same_z
+                                if flip_facet_axis_0[idx]:
+                                    matching_facet_data[idx] = np.flip(
+                                        matching_facet_data[idx], axis=0
                                     )
 
-                                    # Sum where a match is found
-                                    if len(same_facet_point[0]) > 0:
-
-                                        my_facet_data[
-                                            facet_point_j, facet_point_i
-                                        ] += matching_facet_data[same_facet_point]
+                                my_facet_data += matching_facet_data[idx]
 
                             # Do not assing at the edges
                             if lz_index == slice(None):
@@ -1072,8 +1347,11 @@ class MeshConnectivity:
         return global_dssum_field
 
 
-def find_local_shared_vef(
-    vef_coords: np.ndarray = None, rtol: float = 1e-5, min_shared: int = 0
+def find_local_shared_vef(  #
+    vef_coords: np.ndarray = None,
+    rtol: float = 1e-5,
+    min_shared: int = 0,
+    use_hashtable: bool = False,
 ) -> tuple[
     dict[tuple[int, int], np.ndarray],
     dict[tuple[int, int], np.ndarray],
@@ -1095,6 +1373,9 @@ def find_local_shared_vef(
         The minimum number of shared vertices/edges/facets to consider them found in a rank.
         In 2D, min vertices = 4, min edges = 2
         In 3D, min vertices = 8, min edges = 4, min facets = 2
+    use_hashtable : bool
+        If True, use a hash table to speed up the search
+        The has table will compare exact values, so only do if you are sure that the coordinates are exact
 
     Returns
     -------
@@ -1106,21 +1387,49 @@ def find_local_shared_vef(
     shared_e_vef_p_to_elem_map = {}
     shared_e_vef_p_to_vef_map = {}
 
-    # Iterate over each element
-    for e in range(0, vef_coords.shape[0]):
-        # Iterate over each vertex/edge/facet
-        for vef in range(0, vef_coords.shape[1]):
-            same_x = np.isclose(vef_coords[e, vef, 0], vef_coords[:, :, 0], rtol=rtol)
-            same_y = np.isclose(vef_coords[e, vef, 1], vef_coords[:, :, 1], rtol=rtol)
-            same_z = np.isclose(vef_coords[e, vef, 2], vef_coords[:, :, 2], rtol=rtol)
-            same_geometric_entity = np.where(same_x & same_y & same_z)
+    if use_hashtable:
+        # Iterate over each element and vertex/edge/face adding to the hash table
+        hash_table_e = {}
+        hash_table_vef = {}
+        for e in range(0, vef_coords.shape[0]):
+            for vef in range(0, vef_coords.shape[1]):
+                hash_key = tuple(vef_coords[e, vef])
+                if hash_key in hash_table_e.keys():
+                    hash_table_e[hash_key].append(e)
+                    hash_table_vef[hash_key].append(vef)
+                else:
+                    hash_table_e[hash_key] = [e]
+                    hash_table_vef[hash_key] = [vef]
 
-            matching_elem = same_geometric_entity[0]
-            matching_geometric_entity = same_geometric_entity[1]
+        # Iterate over each element and vertex/edge/face again, and now populate the shared maps
+        for e in range(0, vef_coords.shape[0]):
+            for vef in range(0, vef_coords.shape[1]):
+                hash_key = tuple(vef_coords[e, vef])
+                shared_e_vef_p_to_elem_map[(e, vef)] = np.array(hash_table_e[hash_key])
+                shared_e_vef_p_to_vef_map[(e, vef)] = np.array(hash_table_vef[hash_key])
 
-            # Assig the matching element and vertex/edge/facet to the dictionary
-            shared_e_vef_p_to_elem_map[(e, vef)] = matching_elem
-            shared_e_vef_p_to_vef_map[(e, vef)] = matching_geometric_entity
+    else:
+        # Iterate over each element
+        for e in range(0, vef_coords.shape[0]):
+            # Iterate over each vertex/edge/facet
+            for vef in range(0, vef_coords.shape[1]):
+                same_x = np.isclose(
+                    vef_coords[e, vef, 0], vef_coords[:, :, 0], rtol=rtol
+                )
+                same_y = np.isclose(
+                    vef_coords[e, vef, 1], vef_coords[:, :, 1], rtol=rtol
+                )
+                same_z = np.isclose(
+                    vef_coords[e, vef, 2], vef_coords[:, :, 2], rtol=rtol
+                )
+                same_geometric_entity = np.where(same_x & same_y & same_z)
+
+                matching_elem = same_geometric_entity[0]
+                matching_geometric_entity = same_geometric_entity[1]
+
+                # Assig the matching element and vertex/edge/facet to the dictionary
+                shared_e_vef_p_to_elem_map[(e, vef)] = matching_elem
+                shared_e_vef_p_to_vef_map[(e, vef)] = matching_geometric_entity
 
     # If the number of shared vertices/edges/facets is less than min_shared, then the vertex/edge/facet is incomplete
     # and the rest might be in anothe rank
@@ -1145,6 +1454,7 @@ def find_global_shared_evp(
     incomplete_e_vef_p_elem: list[int],
     incomplete_e_vef_p_vef: list[int],
     rtol: float = 1e-5,
+    use_hashtable: bool = False,
 ) -> tuple[
     dict[tuple[int, int], np.ndarray],
     dict[tuple[int, int], np.ndarray],
@@ -1167,6 +1477,9 @@ def find_global_shared_evp(
         The incomplete vertices/edges/facets vertex/edge/facet list
     rtol : float
         The relative tolerance to use when comparing the coordinates
+    use_hashtable : bool
+        If True, use a hash table to speed up the search
+        The has table will compare exact values, so only do if you are sure that the coordinates are exact
 
     Returns
     -------
@@ -1210,57 +1523,111 @@ def find_global_shared_evp(
     # Create global dictionaries
     global_shared_e_vef_p_to_rank_map = {}
     global_shared_e_vef_p_to_elem_map = {}
-    global_shared_e_vef_p_to_vertex_map = {}
+    global_shared_e_vef_p_to_vef_map = {}
 
     # Go through the data in each other rank.
     for source_idx, source_vef in enumerate(source_incomplete_vef_coords):
 
-        remove_pair_idx = []
-
-        # Loop through all my own incomplete element vertex pairs
-        for e_vef_pair in range(0, len(incomplete_e_vef_p_elem)):
-
-            # Check where my incomplete vertex pair coordinates match with the incomplete ...
-            # ... vertex pair coordinates of the other rank
-            e = incomplete_e_vef_p_elem[e_vef_pair]
-            vef = incomplete_e_vef_p_vef[e_vef_pair]
-            same_x = np.isclose(vef_coords[e, vef, 0], source_vef[:, 0], rtol=rtol)
-            same_y = np.isclose(vef_coords[e, vef, 1], source_vef[:, 1], rtol=rtol)
-            same_z = np.isclose(vef_coords[e, vef, 2], source_vef[:, 2], rtol=rtol)
-            same_vef = np.where(same_x & same_y & same_z)
-
-            # If we find a match assign it in the global dictionaries
-            if len(same_vef[0]) > 0:
-                matching_id = same_vef[0]
-                sources_list = (
-                    np.ones_like(source_incomplete_vef_id[source_idx][matching_id])
-                    * sources[source_idx]
-                )
-                if (e, vef) in global_shared_e_vef_p_to_rank_map.keys():
-                    global_shared_e_vef_p_to_rank_map[(e, vef)] = np.append(
-                        global_shared_e_vef_p_to_rank_map[(e, vef)], sources_list
+        if use_hashtable:
+            # Iterate over each element and vertex/edge/face from the source rank and add to the hash table
+            hash_table_rank = {}
+            hash_table_e = {}
+            hash_table_vef = {}
+            for idx in range(0, source_vef.shape[0]):
+                hash_key = tuple(source_vef[idx])
+                if hash_key in hash_table_e.keys():
+                    hash_table_rank[hash_key].append(sources[source_idx])
+                    hash_table_e[hash_key].append(
+                        source_incomplete_el_id[source_idx][idx]
                     )
-                    global_shared_e_vef_p_to_elem_map[(e, vef)] = np.append(
-                        global_shared_e_vef_p_to_elem_map[(e, vef)],
-                        source_incomplete_el_id[source_idx][matching_id],
-                    )
-                    global_shared_e_vef_p_to_vertex_map[(e, vef)] = np.append(
-                        global_shared_e_vef_p_to_vertex_map[(e, vef)],
-                        source_incomplete_vef_id[source_idx][matching_id],
+                    hash_table_vef[hash_key].append(
+                        source_incomplete_vef_id[source_idx][idx]
                     )
                 else:
-                    global_shared_e_vef_p_to_rank_map[(e, vef)] = sources_list
-                    global_shared_e_vef_p_to_elem_map[(e, vef)] = (
-                        source_incomplete_el_id[source_idx][matching_id]
+                    hash_table_rank[hash_key] = [sources[source_idx]]
+                    hash_table_e[hash_key] = [source_incomplete_el_id[source_idx][idx]]
+                    hash_table_vef[hash_key] = [
+                        source_incomplete_vef_id[source_idx][idx]
+                    ]
+
+            # Now Iterate over my own incomplete points and check if they are in the hash table, then poulate the shared maps
+            for e_vef_pair in range(0, len(incomplete_e_vef_p_elem)):
+
+                e = incomplete_e_vef_p_elem[e_vef_pair]
+                vef = incomplete_e_vef_p_vef[e_vef_pair]
+                hash_key = tuple(vef_coords[e, vef])
+
+                if hash_key in hash_table_e.keys():
+
+                    if (e, vef) in global_shared_e_vef_p_to_rank_map.keys():
+                        global_shared_e_vef_p_to_rank_map[(e, vef)] = np.append(
+                            global_shared_e_vef_p_to_rank_map[(e, vef)],
+                            np.array(hash_table_rank[hash_key]),
+                        )
+                        global_shared_e_vef_p_to_elem_map[(e, vef)] = np.append(
+                            global_shared_e_vef_p_to_elem_map[(e, vef)],
+                            np.array(hash_table_e[hash_key]),
+                        )
+                        global_shared_e_vef_p_to_vef_map[(e, vef)] = np.append(
+                            global_shared_e_vef_p_to_vef_map[(e, vef)],
+                            np.array(hash_table_vef[hash_key]),
+                        )
+                    else:
+                        global_shared_e_vef_p_to_rank_map[(e, vef)] = np.array(
+                            hash_table_rank[hash_key]
+                        )
+                        global_shared_e_vef_p_to_elem_map[(e, vef)] = np.array(
+                            hash_table_e[hash_key]
+                        )
+                        global_shared_e_vef_p_to_vef_map[(e, vef)] = np.array(
+                            hash_table_vef[hash_key]
+                        )
+
+        else:
+            # Loop through all my own incomplete element vertex pairs
+            for e_vef_pair in range(0, len(incomplete_e_vef_p_elem)):
+
+                # Check where my incomplete vertex pair coordinates match with the incomplete ...
+                # ... vertex pair coordinates of the other rank
+                e = incomplete_e_vef_p_elem[e_vef_pair]
+                vef = incomplete_e_vef_p_vef[e_vef_pair]
+                same_x = np.isclose(vef_coords[e, vef, 0], source_vef[:, 0], rtol=rtol)
+                same_y = np.isclose(vef_coords[e, vef, 1], source_vef[:, 1], rtol=rtol)
+                same_z = np.isclose(vef_coords[e, vef, 2], source_vef[:, 2], rtol=rtol)
+                same_vef = np.where(same_x & same_y & same_z)
+
+                # If we find a match assign it in the global dictionaries
+                if len(same_vef[0]) > 0:
+                    matching_id = same_vef[0]
+                    sources_list = (
+                        np.ones_like(source_incomplete_vef_id[source_idx][matching_id])
+                        * sources[source_idx]
                     )
-                    global_shared_e_vef_p_to_vertex_map[(e, vef)] = (
-                        source_incomplete_vef_id[source_idx][matching_id]
-                    )
+                    if (e, vef) in global_shared_e_vef_p_to_rank_map.keys():
+                        global_shared_e_vef_p_to_rank_map[(e, vef)] = np.append(
+                            global_shared_e_vef_p_to_rank_map[(e, vef)], sources_list
+                        )
+                        global_shared_e_vef_p_to_elem_map[(e, vef)] = np.append(
+                            global_shared_e_vef_p_to_elem_map[(e, vef)],
+                            source_incomplete_el_id[source_idx][matching_id],
+                        )
+                        global_shared_e_vef_p_to_vef_map[(e, vef)] = np.append(
+                            global_shared_e_vef_p_to_vef_map[(e, vef)],
+                            source_incomplete_vef_id[source_idx][matching_id],
+                        )
+                    else:
+                        global_shared_e_vef_p_to_rank_map[(e, vef)] = sources_list
+                        global_shared_e_vef_p_to_elem_map[(e, vef)] = (
+                            source_incomplete_el_id[source_idx][matching_id]
+                        )
+                        global_shared_e_vef_p_to_vef_map[(e, vef)] = (
+                            source_incomplete_vef_id[source_idx][matching_id]
+                        )
 
     return (
         global_shared_e_vef_p_to_rank_map,
         global_shared_e_vef_p_to_elem_map,
-        global_shared_e_vef_p_to_vertex_map,
+        global_shared_e_vef_p_to_vef_map,
     )
 
 
