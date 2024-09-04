@@ -48,12 +48,15 @@ class MeshConnectivity:
 
         if isinstance(msh, Mesh):
             # Create local connecitivy
+            self.log.write("info", "Computing local connectivity")
             self.local_connectivity(msh)
 
             # Create global connectivity
+            self.log.write("info", "Computing global connectivity")
             self.global_connectivity(msh)
 
             # Get the multiplicity
+            self.log.write("info", "Computing multiplicity")
             self.get_multiplicity(msh)
 
         self.log.write("info", "MeshConnectivity initialized")
@@ -348,6 +351,7 @@ class MeshConnectivity:
             )
 
         if average == "multiplicity":
+            self.log.write("info", "Averaging using the multiplicity")
             dssum_field = dssum_field / self.multiplicity
 
         return dssum_field
@@ -689,6 +693,7 @@ class MeshConnectivity:
             edge_to_vertex_map = edge_to_vertex_map_3d
 
         if msh.gdim >= 1:
+            self.log.write("info", "Adding vertices")
             # Prepare data to send to other ranks:
             vertex_send_buff = prepare_send_buffers(
                 msh=msh,
@@ -779,6 +784,7 @@ class MeshConnectivity:
                             ] += matching_vertex_data
 
         if msh.gdim >= 2:
+            self.log.write("info", "Adding edges")
             # Prepare data to send to other ranks:
             edge_send_buff = prepare_send_buffers(
                 msh=msh,
@@ -910,6 +916,7 @@ class MeshConnectivity:
                             shared_edge_index += 1
 
         if msh.gdim >= 3:
+            self.log.write("info", "Adding faces")
             # Prepare data to send to other ranks:
             facet_send_buff = prepare_send_buffers(
                 msh=msh,
