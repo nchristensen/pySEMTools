@@ -251,15 +251,52 @@ facet_to_slice_map[5] = (
     slice(None),
     slice(None),
 )  # Equivalent to [-1, :, :] # Top facet
-### For 3D we can get facets from 4 pairs of vertices connected, 
+### For 3D we can get facets from 4 pairs of vertices connected,
 ### each pair representing one axis of the 2D data facet data
-facet_to_vertex_map = {"facet": (("vertex0", "vertex1", "axis"), ("vertex2", "vertex3", "axis"), ("vertex4", "vertex5", "axis"), ("vertex6", "vertex7", "axis"))}
-facet_to_vertex_map[0] = ((0, 2, 1), (4, 6, 1), (0, 4, 0), (2, 6, 0))  # Equivalent to left facet
-facet_to_vertex_map[1] = ((1, 3, 1), (5, 7, 1), (1, 5, 0), (3, 7, 0))  # Equivalent to right facet
-facet_to_vertex_map[2] = ((0, 1, 1), (4, 5, 1), (0, 4, 0), (1, 5, 0))  # Equivalent to front facet
-facet_to_vertex_map[3] = ((2, 3, 1), (6, 7, 1), (2, 6, 0), (3, 7, 0))  # Equivalent to back facet
-facet_to_vertex_map[4] = ((0, 1, 1), (2, 3, 1), (0, 2, 0), (1, 3, 0))  # Equivalent to bottom facet
-facet_to_vertex_map[5] = ((4, 5, 1), (6, 7, 1), (4, 6, 0), (5, 7, 0))  # Equivalent to top facet
+facet_to_vertex_map = {
+    "facet": (
+        ("vertex0", "vertex1", "axis"),
+        ("vertex2", "vertex3", "axis"),
+        ("vertex4", "vertex5", "axis"),
+        ("vertex6", "vertex7", "axis"),
+    )
+}
+facet_to_vertex_map[0] = (
+    (0, 2, 1),
+    (4, 6, 1),
+    (0, 4, 0),
+    (2, 6, 0),
+)  # Equivalent to left facet
+facet_to_vertex_map[1] = (
+    (1, 3, 1),
+    (5, 7, 1),
+    (1, 5, 0),
+    (3, 7, 0),
+)  # Equivalent to right facet
+facet_to_vertex_map[2] = (
+    (0, 1, 1),
+    (4, 5, 1),
+    (0, 4, 0),
+    (1, 5, 0),
+)  # Equivalent to front facet
+facet_to_vertex_map[3] = (
+    (2, 3, 1),
+    (6, 7, 1),
+    (2, 6, 0),
+    (3, 7, 0),
+)  # Equivalent to back facet
+facet_to_vertex_map[4] = (
+    (0, 1, 1),
+    (2, 3, 1),
+    (0, 2, 0),
+    (1, 3, 0),
+)  # Equivalent to bottom facet
+facet_to_vertex_map[5] = (
+    (4, 5, 1),
+    (6, 7, 1),
+    (4, 6, 0),
+    (5, 7, 0),
+)  # Equivalent to top facet
 
 
 def fetch_elem_vertex_data(
