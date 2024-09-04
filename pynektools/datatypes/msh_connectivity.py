@@ -95,7 +95,7 @@ class MeshConnectivity:
 
         if msh.gdim >= 1:
 
-            self.log.write("info", "Computing local connectivity: Using vertices")
+            self.log.write("debug", "Computing local connectivity: Using vertices")
 
             if msh.gdim == 2:
                 min_vertex = 4  # Anything less than 4 means that a vertex might be in another rank
@@ -113,7 +113,7 @@ class MeshConnectivity:
 
         if msh.gdim >= 2:
 
-            self.log.write("info", "Computing local connectivity: Using edge centers")
+            self.log.write("debug", "Computing local connectivity: Using edge centers")
             if msh.gdim == 2:
                 min_edges = 2
             else:
@@ -130,7 +130,7 @@ class MeshConnectivity:
 
         if msh.gdim >= 3:
 
-            self.log.write("info", "Computing local connectivity: Using facet centers")
+            self.log.write("debug", "Computing local connectivity: Using facet centers")
 
             min_facets = 2
 
@@ -173,7 +173,7 @@ class MeshConnectivity:
 
         if msh.gdim >= 1:
 
-            self.log.write("info", "Computing global connectivity: Using vertices")
+            self.log.write("debug", "Computing global connectivity: Using vertices")
             (
                 self.global_shared_evp_to_rank_map,
                 self.global_shared_evp_to_elem_map,
@@ -189,7 +189,7 @@ class MeshConnectivity:
 
         if msh.gdim >= 2:
 
-            self.log.write("info", "Computing global connectivity: Using edge centers")
+            self.log.write("debug", "Computing global connectivity: Using edge centers")
             (
                 self.global_shared_eep_to_rank_map,
                 self.global_shared_eep_to_elem_map,
@@ -205,7 +205,7 @@ class MeshConnectivity:
 
         if msh.gdim == 3:
 
-            self.log.write("info", "Computing global connectivity: Using facet centers")
+            self.log.write("debug", "Computing global connectivity: Using facet centers")
             (
                 self.global_shared_efp_to_rank_map,
                 self.global_shared_efp_to_elem_map,
@@ -388,7 +388,7 @@ class MeshConnectivity:
             edge_to_vertex_map = edge_to_vertex_map_3d
 
         if msh.gdim >= 1:
-            self.log.write("info", "Adding vertices")
+            self.log.write("debug", "Adding vertices")
             for e in range(0, msh.nelv):
 
                 # Vertex data is pointwise and can be summed directly
@@ -434,7 +434,7 @@ class MeshConnectivity:
                         )
 
         if msh.gdim >= 2:
-            self.log.write("info", "Adding edges")
+            self.log.write("debug", "Adding edges")
             for e in range(0, msh.nelv):
                 # Edge data is provided as a line that might be flipped, we must compare values of the mesh
                 for edge in range(0, msh.edge_centers.shape[1]):
@@ -533,7 +533,7 @@ class MeshConnectivity:
                         )
 
         if msh.gdim >= 3:
-            self.log.write("info", "Adding faces")
+            self.log.write("debug", "Adding faces")
             for e in range(0, msh.nelv):
 
                 # Facet data might be flipper or rotated so better check coordinates
@@ -693,7 +693,7 @@ class MeshConnectivity:
             edge_to_vertex_map = edge_to_vertex_map_3d
 
         if msh.gdim >= 1:
-            self.log.write("info", "Adding vertices")
+            self.log.write("debug", "Adding vertices")
             # Prepare data to send to other ranks:
             vertex_send_buff = prepare_send_buffers(
                 msh=msh,
@@ -784,7 +784,7 @@ class MeshConnectivity:
                             ] += matching_vertex_data
 
         if msh.gdim >= 2:
-            self.log.write("info", "Adding edges")
+            self.log.write("debug", "Adding edges")
             # Prepare data to send to other ranks:
             edge_send_buff = prepare_send_buffers(
                 msh=msh,
@@ -916,7 +916,7 @@ class MeshConnectivity:
                             shared_edge_index += 1
 
         if msh.gdim >= 3:
-            self.log.write("info", "Adding faces")
+            self.log.write("debug", "Adding faces")
             # Prepare data to send to other ranks:
             facet_send_buff = prepare_send_buffers(
                 msh=msh,
