@@ -34,13 +34,14 @@ class MeshConnectivity:
         The relative tolerance to use when comparing the coordinates of the facets/edges
     """
 
-    def __init__(self, comm, msh: Mesh = None, rel_tol=1e-5):
+    def __init__(self, comm, msh: Mesh = None, rel_tol=1e-5, use_hashtable=False):
 
         self.log = Logger(comm=comm, module_name="MeshConnectivity")
         self.log.write("info", "Initializing MeshConnectivity")
         self.log.tic()
         self.rt = Router(comm)
         self.rtol = rel_tol
+        self.use_hashtable = use_hashtable
 
         if isinstance(msh, Mesh):
             # Create local connecitivy
@@ -101,7 +102,7 @@ class MeshConnectivity:
                 self.incomplete_evp_elem,
                 self.incomplete_evp_vertex,
             ) = find_local_shared_vef(
-                vef_coords=msh.vertices, rtol=self.rtol, min_shared=min_vertex
+                vef_coords=msh.vertices, rtol=self.rtol, min_shared=min_vertex, use_hashtable=self.use_hashtable
             )
 
         if msh.gdim >= 2:
@@ -118,7 +119,7 @@ class MeshConnectivity:
                 self.incomplete_eep_elem,
                 self.incomplete_eep_edge,
             ) = find_local_shared_vef(
-                vef_coords=msh.edge_centers, rtol=self.rtol, min_shared=min_edges
+                vef_coords=msh.edge_centers, rtol=self.rtol, min_shared=min_edges, use_hashtable=self.use_hashtable
             )
 
         if msh.gdim >= 3:
@@ -133,7 +134,7 @@ class MeshConnectivity:
                 self.unique_efp_elem,
                 self.unique_efp_facet,
             ) = find_local_shared_vef(
-                vef_coords=msh.facet_centers, rtol=self.rtol, min_shared=min_facets
+                vef_coords=msh.facet_centers, rtol=self.rtol, min_shared=min_facets, use_hashtable=self.use_hashtable
             )
 
     def global_connectivity(self, msh: Mesh):
@@ -177,6 +178,7 @@ class MeshConnectivity:
                 self.incomplete_evp_elem,
                 self.incomplete_evp_vertex,
                 self.rtol,
+                self.use_hashtable,
             )
 
         if msh.gdim >= 2:
@@ -192,6 +194,7 @@ class MeshConnectivity:
                 self.incomplete_eep_elem,
                 self.incomplete_eep_edge,
                 self.rtol,
+                self.use_hashtable,
             )
 
         if msh.gdim == 3:
@@ -207,6 +210,7 @@ class MeshConnectivity:
                 self.unique_efp_elem,
                 self.unique_efp_facet,
                 self.rtol,
+                self.use_hashtable,
             )
 
     def get_multiplicity(self, msh: Mesh):
@@ -1073,7 +1077,7 @@ class MeshConnectivity:
 
 
 def find_local_shared_vef(
-    vef_coords: np.ndarray = None, rtol: float = 1e-5, min_shared: int = 0
+    vef_coords: np.ndarray = None, rtol: float = 1e-5, min_shared: int = 0, use_hashtable: bool = False
 ) -> tuple[
     dict[tuple[int, int], np.ndarray],
     dict[tuple[int, int], np.ndarray],
@@ -1095,6 +1099,9 @@ def find_local_shared_vef(
         The minimum number of shared vertices/edges/facets to consider them found in a rank.
         In 2D, min vertices = 4, min edges = 2
         In 3D, min vertices = 8, min edges = 4, min facets = 2
+    use_hashtable : bool
+        If True, use a hash table to speed up the search
+        The has table will compare exact values, so only do if you are sure that the coordinates are exact
 
     Returns
     -------
@@ -1106,21 +1113,43 @@ def find_local_shared_vef(
     shared_e_vef_p_to_elem_map = {}
     shared_e_vef_p_to_vef_map = {}
 
-    # Iterate over each element
-    for e in range(0, vef_coords.shape[0]):
-        # Iterate over each vertex/edge/facet
-        for vef in range(0, vef_coords.shape[1]):
-            same_x = np.isclose(vef_coords[e, vef, 0], vef_coords[:, :, 0], rtol=rtol)
-            same_y = np.isclose(vef_coords[e, vef, 1], vef_coords[:, :, 1], rtol=rtol)
-            same_z = np.isclose(vef_coords[e, vef, 2], vef_coords[:, :, 2], rtol=rtol)
-            same_geometric_entity = np.where(same_x & same_y & same_z)
+    if use_hashtable:
+        # Iterate over each element and vertex/edge/face adding to the hash table
+        hash_table_e = {}
+        hash_table_vef = {}
+        for e in range(0, vef_coords.shape[0]):
+            for vef in range(0, vef_coords.shape[1]):
+                hash_key = tuple(vef_coords[e, vef])
+                if hash_key in hash_table_e.keys():
+                    hash_table_e[hash_key].append(e)
+                    hash_table_vef[hash_key].append(vef)
+                else:
+                    hash_table_e[hash_key] = [e]
+                    hash_table_vef[hash_key] = [vef]
+        
+        # Iterate over each element and vertex/edge/face again, and now populate the shared maps
+        for e in range(0, vef_coords.shape[0]):
+            for vef in range(0, vef_coords.shape[1]):
+                hash_key = tuple(vef_coords[e, vef])
+                shared_e_vef_p_to_elem_map[(e, vef)] = np.array(hash_table_e[hash_key])
+                shared_e_vef_p_to_vef_map[(e, vef)] = np.array(hash_table_vef[hash_key])
 
-            matching_elem = same_geometric_entity[0]
-            matching_geometric_entity = same_geometric_entity[1]
+    else:
+        # Iterate over each element
+        for e in range(0, vef_coords.shape[0]):
+            # Iterate over each vertex/edge/facet
+            for vef in range(0, vef_coords.shape[1]):
+                same_x = np.isclose(vef_coords[e, vef, 0], vef_coords[:, :, 0], rtol=rtol)
+                same_y = np.isclose(vef_coords[e, vef, 1], vef_coords[:, :, 1], rtol=rtol)
+                same_z = np.isclose(vef_coords[e, vef, 2], vef_coords[:, :, 2], rtol=rtol)
+                same_geometric_entity = np.where(same_x & same_y & same_z)
 
-            # Assig the matching element and vertex/edge/facet to the dictionary
-            shared_e_vef_p_to_elem_map[(e, vef)] = matching_elem
-            shared_e_vef_p_to_vef_map[(e, vef)] = matching_geometric_entity
+                matching_elem = same_geometric_entity[0]
+                matching_geometric_entity = same_geometric_entity[1]
+
+                # Assig the matching element and vertex/edge/facet to the dictionary
+                shared_e_vef_p_to_elem_map[(e, vef)] = matching_elem
+                shared_e_vef_p_to_vef_map[(e, vef)] = matching_geometric_entity
 
     # If the number of shared vertices/edges/facets is less than min_shared, then the vertex/edge/facet is incomplete
     # and the rest might be in anothe rank
@@ -1145,6 +1174,7 @@ def find_global_shared_evp(
     incomplete_e_vef_p_elem: list[int],
     incomplete_e_vef_p_vef: list[int],
     rtol: float = 1e-5,
+    use_hashtable: bool = False,
 ) -> tuple[
     dict[tuple[int, int], np.ndarray],
     dict[tuple[int, int], np.ndarray],
@@ -1167,6 +1197,9 @@ def find_global_shared_evp(
         The incomplete vertices/edges/facets vertex/edge/facet list
     rtol : float
         The relative tolerance to use when comparing the coordinates
+    use_hashtable : bool
+        If True, use a hash table to speed up the search
+        The has table will compare exact values, so only do if you are sure that the coordinates are exact
 
     Returns
     -------
@@ -1210,57 +1243,102 @@ def find_global_shared_evp(
     # Create global dictionaries
     global_shared_e_vef_p_to_rank_map = {}
     global_shared_e_vef_p_to_elem_map = {}
-    global_shared_e_vef_p_to_vertex_map = {}
+    global_shared_e_vef_p_to_vef_map = {}
 
     # Go through the data in each other rank.
     for source_idx, source_vef in enumerate(source_incomplete_vef_coords):
 
-        remove_pair_idx = []
-
-        # Loop through all my own incomplete element vertex pairs
-        for e_vef_pair in range(0, len(incomplete_e_vef_p_elem)):
-
-            # Check where my incomplete vertex pair coordinates match with the incomplete ...
-            # ... vertex pair coordinates of the other rank
-            e = incomplete_e_vef_p_elem[e_vef_pair]
-            vef = incomplete_e_vef_p_vef[e_vef_pair]
-            same_x = np.isclose(vef_coords[e, vef, 0], source_vef[:, 0], rtol=rtol)
-            same_y = np.isclose(vef_coords[e, vef, 1], source_vef[:, 1], rtol=rtol)
-            same_z = np.isclose(vef_coords[e, vef, 2], source_vef[:, 2], rtol=rtol)
-            same_vef = np.where(same_x & same_y & same_z)
-
-            # If we find a match assign it in the global dictionaries
-            if len(same_vef[0]) > 0:
-                matching_id = same_vef[0]
-                sources_list = (
-                    np.ones_like(source_incomplete_vef_id[source_idx][matching_id])
-                    * sources[source_idx]
-                )
-                if (e, vef) in global_shared_e_vef_p_to_rank_map.keys():
-                    global_shared_e_vef_p_to_rank_map[(e, vef)] = np.append(
-                        global_shared_e_vef_p_to_rank_map[(e, vef)], sources_list
-                    )
-                    global_shared_e_vef_p_to_elem_map[(e, vef)] = np.append(
-                        global_shared_e_vef_p_to_elem_map[(e, vef)],
-                        source_incomplete_el_id[source_idx][matching_id],
-                    )
-                    global_shared_e_vef_p_to_vertex_map[(e, vef)] = np.append(
-                        global_shared_e_vef_p_to_vertex_map[(e, vef)],
-                        source_incomplete_vef_id[source_idx][matching_id],
-                    )
+        if use_hashtable:
+            # Iterate over each element and vertex/edge/face from the source rank and add to the hash table
+            hash_table_rank = {}
+            hash_table_e = {}
+            hash_table_vef = {}
+            for idx in range(0, source_vef.shape[0]):
+                hash_key = tuple(source_vef[idx])
+                if hash_key in hash_table_e.keys():
+                    hash_table_rank[hash_key].append(sources[source_idx])
+                    hash_table_e[hash_key].append(source_incomplete_el_id[source_idx][idx])
+                    hash_table_vef[hash_key].append(source_incomplete_vef_id[source_idx][idx])
                 else:
-                    global_shared_e_vef_p_to_rank_map[(e, vef)] = sources_list
-                    global_shared_e_vef_p_to_elem_map[(e, vef)] = (
-                        source_incomplete_el_id[source_idx][matching_id]
+                    hash_table_rank[hash_key] = [sources[source_idx]]
+                    hash_table_e[hash_key] = [source_incomplete_el_id[source_idx][idx]]
+                    hash_table_vef[hash_key] = [source_incomplete_vef_id[source_idx][idx]]
+
+            # Now Iterate over my own incomplete points and check if they are in the hash table, then poulate the shared maps
+            for e_vef_pair in range(0, len(incomplete_e_vef_p_elem)):
+
+                e = incomplete_e_vef_p_elem[e_vef_pair]
+                vef = incomplete_e_vef_p_vef[e_vef_pair]
+                hash_key = tuple(vef_coords[e, vef])
+
+                if hash_key in hash_table_e.keys():
+                    
+                    if (e, vef) in global_shared_e_vef_p_to_rank_map.keys():
+                        global_shared_e_vef_p_to_rank_map[(e, vef)] = np.append(
+                            global_shared_e_vef_p_to_rank_map[(e, vef)], np.array(hash_table_rank[hash_key])
+                        )
+                        global_shared_e_vef_p_to_elem_map[(e, vef)] = np.append(
+                            global_shared_e_vef_p_to_elem_map[(e, vef)], np.array(hash_table_e[hash_key])
+                        )
+                        global_shared_e_vef_p_to_vef_map[(e, vef)] = np.append(
+                            global_shared_e_vef_p_to_vef_map[(e, vef)], np.array(hash_table_vef[hash_key])
+                        )
+                    else:
+                        global_shared_e_vef_p_to_rank_map[(e, vef)] = np.array(
+                            hash_table_rank[hash_key]
+                        )
+                        global_shared_e_vef_p_to_elem_map[(e, vef)] = np.array(
+                            hash_table_e[hash_key]
+                        )
+                        global_shared_e_vef_p_to_vef_map[(e, vef)] = np.array(
+                            hash_table_vef[hash_key]
+                        )
+
+        else:
+            # Loop through all my own incomplete element vertex pairs
+            for e_vef_pair in range(0, len(incomplete_e_vef_p_elem)):
+
+                # Check where my incomplete vertex pair coordinates match with the incomplete ...
+                # ... vertex pair coordinates of the other rank
+                e = incomplete_e_vef_p_elem[e_vef_pair]
+                vef = incomplete_e_vef_p_vef[e_vef_pair]
+                same_x = np.isclose(vef_coords[e, vef, 0], source_vef[:, 0], rtol=rtol)
+                same_y = np.isclose(vef_coords[e, vef, 1], source_vef[:, 1], rtol=rtol)
+                same_z = np.isclose(vef_coords[e, vef, 2], source_vef[:, 2], rtol=rtol)
+                same_vef = np.where(same_x & same_y & same_z)
+
+                # If we find a match assign it in the global dictionaries
+                if len(same_vef[0]) > 0:
+                    matching_id = same_vef[0]
+                    sources_list = (
+                        np.ones_like(source_incomplete_vef_id[source_idx][matching_id])
+                        * sources[source_idx]
                     )
-                    global_shared_e_vef_p_to_vertex_map[(e, vef)] = (
-                        source_incomplete_vef_id[source_idx][matching_id]
-                    )
+                    if (e, vef) in global_shared_e_vef_p_to_rank_map.keys():
+                        global_shared_e_vef_p_to_rank_map[(e, vef)] = np.append(
+                            global_shared_e_vef_p_to_rank_map[(e, vef)], sources_list
+                        )
+                        global_shared_e_vef_p_to_elem_map[(e, vef)] = np.append(
+                            global_shared_e_vef_p_to_elem_map[(e, vef)],
+                            source_incomplete_el_id[source_idx][matching_id],
+                        )
+                        global_shared_e_vef_p_to_vef_map[(e, vef)] = np.append(
+                            global_shared_e_vef_p_to_vef_map[(e, vef)],
+                            source_incomplete_vef_id[source_idx][matching_id],
+                        )
+                    else:
+                        global_shared_e_vef_p_to_rank_map[(e, vef)] = sources_list
+                        global_shared_e_vef_p_to_elem_map[(e, vef)] = (
+                            source_incomplete_el_id[source_idx][matching_id]
+                        )
+                        global_shared_e_vef_p_to_vef_map[(e, vef)] = (
+                            source_incomplete_vef_id[source_idx][matching_id]
+                        )
 
     return (
         global_shared_e_vef_p_to_rank_map,
         global_shared_e_vef_p_to_elem_map,
-        global_shared_e_vef_p_to_vertex_map,
+        global_shared_e_vef_p_to_vef_map,
     )
 
 
