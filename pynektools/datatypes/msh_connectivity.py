@@ -14,6 +14,9 @@ from .element_slicing import (
     edge_to_slice_map_2d,
     edge_to_slice_map_3d,
     facet_to_slice_map,
+    edge_to_vertex_map_2d,
+    edge_to_vertex_map_3d,
+    facet_to_vertex_map,
 )
 import sys
 
@@ -374,9 +377,11 @@ class MeshConnectivity:
         if msh.gdim == 2:
             vertex_to_slice_map = vertex_to_slice_map_2d
             edge_to_slice_map = edge_to_slice_map_2d
+            edge_to_vertex_map = edge_to_vertex_map_2d
         elif msh.gdim == 3:
             vertex_to_slice_map = vertex_to_slice_map_3d
             edge_to_slice_map = edge_to_slice_map_3d
+            edge_to_vertex_map = edge_to_vertex_map_3d
 
         if msh.gdim >= 1:
             self.log.write("info", "Adding vertices")
@@ -482,48 +487,38 @@ class MeshConnectivity:
                         my_edge_coord_z = msh.z[e, lz_index, ly_index, lx_index]
                         my_edge_data = np.copy(field[e, lz_index, ly_index, lx_index])
 
-                        # Compare coordinates excluding the vertices
-                        # For each of my data points
-                        for edge_point in range(1, my_edge_coord_x.shape[0] - 1):
-                            edge_point_x = my_edge_coord_x[edge_point]
-                            edge_point_y = my_edge_coord_y[edge_point]
-                            edge_point_z = my_edge_coord_z[edge_point]
+                        
+                        # Figure out if the edges are flipped.
+                        ## First find the vertices of my edge
+                        my_edge_vertices = edge_to_vertex_map[edge]
+                        ## Then find the vertices of the shared edges
+                        shared_edge_vertices = [edge_to_vertex_map[se] for se in shared_edges]
+                        ## Now create a list of how the vertices should match for them to be aligned
+                        vertex_matching_if_aligned = [((my_edge_vertices[0], shared_edge_vertex[0]), (my_edge_vertices[1], shared_edge_vertex[1])) for shared_edge_vertex in shared_edge_vertices]
 
-                            # For each element that shares edge data
-                            for sharing_elem in range(0, len(shared_elements)):
-                                sharing_elem_edge_coord_x = shared_edge_coord_x[
-                                    sharing_elem
-                                ]
-                                sharing_elem_edge_coord_y = shared_edge_coord_y[
-                                    sharing_elem
-                                ]
-                                sharing_elem_edge_coord_z = shared_edge_coord_z[
-                                    sharing_elem
-                                ]
 
-                                # Compare
-                                same_x = np.isclose(
-                                    edge_point_x,
-                                    sharing_elem_edge_coord_x,
-                                    rtol=self.rtol,
-                                )
-                                same_y = np.isclose(
-                                    edge_point_y,
-                                    sharing_elem_edge_coord_y,
-                                    rtol=self.rtol,
-                                )
-                                same_z = np.isclose(
-                                    edge_point_z,
-                                    sharing_elem_edge_coord_z,
-                                    rtol=self.rtol,
-                                )
-                                same_edge_point = np.where(same_x & same_y & same_z)
+                        ## Now check how they are actually aligned to see if they are flipped
+                        ### Find which are the shared vertices of my own edge vertices that are in each entry of shared element
+                        ### Note that in general, each vertex in one element will have 1 matching vertex in another... otherwise something is weird
+                        shared_vertex_idx_of_my_edge_vertex_0 = [self.local_shared_evp_to_vertex_map[(e, my_edge_vertices[0])][np.where(np.array(self.local_shared_evp_to_elem_map[(e, my_edge_vertices[0])]) == se)][0] for se in shared_elements]
+                        shared_vertex_idx_of_my_edge_vertex_1 = [self.local_shared_evp_to_vertex_map[(e, my_edge_vertices[1])][np.where(np.array(self.local_shared_evp_to_elem_map[(e, my_edge_vertices[1])]) == se)][0] for se in shared_elements]
+                        ### Create a list of actual vertex matching
+                        actual_vertex_matching = [((my_edge_vertices[0], int(shared_vertex_idx_of_my_edge_vertex_0[i])),(my_edge_vertices[1], int(shared_vertex_idx_of_my_edge_vertex_1[i]))) for i in range(len(shared_elements))]
 
-                                # Sum where a match is found
-                                if len(same_edge_point[0]) > 0:
-                                    my_edge_data[edge_point] += shared_edge_data[
-                                        sharing_elem
-                                    ][same_edge_point]
+                        ### Now compare, if they are not the same, then you must flip the edge data
+                        flip_edge = []
+                        for i in range(len(shared_elements)):
+                            if vertex_matching_if_aligned[i] != actual_vertex_matching[i]:
+                                flip_edge.append(True)
+                            else:
+                                flip_edge.append(False)
+
+                        # Sum the data
+                        for idx in range(0, len(shared_elements)):
+                            if flip_edge[idx]:
+                                shared_edge_data[idx] = np.flip(shared_edge_data[idx])
+                            
+                            my_edge_data += shared_edge_data[idx]
 
                         # Do not assing at the vertices
                         if lz_index == slice(None):

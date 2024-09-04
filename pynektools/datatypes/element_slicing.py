@@ -108,6 +108,12 @@ vertex_pair_to_edge_map_2d[(1, 0)] = 0  # Equivalent to bottom edge
 vertex_pair_to_edge_map_2d[(3, 2)] = 1  # Equivalent to top edge
 vertex_pair_to_edge_map_2d[(2, 0)] = 2  # Equivalent to left edge
 vertex_pair_to_edge_map_2d[(3, 1)] = 3  # Equivalent to right edge
+### We also have the edge to vertex map
+edge_to_vertex_map_2d = {"edge": ("vertex0", "vertex1")}
+edge_to_vertex_map_2d[0] = (0, 1)  # Equivalent to bottom edge
+edge_to_vertex_map_2d[1] = (2, 3)  # Equivalent to top edge
+edge_to_vertex_map_2d[2] = (0, 2)  # Equivalent to left edge
+edge_to_vertex_map_2d[3] = (1, 3)  # Equivalent to right edge
 
 ## For 3D we have edges
 edge_to_slice_map_3d = {"edge": ("lz", "ly", "lx")}
@@ -198,6 +204,20 @@ vertex_pair_to_edge_map_3d[(4, 0)] = 8  # Equivalent to front face left edge
 vertex_pair_to_edge_map_3d[(5, 1)] = 9  # Equivalent to front face right edge
 vertex_pair_to_edge_map_3d[(6, 2)] = 10  # Equivalent to back face left edge
 vertex_pair_to_edge_map_3d[(7, 3)] = 11  # Equivalent to back face right edge
+### We also have the edge to vertex map
+edge_to_vertex_map_3d = {"edge": ("vertex0", "vertex1")}
+edge_to_vertex_map_3d[0] = (0, 1)  # Equivalent to front face bottom edge
+edge_to_vertex_map_3d[1] = (2, 3)  # Equivalent to back face bottom edge
+edge_to_vertex_map_3d[2] = (0, 2)  # Equivalent to left face bottom edge
+edge_to_vertex_map_3d[3] = (1, 3)  # Equivalent to right face bottom edge
+edge_to_vertex_map_3d[4] = (4, 5)  # Equivalent to front face top edge
+edge_to_vertex_map_3d[5] = (6, 7)  # Equivalent to back face top edge
+edge_to_vertex_map_3d[6] = (4, 6)  # Equivalent to left face top edge
+edge_to_vertex_map_3d[7] = (5, 7)  # Equivalent to right face top edge
+edge_to_vertex_map_3d[8] = (0, 4)  # Equivalent to front face left edge
+edge_to_vertex_map_3d[9] = (1, 5)  # Equivalent to front face right edge
+edge_to_vertex_map_3d[10] = (2, 6)  # Equivalent to back face left edge
+edge_to_vertex_map_3d[11] = (3, 7)  # Equivalent to back face right edge
 
 ## For 3D and above we have facets
 facet_to_slice_map = {"facet": ("lz", "ly", "lx")}
@@ -231,6 +251,15 @@ facet_to_slice_map[5] = (
     slice(None),
     slice(None),
 )  # Equivalent to [-1, :, :] # Top facet
+### For 3D we can get facets from 4 pairs of vertices connected, 
+### each pair representing one axis of the 2D data facet data
+facet_to_vertex_map = {"facet": (("vertex0", "vertex1", "axis"), ("vertex2", "vertex3", "axis"), ("vertex4", "vertex5", "axis"), ("vertex6", "vertex7", "axis"))}
+facet_to_vertex_map[0] = ((0, 2, 1), (4, 6, 1), (0, 4, 0), (2, 6, 0))  # Equivalent to left facet
+facet_to_vertex_map[1] = ((1, 3, 1), (5, 7, 1), (1, 5, 0), (3, 7, 0))  # Equivalent to right facet
+facet_to_vertex_map[2] = ((0, 1, 1), (4, 5, 1), (0, 4, 0), (1, 5, 0))  # Equivalent to front facet
+facet_to_vertex_map[3] = ((2, 3, 1), (6, 7, 1), (2, 6, 0), (3, 7, 0))  # Equivalent to back facet
+facet_to_vertex_map[4] = ((0, 1, 1), (2, 3, 1), (0, 2, 0), (1, 3, 0))  # Equivalent to bottom facet
+facet_to_vertex_map[5] = ((4, 5, 1), (6, 7, 1), (4, 6, 0), (5, 7, 0))  # Equivalent to top facet
 
 
 def fetch_elem_vertex_data(
