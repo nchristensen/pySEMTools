@@ -12,7 +12,7 @@ def average_field_files(
     comm,
     field_index_name="",
     output_folder="./",
-    output_batch_t_len=50,
+    output_batch_t_len=50000,
     mesh_index="",
     dtype=np.single,
     rel_tol=0.05,
