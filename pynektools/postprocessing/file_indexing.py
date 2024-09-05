@@ -225,6 +225,8 @@ def index_files_from_folder(
     stat_start_time=0,
     output_folder="",
     file_type="",
+    include_time_interval: bool = True,
+    include_file_contents: bool = False,
 ):
     """
     Index files based on a folder.
@@ -345,27 +347,37 @@ def index_files_from_folder(
 
         # Determine the time from the header
         header = read_header(files[ftype][files_index[ftype]]["path"])
+        print(header.nb_vars)
         current_time = header.time
 
         files[ftype][files_index[ftype]]["time"] = current_time
 
         if files_index[ftype] == 0:
-            if "stat" in ftype or "mean" in ftype:
-                files[ftype][files_index[ftype]][
-                    "time_previous_output"
-                ] = stat_start_time
-            else:
-                files[ftype][files_index[ftype]][
-                    "time_previous_output"
-                ] = run_start_time
+            if include_time_interval:
+                if "stat" in ftype or "mean" in ftype:
+                    files[ftype][files_index[ftype]][
+                        "time_previous_output"
+                    ] = stat_start_time
+                else:
+                    files[ftype][files_index[ftype]][
+                        "time_previous_output"
+                    ] = run_start_time
         else:
-            files[ftype][files_index[ftype]]["time_previous_output"] = files[ftype][
-                files_index[ftype] - 1
-            ]["time"]
+            if include_time_interval:
+                files[ftype][files_index[ftype]]["time_previous_output"] = files[ftype][
+                    files_index[ftype] - 1
+                ]["time"]
 
-        files[ftype][files_index[ftype]]["time_interval"] = (
-            current_time - files[ftype][files_index[ftype]]["time_previous_output"]
-        )
+        if include_time_interval:
+            files[ftype][files_index[ftype]]["time_interval"] = (
+                current_time - files[ftype][files_index[ftype]]["time_previous_output"]
+            )
+        
+        if include_file_contents:
+            files[ftype][files_index[ftype]]["file_contents"] = {"mesh_fields" : header.nb_vars[0],
+                                                                 "velocity_fields" : header.nb_vars[1],
+                                                                 "pressure_fields" : header.nb_vars[2],
+                                                                 "scalar_fields" : header.nb_vars[3]}
 
         for key in files[ftype][files_index[ftype]].keys():
             logger.write("info", f"{key}: {files[ftype][files_index[ftype]][key]}")
