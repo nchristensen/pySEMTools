@@ -327,7 +327,11 @@ def index_files_from_folder(
     files_last_sample = {}
     for ftype in added_files:
         files[ftype] = dict()
-        files[ftype]["simulation_start_time"] = run_start_time
+        if include_time_interval:
+            if "stat" in ftype or "mean" in ftype:
+                files[ftype]["statistics_start_time"] = stat_start_time
+            else:
+                files[ftype]["simulation_start_time"] = run_start_time
         files_index[ftype] = 0
 
     for i, file_in_folder in enumerate(files_in_folder):
@@ -347,7 +351,6 @@ def index_files_from_folder(
 
         # Determine the time from the header
         header = read_header(files[ftype][files_index[ftype]]["path"])
-        print(header.nb_vars)
         current_time = header.time
 
         files[ftype][files_index[ftype]]["time"] = current_time
