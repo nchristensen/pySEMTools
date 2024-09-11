@@ -1351,6 +1351,7 @@ class Interpolator:
         self.my_err_code = source_err_code
         
         # Keep track of which there the probes that I sent
+        self.destinations = destinations
         self.local_probe_index_sent_to_destination = local_probe_index_sent_to_destination
 
 
@@ -1364,23 +1365,52 @@ class Interpolator:
 
         self.log.write("info", "Interpolating field from rst coordinates")
         self.log.tic()
-        # Probes info
-        probes_info = {}
-        probes_info["probes"] = self.my_probes
-        probes_info["probes_rst"] = self.my_probes_rst
-        probes_info["el_owner"] = self.my_el_owner
-        probes_info["err_code"] = self.my_err_code
 
-        # Settings
-        settings = {}
-        settings["progress_bar"] = self.progress_bar
+        if isinstance(self.my_probes, list):
+            # The inputs were distributed
+            # So we return a list with the sample fields for the points of each rank that sent data to this one
 
-        sampled_field_at_probe = self.ei.interpolate_field_from_rst(
-            probes_info,
-            interpolation_buffer=self.test_interp,
-            sampled_field=sampled_field,
-            settings=settings,
-        )
+            sampled_field_at_probe = []
+
+            for i in range(0, len(self.my_probes)):
+                probes_info = {}
+                probes_info["probes"] = self.my_probes[i]
+                probes_info["probes_rst"] = self.my_probes_rst[i]
+                probes_info["el_owner"] = self.my_el_owner[i]
+                probes_info["err_code"] = self.my_err_code[i]
+
+                settings = {}
+                settings["progress_bar"] = self.progress_bar
+
+                sampled_field_at_probe.append(
+                    self.ei.interpolate_field_from_rst(
+                        probes_info,
+                        interpolation_buffer=self.test_interp,
+                        sampled_field=sampled_field,
+                        settings=settings,
+                    )
+                )
+
+        else:
+            # The inputs were in rank 0
+
+            # Probes info
+            probes_info = {}
+            probes_info["probes"] = self.my_probes
+            probes_info["probes_rst"] = self.my_probes_rst
+            probes_info["el_owner"] = self.my_el_owner
+            probes_info["err_code"] = self.my_err_code
+
+            # Settings
+            settings = {}
+            settings["progress_bar"] = self.progress_bar
+
+            sampled_field_at_probe = self.ei.interpolate_field_from_rst(
+                probes_info,
+                interpolation_buffer=self.test_interp,
+                sampled_field=sampled_field,
+                settings=settings,
+            )
 
         self.log.toc()
 
