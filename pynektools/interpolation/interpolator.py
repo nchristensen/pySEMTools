@@ -389,6 +389,25 @@ class Interpolator:
         self.log.toc()
 
         return
+    
+    def assign_local_probe_partitions(self):
+        """If each rank has recieved a partition of the probes, assign them to the local variables"""
+
+        self.log.write("info", "Assigning local probe partitions")
+        self.log.tic()
+
+        self.probe_partition = self.probes
+        self.probe_rst_partition = self.probes_rst
+        self.el_owner_partition = self.el_owner
+        self.glb_el_owner_partition = self.glb_el_owner
+        self.rank_owner_partition = self.rank_owner
+        self.err_code_partition = self.err_code
+        self.test_pattern_partition = self.test_pattern
+
+        self.log.write("info", "done")
+        self.log.toc()
+
+        return
 
     def gather_probes_to_io_rank(self, io_rank, comm):
         """Gather the probes to the rank that is used to read them - rank0 by default"""
