@@ -3,9 +3,12 @@
 import json
 import csv
 import numpy as np
-from ..io.ppymech.neksuite import preadnek
+import os
+from ..io.ppymech.neksuite import preadnek, pynekread
 from .interpolator import Interpolator
 from ..monitoring.logger import Logger
+from typing import Union
+from ..datatypes.msh import Mesh
 
 NoneType = type(None)
 
@@ -125,20 +128,20 @@ class Probes:
     def __init__(
         self,
         comm,
-        filename=None,
-        probes=None,
-        msh=None,
-        write_coords=True,
-        progress_bar=False,
-        point_interpolator_type="single_point_legendre",
-        max_pts=128,
-        find_points_comm_pattern="point_to_point",
-        elem_percent_expansion=0.01,
-        global_tree_type="rank_bbox",
-        global_tree_nbins=1024,
-        use_autograd=False,
-        find_points_tol=np.finfo(np.double).eps * 10,
-        find_points_max_iter=50,
+        output_fname: str = "./interpolated_fields.csv",
+        probes: Union[np.ndarray, str] = None,
+        msh= Union[Mesh, str],
+        write_coords: bool =True,
+        progress_bar: bool =False,
+        point_interpolator_type: str ="single_point_legendre",
+        max_pts: int =128,
+        find_points_comm_pattern: str ="point_to_point",
+        elem_percent_expansion: float =0.01,
+        global_tree_type: str ="rank_bbox",
+        global_tree_nbins: int =1024,
+        use_autograd: bool =False,
+        find_points_tol: float =np.finfo(np.double).eps * 10,
+        find_points_max_iter: int =50,
     ):
 
         rank = comm.Get_rank()
@@ -147,71 +150,46 @@ class Probes:
         self.log.tic()
         self.log.write("info", "Initializing Probes object")
 
-        # Open input file
-        if not isinstance(filename, NoneType):
-
-            self.log.write("info", f"Reading input file: {filename}")
-
-            f = open(filename, "r")
-            params_file = json.loads(f.read())
-            params_file_str = json.dumps(params_file, indent=4)
-            f.close()
-            self.output_data = self.IoData(params_file["case"]["IO"]["output_data"])
-            self.params_file = params_file
-        else:
-
-            self.log.write("info", f"No input file provided. Using default values")
-
-            default_output = {}
-            default_output["dataPath"] = "./"
-            default_output["casename"] = "interpolated_fields.csv"
-            default_output["first_index"] = 0
-            self.output_data = self.IoData(default_output)
-
-        if isinstance(probes, NoneType):
-
-            self.probes_data = self.IoData(params_file["case"]["IO"]["probe_data"])
-            # Read probes
-            probe_fname = self.probes_data.dataPath + self.probes_data.casename
+        # Assign probes
+        self.distributed_probes = False
+        if isinstance(probes, np.ndarray) or isinstance(probes, NoneType):
             self.log.write(
-                "info", "Reading probes from {} in rank 0".format(probe_fname)
+                "info", "Probes provided as keyword argument"
             )
-            if rank == 0:
-                file = open(probe_fname)
-                self.probes = np.array(list(csv.reader(file)), dtype=np.double)
+            self.probes = probes
+
+            # Check if the probes are only in rank 0
+            if isinstance(probes, np.ndarray):
+                this_rank_has_probes_flag = 1
             else:
-                self.probes = None
-        else:
-            # Assign probes to the required shape
+                this_rank_has_probes_flag = 0
+     
+            flag_from_all_ranks = np.zeros((comm.Get_size()), dtype=np.int64)
+            flag_from_this_rank = (
+                np.ones((1), dtype=np.int64) * this_rank_has_probes_flag
+            )
+            comm.Allgather(
+                flag_from_this_rank, flag_from_all_ranks
+            )
+
+            if np.all(flag_from_all_ranks) == 1:
+                self.distributed_probes = True
+
             self.log.write(
-                "info", "Probes provided as keyword argument. Assigning in rank 0"
+                "info",
+                f"Input probes are distributed: {self.distributed_probes}",
             )
-            if rank == 0:
-                self.probes = probes
-            else:
-                self.probes = None
-
-        if isinstance(msh, NoneType):
-            # read mesh data
-
-            self.mesh_data = self.IoData(params_file["case"]["IO"]["mesh_data"])
-
-            msh_fld_fname = (
-                self.mesh_data.dataPath
-                + self.mesh_data.casename
-                + "0.f"
-                + str(self.mesh_data.index).zfill(5)
-            )
-            self.log.write("info", "Reading mesh from {}".format(msh_fld_fname))
-            mesh_data = preadnek(msh_fld_fname, comm)
-            self.x, self.y, self.z = get_coordinates_from_hexadata(mesh_data)
-            del mesh_data
-
         else:
+            raise ValueError("Probes must be provided as argument")
+
+        # Assign mesh data
+        if isinstance(msh, Mesh):
             self.log.write("info", "Mesh provided as keyword argument")
             self.x = msh.x
             self.y = msh.y
             self.z = msh.z
+        else:
+            raise ValueError("msh must be provided as argument")
 
         # Initialize the interpolator
         self.log.write("info", "Initializing interpolator")
@@ -237,8 +215,12 @@ class Probes:
         )
 
         # Scatter the probes to all ranks
-        self.log.write("info", "Scattering probes to all ranks")
-        self.itp.scatter_probes_from_io_rank(0, comm)
+        if self.distributed_probes:
+            self.log.write("info", "Assigning input probes to be a probe partition")
+            self.itp.assign_local_probe_partitions()
+        else:
+            self.log.write("info", "Scattering probes to all ranks")
+            self.itp.scatter_probes_from_io_rank(0, comm)
 
         # Find where the point in each rank should be
         self.log.write("info", "Finding points")
@@ -250,126 +232,36 @@ class Probes:
             max_iter=find_points_max_iter,
         )
 
-        # Gather probes to rank 0 again
-        self.log.write("info", "Gathering probes to rank 0 after search")
-        self.itp.gather_probes_to_io_rank(0, comm)
+        # Send points to the owners
+        if self.distributed_probes:
+            self.log.write("info", "Redistributing probes to found owners")
+            self.itp.redistribute_probes_to_owners()
+        else:
+            # Gather probes to rank 0 again
+            self.log.write("info", "Gathering probes to rank 0 after search")
+            self.itp.gather_probes_to_io_rank(0, comm)
 
-        # Redistribute the points
-        self.log.write("info", "Redistributing probes to found owners")
-        self.itp.redistribute_probes_to_owners_from_io_rank(0, comm)
+            # Redistribute the points
+            self.log.write("info", "Redistributing probes to found owners")
+            self.itp.redistribute_probes_to_owners_from_io_rank(0, comm)
 
-        self.output_fname = self.output_data.dataPath + self.output_data.casename
+        self.output_fname = output_fname
         if write_coords:
 
-            if rank == 0:
-                # Write the coordinates
-                ## Set up the header
-                field_type_list = None
-                field_index_list = None
-                if not isinstance(filename, NoneType):
-                    # Check if the keywords indicate that the interpolation is from file
-                    if (
-                        "case" in self.params_file
-                        and "interpolate_fields" in self.params_file["case"]
-                        and "field_type"
-                        in self.params_file["case"]["interpolate_fields"]
-                    ):
-                        field_type_list = self.params_file["case"][
-                            "interpolate_fields"
-                        ]["field_type"]
-                        field_index_list = self.params_file["case"][
-                            "interpolate_fields"
-                        ]["field"]
+            # Write the coordinates to a file 
+            if not self.distributed_probes:
+                if comm.Get_rank() == 0:
+                    write_coordinates(self, parallel=False)
+            else:
+                write_coordinates(self, parallel=True)
 
-                ## Create the header
-                if isinstance(field_type_list, NoneType) or isinstance(
-                    field_index_list, NoneType
-                ):
-                    header = [self.probes.shape[0], 0, 0]
-                else:
-                    header = [self.probes.shape[0], len(field_type_list)]
-                    for i in range(len(field_type_list)):
-                        header.append(f"{field_type_list[i]}{field_index_list[i]}")
-
-                ## Write the coordinates
-                self.log.write(
-                    "info", "Writing probe coordinates to {}".format(self.output_fname)
-                )
-                write_csv(self.output_fname, self.probes, "w", header=header)
-
-                # Write out a file with the points with warnings
-                indices = np.where(self.itp.err_code != 1)[0]
-                # Write the points with warnings in a json file
-                point_warning = {}
-                # point_warning["mesh_file_path"] = msh_fld_fname
-                point_warning["output_file_path"] = self.output_fname
-                i = 0
-                for point in indices:
-                    point_warning[i] = {}
-                    point_warning[i]["id"] = int(point)
-                    point_warning[i]["xyz"] = [
-                        float(self.itp.probes[point, 0]),
-                        float(self.itp.probes[point, 1]),
-                        float(self.itp.probes[point, 2]),
-                    ]
-                    point_warning[i]["rst"] = [
-                        float(self.itp.probes_rst[point, 0]),
-                        float(self.itp.probes_rst[point, 1]),
-                        float(self.itp.probes_rst[point, 2]),
-                    ]
-                    # point_warning[i]["local_el_owner"] = int(self.itp.el_owner[point])
-                    point_warning[i]["global_el_owner"] = int(
-                        self.itp.glb_el_owner[point]
-                    )
-                    point_warning[i]["error_code"] = int(self.itp.err_code[point])
-                    point_warning[i]["test_pattern"] = float(
-                        self.itp.test_pattern[point]
-                    )
-
-                    i += 1
-
-                params_file_str = json.dumps(point_warning, indent=4)
-                json_output_fname = (
-                    self.output_data.dataPath
-                    + "warning_points_"
-                    + self.output_data.casename[:-4]
-                    + ".json"
-                )
-                self.log.write(
-                    "info",
-                    "Writing points with warnings to {}".format(json_output_fname),
-                )
-                with open(json_output_fname, "w") as outfile:
-                    outfile.write(params_file_str)
-
-                nfound = len(np.where(self.itp.err_code == 1)[0])
-                nnotfound = len(np.where(self.itp.err_code == 0)[0])
-                nwarning = len(np.where(self.itp.err_code == -10)[0])
-                self.log.write(
-                    "info",
-                    f"Found {nfound} points, {nnotfound} not found, {nwarning} with warnings",
-                )
-
-                if nwarning > 0:
-                    self.log.write(
-                        "warning",
-                        "There are points with warnings. Check the warning file to see them (error code -10)",
-                    )
-                    self.log.write(
-                        "warning",
-                        "There are points with warnings. If test pattern is small, you can trust the interpolation",
-                    )
-
-                if nnotfound > 0:
-                    self.log.write(
-                        "error",
-                        "Some points were not found. Check the warning file to see them (error code 0)",
-                    )
-                    self.log.write(
-                        "error",
-                        "Some points were not found. The result from their interpolation will be 0",
-                    )
-
+            # Write the points with warnings
+            if not self.distributed_probes:
+                if comm.Get_rank() == 0:
+                    write_warnings(self, parallel=False)
+            else:
+                write_warnings(self, parallel=True)
+        
         ## init dummy variables
         self.fld_data = None
         self.list_of_fields = None
@@ -639,40 +531,6 @@ def get_coordinates_from_hexadata(data):
 
     return x, y, z
 
-
-def write_csv(fname, data, mode, header=None):
-    """write point positions to the file
-
-    Parameters
-    ----------
-    fname :
-
-    data :
-
-    mode :
-
-
-    Returns
-    -------
-
-    """
-
-    # string = "writing .csv file as " + fname
-    # print(string)
-
-    # open file
-    outfile = open(fname, mode)
-
-    writer = csv.writer(outfile)
-
-    if not isinstance(header, NoneType):
-        writer.writerow(header)
-
-    for il in range(data.shape[0]):
-        data_pos = data[il, :]
-        writer.writerow(data_pos)
-
-
 def get_field_from_hexadata(data, prefix, qoi):
     """Get field-like array from hexadata
 
@@ -713,3 +571,154 @@ def get_field_from_hexadata(data, prefix, qoi):
             field[e, :, :, :] = data.elem[e].scal[qoi, :, :, :]
 
     return field
+
+def write_coordinates(self, parallel=False):
+
+    # Write the coordinates
+    if self.output_fname.split(".")[-1] == "csv":
+        write_coordinates_csv(self, parallel)
+    else:
+        raise ValueError("Output file must be a csv file")
+
+def write_warnings(self, parallel=False):
+
+    # Write out a file with the points with warnings
+    indices = np.where(self.itp.err_code != 1)[0]
+    # Write the points with warnings in a json file
+    point_warning = {}
+    # point_warning["mesh_file_path"] = msh_fld_fname
+    point_warning["output_file_path"] = self.output_fname
+    i = 0
+    for point in indices:
+        point_warning[i] = {}
+        point_warning[i]["id"] = int(point)
+        point_warning[i]["xyz"] = [
+            float(self.itp.probes[point, 0]),
+            float(self.itp.probes[point, 1]),
+            float(self.itp.probes[point, 2]),
+        ]
+        point_warning[i]["rst"] = [
+            float(self.itp.probes_rst[point, 0]),
+            float(self.itp.probes_rst[point, 1]),
+            float(self.itp.probes_rst[point, 2]),
+        ]
+        # point_warning[i]["local_el_owner"] = int(self.itp.el_owner[point])
+        point_warning[i]["global_el_owner"] = int(
+            self.itp.glb_el_owner[point]
+        )
+        point_warning[i]["error_code"] = int(self.itp.err_code[point])
+        point_warning[i]["test_pattern"] = float(
+            self.itp.test_pattern[point]
+        )
+
+        i += 1
+    path = os.path.dirname(self.output_fname)
+    fname = os.path.basename(self.output_fname)
+    fname = fname.split(".")[0]
+
+    if not parallel:
+        params_file_str = json.dumps(point_warning, indent=4)
+        json_output_fname = (
+            f"{path}/warning_points_{fname}.json" 
+        )
+    else:
+        json_output_fname = (
+            f"{path}/warning_points_rank_{self.itp.rt.comm.Get_rank()}_{fname}.json"
+        )
+        params_file_str = json.dumps(point_warning, indent=4)
+
+    self.log.write(
+        "info",
+        "Writing points with warnings to {}".format(json_output_fname),
+    )
+    with open(json_output_fname, "w") as outfile:
+        outfile.write(params_file_str)
+
+    nfound = len(np.where(self.itp.err_code == 1)[0])
+    nnotfound = len(np.where(self.itp.err_code == 0)[0])
+    nwarning = len(np.where(self.itp.err_code == -10)[0])
+    self.log.write(
+        "info",
+        f"Found {nfound} points, {nnotfound} not found, {nwarning} with warnings",
+    )
+
+    if nwarning > 0:
+        self.log.write(
+            "warning",
+            "There are points with warnings. Check the warning file to see them (error code -10)",
+        )
+        self.log.write(
+            "warning",
+            "There are points with warnings. If test pattern is small, you can trust the interpolation",
+        )
+
+    if nnotfound > 0:
+        self.log.write(
+            "error",
+            "Some points were not found. Check the warning file to see them (error code 0)",
+        )
+        self.log.write(
+            "error",
+            "Some points were not found. The result from their interpolation will be 0",
+        )
+
+def write_coordinates_csv(self, parallel=True):
+
+    # Write the coordinates
+    ## Set up the header
+    field_type_list = None
+    field_index_list = None
+
+    ## Create the header
+    if isinstance(field_type_list, NoneType) or isinstance(
+        field_index_list, NoneType
+    ):
+        header = [self.probes.shape[0], 0, 0]
+    else:
+        header = [self.probes.shape[0], len(field_type_list)]
+        for i in range(len(field_type_list)):
+            header.append(f"{field_type_list[i]}{field_index_list[i]}")
+
+    ## Write the coordinates
+    self.log.write(
+        "info", "Writing probe coordinates to {}".format(self.output_fname)
+    )
+
+    if not parallel:
+        write_csv(self.output_fname, self.probes, "w", header=header)
+    else:
+        path = os.path.dirname(self.output_fname)
+        fname = os.path.basename(self.output_fname)
+        write_csv(f"{path}/rank_{self.itp.rt.comm.Get_rank()}_{fname}", self.itp.probes, "w", header=header)
+
+def write_csv(fname, data, mode, header=None):
+    """write point positions to the file
+
+    Parameters
+    ----------
+    fname :
+
+    data :
+
+    mode :
+
+
+    Returns
+    -------
+
+    """
+
+    # string = "writing .csv file as " + fname
+    # print(string)
+
+    # open file
+    outfile = open(fname, mode)
+
+    writer = csv.writer(outfile)
+
+    if not isinstance(header, NoneType):
+        writer.writerow(header)
+
+    for il in range(data.shape[0]):
+        data_pos = data[il, :]
+        writer.writerow(data_pos)
