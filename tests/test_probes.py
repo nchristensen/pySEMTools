@@ -32,7 +32,7 @@ def test_probes_msh_single():
     # Create a Coarser mesh to make it easier
     n_new = 3
     pref = PRefiner(n_old = msh_og.lx, n_new = n_new, dtype = ddtype)
-    msh = pref.get_new_mesh(comm, msh = msh_og)
+    msh = pref.create_refined_mesh(comm, msh = msh_og)
 
     log.write("info", "Creating mesh to interpolate")
     log.tic()
@@ -131,7 +131,7 @@ def test_probes_msh_double():
     # Create a Coarser mesh to make it easier
     n_new = 3
     pref = PRefiner(n_old = msh_og.lx, n_new = n_new, dtype = ddtype)
-    msh = pref.get_new_mesh(comm, msh = msh_og)
+    msh = pref.create_refined_mesh(comm, msh = msh_og)
 
     log.write("info", "Creating mesh to interpolate")
     log.tic()

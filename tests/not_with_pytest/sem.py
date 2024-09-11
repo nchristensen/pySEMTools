@@ -21,7 +21,7 @@ del data
 
 # Create a refined mesh
 pref = PRefiner(n_old = msh.lx, n_new = 10)
-msh_ref = pref.get_new_mesh(comm, msh = msh)
+msh_ref = pref.create_refined_mesh(comm, msh = msh)
 
 # Create the element interpolator for both meshes
 ei = element_interpolator_c(msh.lx)

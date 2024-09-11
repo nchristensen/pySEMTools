@@ -512,7 +512,7 @@ def write_fld_subdomain_from_list(
             pref = PRefiner(n_old=msh_sub.lx, n_new=p)
 
             # Get the new mesh
-            msh_sub = pref.get_new_mesh(write_comm, msh=msh_sub)
+            msh_sub = pref.create_refined_mesh(write_comm, msh=msh_sub)
 
             # Get the new fields
             for field in range(0, number_of_fields):

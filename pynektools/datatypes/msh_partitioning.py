@@ -120,8 +120,18 @@ class MeshPartitioner:
             "info",
             f"Partitioning the field object with {partitioning_algorithm} algorithm",
         )
+        
+        if isinstance(fld, FieldRegistry):
 
-        if isinstance(fld, Field):
+            partitioned_field = FieldRegistry(self.rt.comm)
+
+            for key in fld.registry.keys():
+                field_ = self.redistribute_field_elements(
+                        fld.registry[key], partitioning_algorithm
+                    )
+                partitioned_field.add_field(self.rt.comm, field_name=key, field=field_.copy(), dtype=field_.dtype)
+
+        elif isinstance(fld, Field):
 
             partitioned_field = FieldRegistry(self.rt.comm)
 
@@ -134,17 +144,6 @@ class MeshPartitioner:
      
             partitioned_field.t = fld.t
             partitioned_field.update_vars()
-        
-        elif isinstance(fld, FieldRegistry):
-
-            partitioned_field = FieldRegistry(self.rt.comm)
-
-            for key in fld.registry.keys():
-                field_ = self.redistribute_field_elements(
-                        fld.registry[key], partitioning_algorithm
-                    )
-                fld_ext.add_field(comm, field_name=key, field=field_.copy(), dtype=field_.dtype)
-
 
         self.log.write("info", "done")
 
