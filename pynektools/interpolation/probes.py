@@ -156,9 +156,13 @@ class Probes:
                 "info", "Probes provided as keyword argument"
             )
             self.probes = probes
+        elif isinstance(probes, str):
+            self.log.write(
+                "info", f"Reading probes from {probes}"
+            )
+            self.probes = read_probes(comm, probes)
         else: 
-            print("ERROR: Probes must be provided as a string, numpy array or None if the probes are not distributed") 
-            
+            print("ERROR: Probes must be provided as a string, numpy array or None if the probes are not distributed")  
             comm.Abort(1)
              
         # Check if the probes are distributed
@@ -203,6 +207,9 @@ class Probes:
             self.x = msh.x
             self.y = msh.y
             self.z = msh.z
+        elif isinstance(msh, str):
+            self.log.write("info", f"Reading mesh from {msh}")
+            self.x, self.y, self.z = read_mesh(comm, msh)
         else:
             raise ValueError("msh must be provided as argument")
 
@@ -806,3 +813,28 @@ def write_csv(fname, data, mode, header=None):
     for il in range(data.shape[0]):
         data_pos = data[il, :]
         writer.writerow(data_pos)
+
+def read_probes(comm, fname):
+
+    if fname.split(".")[-1] == "csv":
+        # For csv files, read in rank 0 only
+        if comm.Get_rank() == 0:
+            probes = read_probes_csv(fname)
+        else:
+            probes = None
+    else:
+        raise ValueError("Probes must be a csv file")
+
+    return probes
+
+def read_probes_csv(fname):
+    file = open(fname)
+    probes = np.array(list(csv.reader(file)), dtype=np.double)
+    return probes
+
+def read_mesh(comm, fname):
+
+    msh = Mesh(comm, create_connectivity=False)
+    pynekread(fname, comm, data_dtype=np.single, msh=msh)
+
+    return msh.x, msh.y, msh.z
