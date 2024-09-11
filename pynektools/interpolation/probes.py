@@ -642,7 +642,7 @@ def write_coordinates(self, parallel=False):
 def write_interpolated_data(self, parallel=False):
     
     if self.output_fname.split(".")[-1] == "csv":
-        write_interpolted_data_csv(self, parallel)
+        write_interpolated_data_csv(self, parallel)
     else:
         raise ValueError("Output file must be a csv file")
 
@@ -757,7 +757,7 @@ def write_coordinates_csv(self, parallel=True):
         fname = os.path.basename(self.output_fname)
         write_csv(f"{path}/rank_{self.itp.rt.comm.Get_rank()}_{fname}", self.itp.probes, "w", header=header)
 
-def write_interpolted_data_csv(self, parallel=True):
+def write_interpolated_data_csv(self, parallel=True):
 
     if not parallel:
 
