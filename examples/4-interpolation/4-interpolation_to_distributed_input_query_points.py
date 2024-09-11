@@ -1,3 +1,6 @@
+# In this example, we interpolate the same points in every rank, so this should not be done in practice
+# A proper for this, would have different points in each rank
+
 # Import required modules
 from mpi4py import MPI #equivalent to the use of MPI_init() in C
 import matplotlib.pyplot as plt
@@ -19,7 +22,8 @@ pynekread(fname, comm, data_dtype=np.double, msh=msh, fld=fld)
 import pynektools.interpolation.utils as interp_utils
 import pynektools.interpolation.pointclouds as pcs
 
-if comm.Get_rank() == 0 :
+#if comm.Get_rank() == 0 :
+if 0 == 0:
     # Generate the bounding box of the points
     x_bbox = [0, 0.05]
     y_bbox = [0, 2*np.pi]
@@ -46,7 +50,7 @@ if comm.Get_rank() == 0 :
         for i in range((xyz.shape[0])):
             f.write(f"{xyz[i][0]},{xyz[i][1]},{xyz[i][2]}\n")
 else:
-    xyz = 1
+    xyz = None
 
 from pynektools.interpolation.probes import Probes
 
