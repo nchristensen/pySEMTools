@@ -138,13 +138,20 @@ class PRefiner:
 class PMapper:
     """Class to map points from one point distribution to other."""
 
-    def __init__(self, n=8, distribution=["GLL", "GLL", "GLL"]):
+    def __init__(self, n=8, n_new = None, distribution=["GLL", "GLL", "GLL"]):
 
+        self.n_old = n
+        if type(n_new) is type(None):
+            self.n_new = n
+        else:
+            self.n_new = n_new
+        
         # Order of the element
-        self.n = n
+        self.n = self.n_new
 
         # Initialize the element interpolators
-        self.ei = element_interpolator_c(n)
+        self.ei = element_interpolator_c(self.n_old)        
+        self.ei_new = element_interpolator_c(self.n_new)
 
         # Define some dummy variables
         self.lx = None
@@ -156,28 +163,28 @@ class PMapper:
 
         # Select the distribution per direction
         if distribution[0] == "GLL":
-            self.r_dist = self.ei.x_gll
+            self.r_dist = self.ei_new.x_gll
         elif distribution[0] == "EQ":
-            self.r_dist = np.linspace(-1, 1, n)
+            self.r_dist = np.linspace(-1, 1, self.n_new)
 
         if distribution[1] == "GLL":
-            self.s_dist = self.ei.x_gll
+            self.s_dist = self.ei_new.x_gll
         elif distribution[1] == "EQ":
-            self.s_dist = np.linspace(-1, 1, n)
+            self.s_dist = np.linspace(-1, 1, self.n_new)
 
         if distribution[2] == "GLL":
-            self.t_dist = self.ei.x_gll
+            self.t_dist = self.ei_new.x_gll
         elif distribution[2] == "EQ":
-            self.t_dist = np.linspace(-1, 1, n)
+            self.t_dist = np.linspace(-1, 1, self.n_new)
 
     def create_mapped_mesh(self, comm, msh=None):
         """Obtained refined/coarsened mesh"""
 
         # See the points per element in the new mesh
-        self.lx = self.n
-        self.ly = self.n
+        self.lx = self.n_new
+        self.ly = self.n_new
         if msh.lz > 1:
-            self.lz = self.n
+            self.lz = self.n_new
         self.nelv = msh.nelv
 
         # Allocate the new coordinates
