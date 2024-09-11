@@ -130,18 +130,18 @@ class Probes:
         comm,
         output_fname: str = "./interpolated_fields.csv",
         probes: Union[np.ndarray, str] = None,
-        msh= Union[Mesh, str],
-        write_coords: bool =True,
-        progress_bar: bool =False,
-        point_interpolator_type: str ="single_point_legendre",
-        max_pts: int =128,
-        find_points_comm_pattern: str ="point_to_point",
-        elem_percent_expansion: float =0.01,
-        global_tree_type: str ="rank_bbox",
-        global_tree_nbins: int =1024,
-        use_autograd: bool =False,
-        find_points_tol: float =np.finfo(np.double).eps * 10,
-        find_points_max_iter: int =50,
+        msh=Union[Mesh, str],
+        write_coords: bool = True,
+        progress_bar: bool = False,
+        point_interpolator_type: str = "single_point_legendre",
+        max_pts: int = 128,
+        find_points_comm_pattern: str = "point_to_point",
+        elem_percent_expansion: float = 0.01,
+        global_tree_type: str = "rank_bbox",
+        global_tree_nbins: int = 1024,
+        use_autograd: bool = False,
+        find_points_tol: float = np.finfo(np.double).eps * 10,
+        find_points_max_iter: int = 50,
     ):
 
         rank = comm.Get_rank()
@@ -152,33 +152,27 @@ class Probes:
 
         # Assign probes
         if isinstance(probes, np.ndarray) or isinstance(probes, NoneType):
-            self.log.write(
-                "info", "Probes provided as keyword argument"
-            )
+            self.log.write("info", "Probes provided as keyword argument")
             self.probes = probes
         elif isinstance(probes, str):
-            self.log.write(
-                "info", f"Reading probes from {probes}"
-            )
+            self.log.write("info", f"Reading probes from {probes}")
             self.probes = read_probes(comm, probes)
-        else: 
-            print("ERROR: Probes must be provided as a string, numpy array or None if the probes are not distributed")  
+        else:
+            print(
+                "ERROR: Probes must be provided as a string, numpy array or None if the probes are not distributed"
+            )
             comm.Abort(1)
-             
+
         # Check if the probes are distributed
         self.distributed_probes = False
         if isinstance(probes, np.ndarray):
             this_rank_has_probes_flag = 1
         else:
             this_rank_has_probes_flag = 0
-    
+
         flag_from_all_ranks = np.zeros((comm.Get_size()), dtype=np.int64)
-        flag_from_this_rank = (
-            np.ones((1), dtype=np.int64) * this_rank_has_probes_flag
-        )
-        comm.Allgather(
-            flag_from_this_rank, flag_from_all_ranks
-        )
+        flag_from_this_rank = np.ones((1), dtype=np.int64) * this_rank_has_probes_flag
+        comm.Allgather(flag_from_this_rank, flag_from_all_ranks)
 
         if np.all(flag_from_all_ranks) == 1 and comm.Get_size() > 1:
             self.distributed_probes = True
@@ -270,7 +264,7 @@ class Probes:
         self.output_fname = output_fname
         if write_coords:
 
-            # Write the coordinates to a file 
+            # Write the coordinates to a file
             if not self.distributed_probes:
                 if comm.Get_rank() == 0:
                     write_coordinates(self, parallel=False)
@@ -283,7 +277,7 @@ class Probes:
                     write_warnings(self, parallel=False)
             else:
                 write_warnings(self, parallel=True)
-        
+
         ## init dummy variables
         self.fld_data = None
         self.list_of_fields = None
@@ -471,7 +465,7 @@ class Probes:
 
         self.number_of_fields = len(field_list)
 
-        # If the probes are distributed, each rank interpolate the point that it owns physically, 
+        # If the probes are distributed, each rank interpolate the point that it owns physically,
         # and the sends the data to the rank were the probe was given as an input
         if self.distributed_probes:
 
@@ -484,7 +478,10 @@ class Probes:
             my_interpolated_fields = []
             for i in range(0, len(self.itp.my_probes)):
                 my_interpolated_fields.append(
-                    np.zeros((self.itp.my_probes[i].shape[0], self.number_of_fields + 1), dtype=np.double)
+                    np.zeros(
+                        (self.itp.my_probes[i].shape[0], self.number_of_fields + 1),
+                        dtype=np.double,
+                    )
                 )
                 my_interpolated_fields[i][:, 0] = t
 
@@ -494,32 +491,42 @@ class Probes:
                 field = field_list[i]
 
                 self.log.write("info", f"Interpolating field {i}")
-                
+
                 interpolated_fields_from_sources = self.itp.interpolate_field_from_rst(
                     field
                 )[:]
 
                 # Put this interpolated field on the right place in the buffer for each rank that sent me data
                 for j in range(0, len(self.itp.my_probes)):
-                    my_interpolated_fields[j][:, i + 1] = interpolated_fields_from_sources[j]
+                    my_interpolated_fields[j][:, i + 1] = (
+                        interpolated_fields_from_sources[j]
+                    )
 
             # Send the data back to the ranks that sent me the probes
-            sources, interpolated_data = self.itp.rt.all_to_all(destination=self.itp.my_sources, data= my_interpolated_fields, dtype=my_interpolated_fields[0].dtype)
+            sources, interpolated_data = self.itp.rt.all_to_all(
+                destination=self.itp.my_sources,
+                data=my_interpolated_fields,
+                dtype=my_interpolated_fields[0].dtype,
+            )
             # reshape the data
             for i in range(0, len(sources)):
-                interpolated_data[i] = interpolated_data[i].reshape(-1, self.number_of_fields + 1)
+                interpolated_data[i] = interpolated_data[i].reshape(
+                    -1, self.number_of_fields + 1
+                )
 
-            
             for i in range(0, len(sources)):
-                self.interpolated_fields[self.itp.local_probe_index_sent_to_destination[i]] = interpolated_data[list(sources).index(self.itp.destinations[i])][:]
+                self.interpolated_fields[
+                    self.itp.local_probe_index_sent_to_destination[i]
+                ] = interpolated_data[list(sources).index(self.itp.destinations[i])][:]
 
         # If the probes were given in rank 0, then each rank interpolates the points that it owns physically
-        # and then send them to rank 0 to be processed further 
+        # and then send them to rank 0 to be processed further
         else:
 
             # Allocate interpolated fields
             self.my_interpolated_fields = np.zeros(
-                (self.itp.my_probes.shape[0], self.number_of_fields + 1), dtype=np.double
+                (self.itp.my_probes.shape[0], self.number_of_fields + 1),
+                dtype=np.double,
             )
             if comm.Get_rank() == 0:
                 self.interpolated_fields = np.zeros(
@@ -535,9 +542,9 @@ class Probes:
             for field in field_list:
 
                 self.log.write("info", f"Interpolating field {i}")
-                self.my_interpolated_fields[:, i + 1] = self.itp.interpolate_field_from_rst(
-                    field
-                )[:]
+                self.my_interpolated_fields[:, i + 1] = (
+                    self.itp.interpolate_field_from_rst(field)[:]
+                )
 
                 i += 1
 
@@ -570,6 +577,7 @@ class Probes:
             else:
                 write_interpolated_data(self, parallel=True)
 
+
 def get_coordinates_from_hexadata(data):
     """Get the coordinates from a hexadata object
 
@@ -598,6 +606,7 @@ def get_coordinates_from_hexadata(data):
         z[e, :, :, :] = data.elem[e].pos[2, :, :, :]
 
     return x, y, z
+
 
 def get_field_from_hexadata(data, prefix, qoi):
     """Get field-like array from hexadata
@@ -640,6 +649,7 @@ def get_field_from_hexadata(data, prefix, qoi):
 
     return field
 
+
 def write_coordinates(self, parallel=False):
 
     # Write the coordinates
@@ -648,12 +658,14 @@ def write_coordinates(self, parallel=False):
     else:
         raise ValueError("Output file must be a csv file")
 
+
 def write_interpolated_data(self, parallel=False):
-    
+
     if self.output_fname.split(".")[-1] == "csv":
         write_interpolated_data_csv(self, parallel)
     else:
         raise ValueError("Output file must be a csv file")
+
 
 def write_warnings(self, parallel=False):
 
@@ -678,13 +690,9 @@ def write_warnings(self, parallel=False):
             float(self.itp.probes_rst[point, 2]),
         ]
         # point_warning[i]["local_el_owner"] = int(self.itp.el_owner[point])
-        point_warning[i]["global_el_owner"] = int(
-            self.itp.glb_el_owner[point]
-        )
+        point_warning[i]["global_el_owner"] = int(self.itp.glb_el_owner[point])
         point_warning[i]["error_code"] = int(self.itp.err_code[point])
-        point_warning[i]["test_pattern"] = float(
-            self.itp.test_pattern[point]
-        )
+        point_warning[i]["test_pattern"] = float(self.itp.test_pattern[point])
 
         i += 1
     path = os.path.dirname(self.output_fname)
@@ -693,9 +701,7 @@ def write_warnings(self, parallel=False):
 
     if not parallel:
         params_file_str = json.dumps(point_warning, indent=4)
-        json_output_fname = (
-            f"{path}/warning_points_{fname}.json" 
-        )
+        json_output_fname = f"{path}/warning_points_{fname}.json"
     else:
         json_output_fname = (
             f"{path}/warning_points_rank_{self.itp.rt.comm.Get_rank()}_{fname}.json"
@@ -737,6 +743,7 @@ def write_warnings(self, parallel=False):
             "Some points were not found. The result from their interpolation will be 0",
         )
 
+
 def write_coordinates_csv(self, parallel=True):
 
     # Write the coordinates
@@ -745,9 +752,7 @@ def write_coordinates_csv(self, parallel=True):
     field_index_list = None
 
     ## Create the header
-    if isinstance(field_type_list, NoneType) or isinstance(
-        field_index_list, NoneType
-    ):
+    if isinstance(field_type_list, NoneType) or isinstance(field_index_list, NoneType):
         header = [self.probes.shape[0], 0, 0]
     else:
         header = [self.probes.shape[0], len(field_type_list)]
@@ -755,31 +760,36 @@ def write_coordinates_csv(self, parallel=True):
             header.append(f"{field_type_list[i]}{field_index_list[i]}")
 
     ## Write the coordinates
-    self.log.write(
-        "info", "Writing probe coordinates to {}".format(self.output_fname)
-    )
+    self.log.write("info", "Writing probe coordinates to {}".format(self.output_fname))
 
     if not parallel:
         write_csv(self.output_fname, self.probes, "w", header=header)
     else:
         path = os.path.dirname(self.output_fname)
         fname = os.path.basename(self.output_fname)
-        write_csv(f"{path}/rank_{self.itp.rt.comm.Get_rank()}_{fname}", self.itp.probes, "w", header=header)
+        write_csv(
+            f"{path}/rank_{self.itp.rt.comm.Get_rank()}_{fname}",
+            self.itp.probes,
+            "w",
+            header=header,
+        )
+
 
 def write_interpolated_data_csv(self, parallel=True):
 
     if not parallel:
 
-        self.log.write(
-            "info", f"Writing interpolated fields to {self.output_fname}"
-        )
+        self.log.write("info", f"Writing interpolated fields to {self.output_fname}")
         write_csv(self.output_fname, self.interpolated_fields, "a")
 
     else:
         path = os.path.dirname(self.output_fname)
         fname = os.path.basename(self.output_fname)
-        write_csv(f"{path}/rank_{self.itp.rt.comm.Get_rank()}_{fname}", self.interpolated_fields, "a")
-
+        write_csv(
+            f"{path}/rank_{self.itp.rt.comm.Get_rank()}_{fname}",
+            self.interpolated_fields,
+            "a",
+        )
 
 
 def write_csv(fname, data, mode, header=None):
@@ -814,6 +824,7 @@ def write_csv(fname, data, mode, header=None):
         data_pos = data[il, :]
         writer.writerow(data_pos)
 
+
 def read_probes(comm, fname):
 
     if fname.split(".")[-1] == "csv":
@@ -827,10 +838,12 @@ def read_probes(comm, fname):
 
     return probes
 
+
 def read_probes_csv(fname):
     file = open(fname)
     probes = np.array(list(csv.reader(file)), dtype=np.double)
     return probes
+
 
 def read_mesh(comm, fname):
 

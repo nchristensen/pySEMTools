@@ -389,13 +389,13 @@ class Interpolator:
         self.log.toc()
 
         return
-    
+
     def assign_local_probe_partitions(self):
         """If each rank has recieved a partition of the probes, assign them to the local variables"""
 
         self.log.write("info", "Assigning local probe partitions")
         self.log.tic()
-        
+
         # Set the necesary arrays for identification of point
         number_of_points = self.probes.shape[0]
         self.probes_rst = np.zeros((number_of_points, 3), dtype=np.double)
@@ -1183,7 +1183,7 @@ class Interpolator:
 
         self.log.write("info", "Scattering probes")
         self.log.tic()
-        
+
         rank = comm.Get_rank()
         size = comm.Get_size()
 
@@ -1274,17 +1274,17 @@ class Interpolator:
         self.log.toc()
 
         return
-    
+
     def redistribute_probes_to_owners(self):
         """Redistribute the probes to the ranks that
         have been determined in the search"""
 
         self.log.write("info", "Redistributing probes to owners")
         self.log.tic()
-        
+
         # Assing the partitions
-        self.probes[:,:] = self.probe_partition[:,:]
-        self.probes_rst[:,:] = self.probe_rst_partition[:,:]
+        self.probes[:, :] = self.probe_partition[:, :]
+        self.probes_rst[:, :] = self.probe_rst_partition[:, :]
         self.el_owner[:] = self.el_owner_partition[:]
         self.glb_el_owner[:] = self.glb_el_owner_partition[:]
         self.rank_owner[:] = self.rank_owner_partition[:]
@@ -1299,20 +1299,21 @@ class Interpolator:
         err_code = self.err_code_partition
         local_probe_index = np.arange(0, probes.shape[0], dtype=np.int64)
 
-
         # Prepare the send buffers
         destinations = []
-        local_probe_index_sent_to_destination = []        
+        local_probe_index_sent_to_destination = []
         probe_data = []
         probe_rst_data = []
         el_owner_data = []
         rank_owner_data = []
-        err_code_data = [] 
+        err_code_data = []
         for rank in range(0, self.rt.comm.Get_size()):
             probes_to_send_to_this_rank = np.where(rank_owner == rank)[0]
             if probes_to_send_to_this_rank.size > 0:
                 destinations.append(rank)
-                local_probe_index_sent_to_destination.append(local_probe_index[probes_to_send_to_this_rank])
+                local_probe_index_sent_to_destination.append(
+                    local_probe_index[probes_to_send_to_this_rank]
+                )
                 probe_data.append(probes[probes_to_send_to_this_rank])
                 probe_rst_data.append(probes_rst[probes_to_send_to_this_rank])
                 el_owner_data.append(el_owner[probes_to_send_to_this_rank])
@@ -1330,7 +1331,9 @@ class Interpolator:
             destination=destinations, data=el_owner_data, dtype=el_owner_data[0].dtype
         )
         _, source_rank_owner = self.rt.all_to_all(
-            destination=destinations, data=rank_owner_data, dtype=rank_owner_data[0].dtype
+            destination=destinations,
+            data=rank_owner_data,
+            dtype=rank_owner_data[0].dtype,
         )
         _, source_err_code = self.rt.all_to_all(
             destination=destinations, data=err_code_data, dtype=err_code_data[0].dtype
@@ -1339,7 +1342,9 @@ class Interpolator:
         # Then reshape the data form the probes
         for source_index in range(0, len(sources)):
             source_probes[source_index] = source_probes[source_index].reshape(-1, 3)
-            source_probes_rst[source_index] = source_probes_rst[source_index].reshape(-1, 3)
+            source_probes_rst[source_index] = source_probes_rst[source_index].reshape(
+                -1, 3
+            )
 
         # Now simply assign the data.
         # These are the probes tha I own from each of those sources
@@ -1349,11 +1354,12 @@ class Interpolator:
         self.my_el_owner = source_el_owner
         self.my_rank_owner = source_rank_owner
         self.my_err_code = source_err_code
-        
+
         # Keep track of which there the probes that I sent
         self.destinations = destinations
-        self.local_probe_index_sent_to_destination = local_probe_index_sent_to_destination
-
+        self.local_probe_index_sent_to_destination = (
+            local_probe_index_sent_to_destination
+        )
 
         self.log.write("info", "done")
         self.log.toc()
