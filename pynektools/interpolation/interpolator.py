@@ -1282,6 +1282,15 @@ class Interpolator:
         self.log.write("info", "Redistributing probes to owners")
         self.log.tic()
         
+        # Assing the partitions
+        self.probes[:,:] = self.probe_partition[:,:]
+        self.probes_rst[:,:] = self.probe_rst_partition[:,:]
+        self.el_owner[:] = self.el_owner_partition[:]
+        self.glb_el_owner[:] = self.glb_el_owner_partition[:]
+        self.rank_owner[:] = self.rank_owner_partition[:]
+        self.err_code[:] = self.err_code_partition[:]
+        self.test_pattern[:] = self.test_pattern_partition[:]
+
         # Rename some of the variables
         probes = self.probe_partition
         probes_rst = self.probe_rst_partition
@@ -1336,7 +1345,7 @@ class Interpolator:
         # These are the probes tha I own from each of those sources
         self.my_sources = sources
         self.my_probes = source_probes
-        self.my_probes = source_probes_rst
+        self.my_probes_rst = source_probes_rst
         self.my_el_owner = source_el_owner
         self.my_rank_owner = source_rank_owner
         self.my_err_code = source_err_code
