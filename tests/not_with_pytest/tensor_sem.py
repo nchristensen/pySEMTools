@@ -33,7 +33,7 @@ def test_sem_and_tensor_sem(n_new = 8, elem = 1, max_pts = 1, use_torch = False,
     # Create a refined mesh
     n_new = n_new
     pref = PRefiner(n_old = msh.lx, n_new = n_new)
-    msh_ref = pref.get_new_mesh(comm, msh = msh)
+    msh_ref = pref.create_refined_mesh(comm, msh = msh)
 
     # Create the element interpolator for both meshes
     ei = element_interpolator_c(msh.lx)
