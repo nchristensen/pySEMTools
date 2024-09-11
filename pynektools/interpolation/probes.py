@@ -151,36 +151,49 @@ class Probes:
         self.log.write("info", "Initializing Probes object")
 
         # Assign probes
-        self.distributed_probes = False
         if isinstance(probes, np.ndarray) or isinstance(probes, NoneType):
             self.log.write(
                 "info", "Probes provided as keyword argument"
             )
             self.probes = probes
-
-            # Check if the probes are only in rank 0
-            if isinstance(probes, np.ndarray):
-                this_rank_has_probes_flag = 1
-            else:
-                this_rank_has_probes_flag = 0
-     
-            flag_from_all_ranks = np.zeros((comm.Get_size()), dtype=np.int64)
-            flag_from_this_rank = (
-                np.ones((1), dtype=np.int64) * this_rank_has_probes_flag
-            )
-            comm.Allgather(
-                flag_from_this_rank, flag_from_all_ranks
-            )
-
-            if np.all(flag_from_all_ranks) == 1:
-                self.distributed_probes = True
-
-            self.log.write(
-                "info",
-                f"Input probes are distributed: {self.distributed_probes}",
-            )
         else:
             raise ValueError("Probes must be provided as argument")
+
+        # Check if the probes are distributed
+        self.distributed_probes = False
+        if isinstance(probes, np.ndarray):
+            this_rank_has_probes_flag = 1
+        else:
+            this_rank_has_probes_flag = 0
+    
+        flag_from_all_ranks = np.zeros((comm.Get_size()), dtype=np.int64)
+        flag_from_this_rank = (
+            np.ones((1), dtype=np.int64) * this_rank_has_probes_flag
+        )
+        comm.Allgather(
+            flag_from_this_rank, flag_from_all_ranks
+        )
+
+        if np.all(flag_from_all_ranks) == 1 and comm.Get_size() > 1:
+            self.distributed_probes = True
+
+        self.log.write(
+            "info",
+            f"Input probes are distributed: {self.distributed_probes}",
+        )
+        if self.distributed_probes:
+            self.log.write(
+                "warning",
+                "Probes are distributed, all the points input to all ranks will be processed",
+            )
+            self.log.write(
+                "warning",
+                "If you are passing the same points in all ranks, you are replicating data AND interpolating the same point multiple times",
+            )
+            self.log.write(
+                "warning",
+                "If all ranks have the same points, then pass probes=None in all ranks but 0",
+            )
 
         # Assign mesh data
         if isinstance(msh, Mesh):
@@ -449,58 +462,104 @@ class Probes:
 
         self.number_of_fields = len(field_list)
 
-        # Allocate interpolated fields
-        self.my_interpolated_fields = np.zeros(
-            (self.itp.my_probes.shape[0], self.number_of_fields + 1), dtype=np.double
-        )
-        if comm.Get_rank() == 0:
+        # If the probes are distributed, each rank interpolate the point that it owns physically, 
+        # and the sends the data to the rank were the probe was given as an input
+        if self.distributed_probes:
+
+            # Allocate buffer that keeps the interpolated fields of the points that were input in this rank
             self.interpolated_fields = np.zeros(
                 (self.probes.shape[0], self.number_of_fields + 1), dtype=np.double
             )
+
+            # Allocate buffer to keeps the interpolated fields of the points that were sent by other ranks
+            my_interpolated_fields = []
+            for i in range(0, len(self.itp.my_probes)):
+                my_interpolated_fields.append(
+                    np.zeros((self.itp.my_probes[i].shape[0], self.number_of_fields + 1), dtype=np.double)
+                )
+                my_interpolated_fields[i][:, 0] = t
+
+            # Interpolate each of the fields in the list for all sources
+            for i in range(0, self.number_of_fields):
+
+                field = field_list[i]
+
+                self.log.write("info", f"Interpolating field {i}")
+                
+                interpolated_fields_from_sources = self.itp.interpolate_field_from_rst(
+                    field
+                )[:]
+
+                # Put this interpolated field on the right place in the buffer for each rank that sent me data
+                for j in range(0, len(self.itp.my_probes)):
+                    my_interpolated_fields[j][:, i + 1] = interpolated_fields_from_sources[j]
+
+            # Send the data back to the ranks that sent me the probes
+            sources, interpolated_data = self.itp.rt.all_to_all(destination=self.itp.my_sources, data= my_interpolated_fields, dtype=my_interpolated_fields[0].dtype)
+            # reshape the data
+            for i in range(0, len(sources)):
+                interpolated_data[i] = interpolated_data[i].reshape(-1, self.number_of_fields + 1)
+
+            
+            for i in range(0, len(sources)):
+                self.interpolated_fields[self.itp.local_probe_index_sent_to_destination[i]] = interpolated_data[list(sources).index(self.itp.destinations[i])][:]
+
+        # If the probes were given in rank 0, then each rank interpolates the points that it owns physically
+        # and then send them to rank 0 to be processed further 
         else:
-            self.interpolated_fields = None
 
-        # Set the time
-        self.my_interpolated_fields[:, 0] = t
-
-        i = 0
-        for field in field_list:
-
-            self.log.write("info", f"Interpolating field {i}")
-            self.my_interpolated_fields[:, i + 1] = self.itp.interpolate_field_from_rst(
-                field
-            )[:]
-
-            i += 1
-
-        # Gather in rank zero for processing
-        root = 0
-        sendbuf = self.my_interpolated_fields.reshape(
-            (self.my_interpolated_fields.size)
-        )
-        recvbuf, _ = self.itp.rt.gather_in_root(sendbuf, root, np.double)
-
-        if not isinstance(recvbuf, NoneType):
-            tmp = recvbuf.reshape(
-                (
-                    int(recvbuf.size / (self.number_of_fields + 1)),
-                    self.number_of_fields + 1,
-                )
+            # Allocate interpolated fields
+            self.my_interpolated_fields = np.zeros(
+                (self.itp.my_probes.shape[0], self.number_of_fields + 1), dtype=np.double
             )
-            # IMPORTANT - After gathering, remember to sort to the way that it should
-            #  be in rank zero to write values out
-            # (See the scattering routine if you forget this)
-            # The reason for this is that to scatter we need the data to be contigous.
-            # You sort to make sure that the data from each rank is grouped.
-            self.interpolated_fields[self.itp.sort_by_rank] = tmp
-
-            # Write data in the csv file
-            if write_data:
-                self.log.write(
-                    "info", f"Writing interpolated fields to {self.output_fname}"
+            if comm.Get_rank() == 0:
+                self.interpolated_fields = np.zeros(
+                    (self.probes.shape[0], self.number_of_fields + 1), dtype=np.double
                 )
-                write_csv(self.output_fname, self.interpolated_fields, "a")
+            else:
+                self.interpolated_fields = None
 
+            # Set the time
+            self.my_interpolated_fields[:, 0] = t
+
+            i = 0
+            for field in field_list:
+
+                self.log.write("info", f"Interpolating field {i}")
+                self.my_interpolated_fields[:, i + 1] = self.itp.interpolate_field_from_rst(
+                    field
+                )[:]
+
+                i += 1
+
+            # Gather in rank zero for processing
+            root = 0
+            sendbuf = self.my_interpolated_fields.reshape(
+                (self.my_interpolated_fields.size)
+            )
+            recvbuf, _ = self.itp.rt.gather_in_root(sendbuf, root, np.double)
+
+            if not isinstance(recvbuf, NoneType):
+                tmp = recvbuf.reshape(
+                    (
+                        int(recvbuf.size / (self.number_of_fields + 1)),
+                        self.number_of_fields + 1,
+                    )
+                )
+                # IMPORTANT - After gathering, remember to sort to the way that it should
+                #  be in rank zero to write values out
+                # (See the scattering routine if you forget this)
+                # The reason for this is that to scatter we need the data to be contigous.
+                # You sort to make sure that the data from each rank is grouped.
+                self.interpolated_fields[self.itp.sort_by_rank] = tmp
+
+        # Write the data
+        if write_data:
+            if not self.distributed_probes:
+                if comm.Get_rank() == 0:
+                    write_interpolated_data(self, parallel=False)
+            else:
+                write_interpolated_data(self, parallel=True)
 
 def get_coordinates_from_hexadata(data):
     """Get the coordinates from a hexadata object
@@ -577,6 +636,13 @@ def write_coordinates(self, parallel=False):
     # Write the coordinates
     if self.output_fname.split(".")[-1] == "csv":
         write_coordinates_csv(self, parallel)
+    else:
+        raise ValueError("Output file must be a csv file")
+
+def write_interpolated_data(self, parallel=False):
+    
+    if self.output_fname.split(".")[-1] == "csv":
+        write_interpolted_data_csv(self, parallel)
     else:
         raise ValueError("Output file must be a csv file")
 
@@ -690,6 +756,22 @@ def write_coordinates_csv(self, parallel=True):
         path = os.path.dirname(self.output_fname)
         fname = os.path.basename(self.output_fname)
         write_csv(f"{path}/rank_{self.itp.rt.comm.Get_rank()}_{fname}", self.itp.probes, "w", header=header)
+
+def write_interpolted_data_csv(self, parallel=True):
+
+    if not parallel:
+
+        self.log.write(
+            "info", f"Writing interpolated fields to {self.output_fname}"
+        )
+        write_csv(self.output_fname, self.interpolated_fields, "a")
+
+    else:
+        path = os.path.dirname(self.output_fname)
+        fname = os.path.basename(self.output_fname)
+        write_csv(f"{path}/rank_{self.itp.rt.comm.Get_rank()}_{fname}", self.interpolated_fields, "a")
+
+
 
 def write_csv(fname, data, mode, header=None):
     """write point positions to the file
