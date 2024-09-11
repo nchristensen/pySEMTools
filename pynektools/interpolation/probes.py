@@ -156,9 +156,11 @@ class Probes:
                 "info", "Probes provided as keyword argument"
             )
             self.probes = probes
-        else:
-            raise ValueError("Probes must be provided as argument")
-
+        else: 
+            print("ERROR: Probes must be provided as a string, numpy array or None if the probes are not distributed") 
+            
+            comm.Abort(1)
+             
         # Check if the probes are distributed
         self.distributed_probes = False
         if isinstance(probes, np.ndarray):
