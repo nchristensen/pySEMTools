@@ -512,7 +512,7 @@ def write_fld_subdomain_from_list(
             pref = PRefiner(n_old=msh_sub.lx, n_new=p)
 
             # Get the new mesh
-            msh_sub = pref.get_new_mesh(write_comm, msh=msh_sub)
+            msh_sub = pref.create_refined_mesh(write_comm, msh=msh_sub)
 
             # Get the new fields
             for field in range(0, number_of_fields):
@@ -585,8 +585,16 @@ def extrude_2d_sem_mesh(comm, lz : int = 1, msh : Mesh = None, fld: Union[Field,
         msh_ext = Mesh(
             comm, create_connectivity=msh.create_connectivity_bool, x=x_ext, y=y_ext, z=z_ext
         )
+    
+    if isinstance(fld, FieldRegistry):
+        
+        fld_ext = FieldRegistry(comm)
 
-    if isinstance(fld, Field):
+        for key in fld.registry.keys():
+            field_ = np.tile(fld.registry[key], (1, lz, 1, 1))
+            fld_ext.add_field(comm, field_name=key, field=field_.copy(), dtype=field_.dtype)
+
+    elif isinstance(fld, Field):
 
         fld_ext = FieldRegistry(comm)
 
@@ -598,13 +606,7 @@ def extrude_2d_sem_mesh(comm, lz : int = 1, msh : Mesh = None, fld: Union[Field,
         fld_ext.t = fld.t
         fld_ext.update_vars()
     
-    elif isinstance(fld, FieldRegistry):
-        
-        fld_ext = FieldRegistry(comm)
-
-        for key in fld.registry.keys():
-            field_ = np.tile(fld.registry[key], (1, lz, 1, 1))
-            fld_ext.add_field(comm, field_name=key, field=field_.copy(), dtype=field_.dtype)
+    
 
     if not isinstance(msh, type(None)) and not isinstance(fld, type(None)):
         return msh_ext, fld_ext

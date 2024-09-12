@@ -390,6 +390,39 @@ class Interpolator:
 
         return
 
+    def assign_local_probe_partitions(self):
+        """If each rank has recieved a partition of the probes, assign them to the local variables"""
+
+        self.log.write("info", "Assigning local probe partitions")
+        self.log.tic()
+
+        # Set the necesary arrays for identification of point
+        number_of_points = self.probes.shape[0]
+        self.probes_rst = np.zeros((number_of_points, 3), dtype=np.double)
+        self.el_owner = np.zeros((number_of_points), dtype=np.int64)
+        self.glb_el_owner = np.zeros((number_of_points), dtype=np.int64)
+        # self.rank_owner = np.zeros((number_of_points), dtype = np.int64)
+        self.rank_owner = np.ones((number_of_points), dtype=np.int64) * -1000
+        self.err_code = np.zeros(
+            (number_of_points), dtype=np.int64
+        )  # 0 not found, 1 is found
+        self.test_pattern = np.ones(
+            (number_of_points), dtype=np.double
+        )  # test interpolation holder
+
+        self.probe_partition = self.probes
+        self.probe_rst_partition = self.probes_rst
+        self.el_owner_partition = self.el_owner
+        self.glb_el_owner_partition = self.glb_el_owner
+        self.rank_owner_partition = self.rank_owner
+        self.err_code_partition = self.err_code
+        self.test_pattern_partition = self.test_pattern
+
+        self.log.write("info", "done")
+        self.log.toc()
+
+        return
+
     def gather_probes_to_io_rank(self, io_rank, comm):
         """Gather the probes to the rank that is used to read them - rank0 by default"""
 
@@ -1150,7 +1183,7 @@ class Interpolator:
 
         self.log.write("info", "Scattering probes")
         self.log.tic()
-        
+
         rank = comm.Get_rank()
         size = comm.Get_size()
 
@@ -1242,28 +1275,148 @@ class Interpolator:
 
         return
 
+    def redistribute_probes_to_owners(self):
+        """Redistribute the probes to the ranks that
+        have been determined in the search"""
+
+        self.log.write("info", "Redistributing probes to owners")
+        self.log.tic()
+
+        # Assing the partitions
+        self.probes[:, :] = self.probe_partition[:, :]
+        self.probes_rst[:, :] = self.probe_rst_partition[:, :]
+        self.el_owner[:] = self.el_owner_partition[:]
+        self.glb_el_owner[:] = self.glb_el_owner_partition[:]
+        self.rank_owner[:] = self.rank_owner_partition[:]
+        self.err_code[:] = self.err_code_partition[:]
+        self.test_pattern[:] = self.test_pattern_partition[:]
+
+        # Rename some of the variables
+        probes = self.probe_partition
+        probes_rst = self.probe_rst_partition
+        el_owner = self.el_owner_partition
+        rank_owner = self.rank_owner_partition
+        err_code = self.err_code_partition
+        local_probe_index = np.arange(0, probes.shape[0], dtype=np.int64)
+
+        # Prepare the send buffers
+        destinations = []
+        local_probe_index_sent_to_destination = []
+        probe_data = []
+        probe_rst_data = []
+        el_owner_data = []
+        rank_owner_data = []
+        err_code_data = []
+        for rank in range(0, self.rt.comm.Get_size()):
+            probes_to_send_to_this_rank = np.where(rank_owner == rank)[0]
+            if probes_to_send_to_this_rank.size > 0:
+                destinations.append(rank)
+                local_probe_index_sent_to_destination.append(
+                    local_probe_index[probes_to_send_to_this_rank]
+                )
+                probe_data.append(probes[probes_to_send_to_this_rank])
+                probe_rst_data.append(probes_rst[probes_to_send_to_this_rank])
+                el_owner_data.append(el_owner[probes_to_send_to_this_rank])
+                rank_owner_data.append(rank_owner[probes_to_send_to_this_rank])
+                err_code_data.append(err_code[probes_to_send_to_this_rank])
+
+        # Send the data to the destinations
+        sources, source_probes = self.rt.all_to_all(
+            destination=destinations, data=probe_data, dtype=probe_data[0].dtype
+        )
+        _, source_probes_rst = self.rt.all_to_all(
+            destination=destinations, data=probe_rst_data, dtype=probe_rst_data[0].dtype
+        )
+        _, source_el_owner = self.rt.all_to_all(
+            destination=destinations, data=el_owner_data, dtype=el_owner_data[0].dtype
+        )
+        _, source_rank_owner = self.rt.all_to_all(
+            destination=destinations,
+            data=rank_owner_data,
+            dtype=rank_owner_data[0].dtype,
+        )
+        _, source_err_code = self.rt.all_to_all(
+            destination=destinations, data=err_code_data, dtype=err_code_data[0].dtype
+        )
+
+        # Then reshape the data form the probes
+        for source_index in range(0, len(sources)):
+            source_probes[source_index] = source_probes[source_index].reshape(-1, 3)
+            source_probes_rst[source_index] = source_probes_rst[source_index].reshape(
+                -1, 3
+            )
+
+        # Now simply assign the data.
+        # These are the probes tha I own from each of those sources
+        self.my_sources = sources
+        self.my_probes = source_probes
+        self.my_probes_rst = source_probes_rst
+        self.my_el_owner = source_el_owner
+        self.my_rank_owner = source_rank_owner
+        self.my_err_code = source_err_code
+
+        # Keep track of which there the probes that I sent
+        self.destinations = destinations
+        self.local_probe_index_sent_to_destination = (
+            local_probe_index_sent_to_destination
+        )
+
+        self.log.write("info", "done")
+        self.log.toc()
+
+        return
+
     def interpolate_field_from_rst(self, sampled_field):
         """Interpolate the field from the rst coordinates found"""
 
         self.log.write("info", "Interpolating field from rst coordinates")
         self.log.tic()
-        # Probes info
-        probes_info = {}
-        probes_info["probes"] = self.my_probes
-        probes_info["probes_rst"] = self.my_probes_rst
-        probes_info["el_owner"] = self.my_el_owner
-        probes_info["err_code"] = self.my_err_code
 
-        # Settings
-        settings = {}
-        settings["progress_bar"] = self.progress_bar
+        if isinstance(self.my_probes, list):
+            # The inputs were distributed
+            # So we return a list with the sample fields for the points of each rank that sent data to this one
 
-        sampled_field_at_probe = self.ei.interpolate_field_from_rst(
-            probes_info,
-            interpolation_buffer=self.test_interp,
-            sampled_field=sampled_field,
-            settings=settings,
-        )
+            sampled_field_at_probe = []
+
+            for i in range(0, len(self.my_probes)):
+                probes_info = {}
+                probes_info["probes"] = self.my_probes[i]
+                probes_info["probes_rst"] = self.my_probes_rst[i]
+                probes_info["el_owner"] = self.my_el_owner[i]
+                probes_info["err_code"] = self.my_err_code[i]
+
+                settings = {}
+                settings["progress_bar"] = self.progress_bar
+
+                sampled_field_at_probe.append(
+                    self.ei.interpolate_field_from_rst(
+                        probes_info,
+                        interpolation_buffer=self.test_interp,
+                        sampled_field=sampled_field,
+                        settings=settings,
+                    )
+                )
+
+        else:
+            # The inputs were in rank 0
+
+            # Probes info
+            probes_info = {}
+            probes_info["probes"] = self.my_probes
+            probes_info["probes_rst"] = self.my_probes_rst
+            probes_info["el_owner"] = self.my_el_owner
+            probes_info["err_code"] = self.my_err_code
+
+            # Settings
+            settings = {}
+            settings["progress_bar"] = self.progress_bar
+
+            sampled_field_at_probe = self.ei.interpolate_field_from_rst(
+                probes_info,
+                interpolation_buffer=self.test_interp,
+                sampled_field=sampled_field,
+                settings=settings,
+            )
 
         self.log.toc()
 
