@@ -46,3 +46,15 @@ def generate_1d_arrays(bbox, n, mode="equal", gain=1):
             x_1d[j] = bbox[0] + (bbox[1] - bbox[0]) * z[i]
             j = j + 1
     return x_1d
+
+def generate_1d_diff(z_1d):
+    """ Generate differences of a 1d array such that each point has a contribution of the difference of the two points next to it"""
+
+    dz = np.ones_like(z_1d)
+
+    if dz.size != 1:
+        dz[1:-1] = (z_1d[2:] - z_1d[:-2]) / 2
+        dz[0] = (z_1d[1] - z_1d[0])/2  
+        dz[-1] = (z_1d[-1] - z_1d[-2])/2
+
+    return dz
