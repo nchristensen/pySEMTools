@@ -46,6 +46,9 @@ class SinglePointInterpolator(ABC):
         self.x_e_hat = None
         self.y_e_hat = None
         self.z_e_hat = None
+        
+        # If interpolate_field_at_rst_vector() happened once
+        self.if_interpolated_vector = False
 
     def find_rst_from_xyz(
         self, xj, yj, zj, tol=np.finfo(np.double).eps * 10, max_iterations=50
@@ -131,6 +134,8 @@ class SinglePointInterpolator(ABC):
 
     def interpolate_field_at_rst_vector(self, rj, sj, tj, field_e, apply_1d_ops=True):
         """Interpolate field at all points of an element at once"""
+        """Only intended to cases: """
+        """where the interpolation weights are the same for all elements"""
         r_j = np.ones((rj.size))
         s_j = np.ones((sj.size))
         t_j = np.ones((tj.size))
@@ -141,15 +146,19 @@ class SinglePointInterpolator(ABC):
 
         self.field_e[:, 0] = field_e[:, :, :].reshape(-1, 1)[:, 0]
 
-        lk_r = lag_interp_matrix_at_xtest(self.x_gll, r_j)
-        lk_s = lag_interp_matrix_at_xtest(self.x_gll, s_j)
-        lk_t = lag_interp_matrix_at_xtest(self.x_gll, t_j)
+        if self.if_interpolated_vector == False:
+            self.lk_r = lag_interp_matrix_at_xtest(self.x_gll, r_j)
+            self.lk_s = lag_interp_matrix_at_xtest(self.x_gll, s_j)
+            self.lk_t = lag_interp_matrix_at_xtest(self.x_gll, t_j)
 
         if not apply_1d_ops:
-            lk_3d = np.kron(lk_t.T, np.kron(lk_s.T, lk_r.T))
-            field_at_rst = lk_3d @ self.field_e
+            if self.if_interpolated_vector == False:
+                self.lk_3d = np.kron(self.lk_t.T, np.kron(self.lk_s.T, self.lk_r.T))
+            self.if_interpolated_vector = True
+            field_at_rst = self.lk_3d @ self.field_e
         elif apply_1d_ops:
-            field_at_rst = apply_operators_3d(lk_r.T, lk_s.T, lk_t.T, self.field_e)
+            self.if_interpolated_vector = True
+            field_at_rst = apply_operators_3d(self.lk_r.T, self.lk_s.T, self.lk_t.T, self.field_e)
 
         field_at_rst = field_at_rst.reshape((t_j.size, s_j.size, r_j.size))
 
