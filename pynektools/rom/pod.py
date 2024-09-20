@@ -19,7 +19,6 @@ class POD:
         global_updates=True,
         auto_expand=False,
         auto_expand_from_these_modes=1,
-        threads=1,
     ):
 
         # Initialize parameters
