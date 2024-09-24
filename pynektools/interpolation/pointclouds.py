@@ -55,10 +55,15 @@ def generate_1d_diff(z_1d, periodic=False):
     if dz.size != 1:
 
         if periodic:
-            
+
+            period = z_1d[-1] - z_1d[0]
+
             dz[1:-1] = (z_1d[2:] - z_1d[:-2]) / 2
-            dz[0] = dz[1]
-            dz[-1] = dz[1]
+            dz[0] = (z_1d[1] - (z_1d[-2] - period)) / 2
+            dz[-1] = ((z_1d[1] + period) - z_1d[-2]) / 2
+
+            # This will have a wrong scale since the enpoints are accounting for more information. We must rescale
+            dz = dz * (period / np.sum(dz))
         
         else:
 
