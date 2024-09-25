@@ -4,6 +4,7 @@ from .pod import POD
 from .io_help import IoHelp
 import numpy as np
 import h5py
+import os
 
 def get_wavenumber_slice(kappa, fft_axis):
     if fft_axis == 0:
@@ -318,3 +319,88 @@ def pod_fourier_1_homogenous_direction(comm, file_sequence: list[str], pod_field
         pod[kappa].rotate_local_modes_to_global(comm)
 
     return pod, ioh, field_3d_shape, number_of_frequencies, N_samples
+
+def write_3dfield_to_file(x: np.ndarray, y: np.ndarray, z: np.ndarray, pod: dict[int, POD], ioh: dict[int, IoHelp], wavenumbers: list[int], modes: list[int], field_shape: tuple, fft_axis: int, field_names: list[str], N_samples: int, snapshots: list[int] = None):
+    """
+    Write 3D fields.
+
+    Parameters
+    ----------
+    x : np.ndarray
+        X coordinates of the field
+    y : np.ndarray
+        Y coordinates of the field
+    z : np.ndarray
+        Z coordinates of the field
+    pod : dict[int, POD]
+        Dictionary of POD object with the modes to transform to physical space
+        the int key is the wavenumber
+    ioh : dict[int, IoHelp]
+        Dictionary of IoHelp object, which has some functionalities to split fields
+        the int key is the wavenumber
+    wavenumbers : list[int]
+        List of wavenumbers to use in the operations
+    modes : int
+        list of the modes to use in the operations.
+        if snapshot is not given, the modes will be transformed to physical space and returned.
+        if snapshot is given, the modes will be used to reconstruct the snapshots and returned.
+    field_shape : tuple
+        Shape of the field in physical space
+    fft_axis : int
+        Axis where the fft was performed
+    field_names : list[str]
+        List of field names to put in the output dictionary
+    N_samples : int
+        Number of samples in the fft
+    snapshots : list[int], optional
+        List of snapshots to transform to physical space, by default None
+        If this option is given, then the return will be a list of snapshots in physical space
+        using the snapshot indices for the reconstruction.
+        Be mindfull that the snapshot indices should be in the range of the snapshots used to create the POD objects.
+
+    Returns
+    -------
+    None
+    """
+
+    # First import vtk only for this function. Do not want to import if not necessary
+    from pyevtk.hl import gridToVTK
+
+    # Always iterate over the wavenumbers or snapshots to not be too harsh on memory 
+    # Write a reconstruction to vtk
+    if isinstance(snapshots, list):
+
+        for snapshot in snapshots: 
+            # Fetch the data for this mode and wavenumber
+            reconstruction_dict = physical_space(pod, ioh, wavenumbers, modes, field_shape, fft_axis, field_names, N_samples, snapshots=[snapshot])
+
+            # Write 3d_field
+            fname = f"reconstructed_data_{snapshot}.vtk"
+            path = os.path.dirname(fname)
+            if path == "": path = "."
+            fname = os.path.basename(fname)
+            fname = fname.split(".")[0]
+            
+            # Write the data to vtk
+            print(f"Writing {fname}")
+            gridToVTK(f"{path}/{fname}", x, y, z, pointData=reconstruction_dict[snapshot])
+
+    # Write modes to vtk
+    else:
+
+        for kappa in wavenumbers:
+            for mode in modes:
+
+                # Fetch the data for this mode and wavenumber
+                mode_dict = physical_space(pod, ioh, [kappa], [mode], field_shape, fft_axis, field_names, N_samples, snapshots)
+
+                # Write 3d_field
+                fname = f"kappa_{kappa}_mode{mode}.vtk"
+                path = os.path.dirname(fname)
+                if path == "": path = "."
+                fname = os.path.basename(fname)
+                fname = fname.split(".")[0]
+                
+                # Write the data to vtk
+                print(f"Writing {fname}")
+                gridToVTK(f"{path}/{fname}", x, y, z, pointData=mode_dict[kappa][mode])
