@@ -30,13 +30,17 @@ class IoHelp:
         self.nf = int(field_size * number_of_fields)
 
         # Allocate the buffers
-        self.xi = np.zeros((int(field_size * number_of_fields), 1), dtype=field_data_type)
+        self.xi = np.zeros(
+            (int(field_size * number_of_fields), 1), dtype=field_data_type
+        )
         self.buff = np.zeros(
             (int(field_size * number_of_fields), self.batch_size), dtype=field_data_type
         )
 
         # Allocate the mass matrix
-        self.bm1 = np.zeros((int(field_size * number_of_fields), 1), dtype=mass_matrix_data_type)
+        self.bm1 = np.zeros(
+            (int(field_size * number_of_fields), 1), dtype=mass_matrix_data_type
+        )
 
         # Allocate the square root of the mass matrix
         self.bm1sqrt = np.zeros(
