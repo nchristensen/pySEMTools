@@ -5,8 +5,19 @@ from .io_help import IoHelp
 import numpy as np
 import h5py
 import os
+from pyevtk.hl import gridToVTK
 
 def get_wavenumber_slice(kappa, fft_axis):
+    """
+    Get the correct slice of a 3d field that has experienced an fft in the fft_axis
+
+    Parameters
+    ----------
+    kappa : int
+        Wavenumber to get the slice for
+    fft_axis : int
+        Axis where the fft was performed
+    """
     if fft_axis == 0:
         return (kappa, slice(None), slice(None))
     elif fft_axis == 1:
@@ -15,6 +26,17 @@ def get_wavenumber_slice(kappa, fft_axis):
         return (slice(None), slice(None), kappa)
 
 def get_mass_slice(fft_axis):
+    """
+    Get the correct slice of a 3d field that will experience fft in the fft_axis
+
+    This is particularly necessary for the mass matrix to be applied to the frequencies individually.
+    
+    Parameters
+    ----------
+    fft_axis : int
+        Axis where the fft will be performed
+    """
+
     # Have a slice of the axis to perform the fft
     if fft_axis == 0:
         mass_slice = (0, slice(None), slice(None))
@@ -25,6 +47,17 @@ def get_mass_slice(fft_axis):
     return mass_slice
 
 def get_2d_slice_shape(fft_axis, field_shape):
+    """
+    Get the shape of the 2d slice of a 3d field that has experienced an fft in the fft_axis
+
+    Parameters
+    ----------
+    fft_axis : int
+        Axis where the fft was performed
+    field_shape : tuple
+        Shape of the field in physical space
+    """
+
     if fft_axis == 0:
         return (field_shape[1], field_shape[2])
     elif fft_axis == 1:
@@ -33,9 +66,28 @@ def get_2d_slice_shape(fft_axis, field_shape):
         return (field_shape[0], field_shape[1])
 
 def fourier_normalization(N_samples):
+    """
+    Get the value that will be used to normalize the fourier coefficientds after fft
+
+    Parameters
+    ----------
+    N_samples : int
+        Number of samples used to get the fft
+    """
     return np.sqrt(N_samples)
 
 def degenerate_scaling(kappa):
+    """
+    Get the scaling factor for the degenerate wavenumbers.
+
+    This alludes to wavebnumbers were we only calculate things once but that because symetries we have to multiply by 2 or more.
+
+    Parameters
+    ----------
+    kappa : int
+        Wavenumber to get the scaling for
+    """
+
     if kappa == 0:
         scaling = 1
     else:
@@ -320,12 +372,14 @@ def pod_fourier_1_homogenous_direction(comm, file_sequence: list[str], pod_field
 
     return pod, ioh, field_3d_shape, number_of_frequencies, N_samples
 
-def write_3dfield_to_file(x: np.ndarray, y: np.ndarray, z: np.ndarray, pod: dict[int, POD], ioh: dict[int, IoHelp], wavenumbers: list[int], modes: list[int], field_shape: tuple, fft_axis: int, field_names: list[str], N_samples: int, snapshots: list[int] = None):
+def write_3dfield_to_file(fname: str, x: np.ndarray, y: np.ndarray, z: np.ndarray, pod: dict[int, POD], ioh: dict[int, IoHelp], wavenumbers: list[int], modes: list[int], field_shape: tuple, fft_axis: int, field_names: list[str], N_samples: int, snapshots: list[int] = None):
     """
     Write 3D fields.
 
     Parameters
     ----------
+    fname : str
+        Name of the file to write the data to
     x : np.ndarray
         X coordinates of the field
     y : np.ndarray
@@ -363,9 +417,6 @@ def write_3dfield_to_file(x: np.ndarray, y: np.ndarray, z: np.ndarray, pod: dict
     None
     """
 
-    # First import vtk only for this function. Do not want to import if not necessary
-    from pyevtk.hl import gridToVTK
-
     # Always iterate over the wavenumbers or snapshots to not be too harsh on memory 
     # Write a reconstruction to vtk
     if isinstance(snapshots, list):
@@ -375,15 +426,21 @@ def write_3dfield_to_file(x: np.ndarray, y: np.ndarray, z: np.ndarray, pod: dict
             reconstruction_dict = physical_space(pod, ioh, wavenumbers, modes, field_shape, fft_axis, field_names, N_samples, snapshots=[snapshot])
 
             # Write 3d_field
-            fname = f"reconstructed_data_{snapshot}.vtk"
+            sufix = f"reconstructed_data_{snapshot}"
+
+            # Check the extension and path of the file 
+            ## Path
             path = os.path.dirname(fname)
             if path == "": path = "."
-            fname = os.path.basename(fname)
-            fname = fname.split(".")[0]
+            ## prefix
+            prefix = os.path.basename(fname).split(".")[0]
+            ## Extension
+            extension = os.path.basename(fname).split(".")[1]
             
-            # Write the data to vtk
-            print(f"Writing {fname}")
-            gridToVTK(f"{path}/{fname}", x, y, z, pointData=reconstruction_dict[snapshot])
+            if (extension == "vtk") or (extension == "vts"):
+                outname = f"{path}/{prefix}_{sufix}"
+                print(f"Writing {outname}")
+                gridToVTK(outname, x, y, z, pointData=reconstruction_dict[snapshot])
 
     # Write modes to vtk
     else:
@@ -393,14 +450,64 @@ def write_3dfield_to_file(x: np.ndarray, y: np.ndarray, z: np.ndarray, pod: dict
 
                 # Fetch the data for this mode and wavenumber
                 mode_dict = physical_space(pod, ioh, [kappa], [mode], field_shape, fft_axis, field_names, N_samples, snapshots)
-
-                # Write 3d_field
-                fname = f"kappa_{kappa}_mode{mode}.vtk"
+            
+                # Write 3D field
+                sufix = f"kappa_{kappa}_mode{mode}.vtk"
+                
+                # Check the extension and path of the file 
+                ## Path
                 path = os.path.dirname(fname)
                 if path == "": path = "."
-                fname = os.path.basename(fname)
-                fname = fname.split(".")[0]
+                ## prefix 
+                prefix = os.path.basename(fname).split(".")[0]
+                ## Extension
+                extension = os.path.basename(fname).split(".")[1]
                 
-                # Write the data to vtk
-                print(f"Writing {fname}")
-                gridToVTK(f"{path}/{fname}", x, y, z, pointData=mode_dict[kappa][mode])
+                if (extension == "vtk") or (extension == "vts"):
+                    outname = f"{path}/{prefix}_{sufix}"
+                    print(f"Writing {outname}")
+                    gridToVTK(outname, x, y, z, pointData=mode_dict[kappa][mode])
+
+def save_pod_state(fname: str, pod: dict[int, POD]):
+    """
+    Save the POD object dictionary to a file. From this, one can produce more analysis.
+
+    Parameters
+    ----------
+    fname : str
+        Name of the file to save the data to
+    pod : dict[int, POD]
+        Dictionary of POD object with the modes to transform to physical space
+        the int key is the wavenumber
+    """
+
+    path = os.path.dirname(fname)
+    if path == "": path = "."
+    prefix = os.path.basename(fname).split(".")[0]
+    extension = os.path.basename(fname).split(".")[1]
+
+    f = h5py.File(f"{prefix}_modes.{extension}", 'w')
+    for kappa in pod.keys():
+        try: int(kappa)
+        except: continue
+        # Save the POD object
+        f.create_dataset(f"wavenumber_{kappa}", data=pod[kappa].u_1t)
+    f.close()
+    
+    f = h5py.File(f"{prefix}_singlular_values.{extension}", 'w')
+    for kappa in pod.keys():
+        try: int(kappa)
+        except: continue
+        # Save the POD object
+        f.create_dataset(f"wavenumber_{kappa}", data=pod[kappa].d_1t)
+    f.close()
+ 
+    f = h5py.File(f"{prefix}_right_singular_vectors.{extension}", 'w')
+    for kappa in pod.keys():
+        try: int(kappa)
+        except: continue
+        # Save the POD object
+        f.create_dataset(f"wavenumber_{kappa}", data=pod[kappa].vt_1t)
+    f.close()
+
+    return 
