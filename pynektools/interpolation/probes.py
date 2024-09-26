@@ -2,7 +2,10 @@
 
 import json
 import csv
-import h5py
+try:
+    import h5py
+except ImportError:
+    print(f"h5py not found. HDF5 files will not be supported")
 import numpy as np
 import os
 from ..io.ppymech.neksuite import preadnek, pynekread
