@@ -48,7 +48,7 @@ class IoHelp:
         )
 
         # Instance object
-        self.log = logger_c(level=logging.DEBUG, comm=comm, module_name=module_name)
+        self.log = logger_c(comm=comm, module_name=module_name)
         self.math = math_ops_c()
 
         # Set the control indices

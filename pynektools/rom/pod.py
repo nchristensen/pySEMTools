@@ -41,7 +41,7 @@ class POD:
         self.vt_1t = None
 
         # Instant the math functions that will help
-        self.log = logger_c(level=logging.DEBUG, comm=comm, module_name="pod")
+        self.log = logger_c(comm=comm, module_name="pod")
         self.svd = spSVD_c(self.log)
         self.math = math_ops_c()
 
@@ -80,6 +80,7 @@ class POD:
         """Update POD modes from a batch of snapshots in buff"""
 
         # Perform the update
+        self.log.write("info", "Updating the POD modes")
         if self.ifgbl_update:
             self.u_1t, self.d_1t, self.vt_1t = self.svd.gbl_update(
                 self.u_1t, self.d_1t, self.vt_1t, buff[:, :], self.k, comm
