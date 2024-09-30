@@ -1,5 +1,5 @@
 
-def file_field_index(source_code: str = 'Neko', custom_file_names: dict = None):
+def file_field_index(source_code: str = 'Neko_old', custom_file_names: dict = None):
     """
     Returns a dictionary with the file type and the field name for the statistics fields.
     """

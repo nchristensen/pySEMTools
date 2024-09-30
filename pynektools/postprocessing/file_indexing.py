@@ -341,7 +341,7 @@ def index_files_from_folder(
         if ftype not in added_files:
             continue
 
-        logger.write("info", f"Indexing file: {file_in_folder}")
+        logger.write("debug", f"Indexing file: {file_in_folder}")
 
         files[ftype][files_index[ftype]] = dict()
         files[ftype][files_index[ftype]]["fname"] = file_in_folder
@@ -383,14 +383,14 @@ def index_files_from_folder(
                                                                  "scalar_fields" : header.nb_vars[3]}
 
         for key in files[ftype][files_index[ftype]].keys():
-            logger.write("info", f"{key}: {files[ftype][files_index[ftype]][key]}")
+            logger.write("debug", f"{key}: {files[ftype][files_index[ftype]][key]}")
 
         files_index[ftype] += 1
 
-        if comm.Get_rank() == 0:
-            print(
-                "========================================================================================="
-            )
+        #if comm.Get_rank() == 0:
+        #    print(
+        #        "========================================================================================="
+        #    )
 
     logger.write("info", "Check finished")
 
