@@ -3,10 +3,10 @@
 import numpy as np
 
 
-def generate_1d_arrays(bbox, n, mode="equal", gain=1):
+def generate_1d_arrays(bbox, n, mode="equal", gain=1, endpoint=True):
     """Generate 1d arrays of points distributed in multiple manners"""
     if mode == "equal":
-        x_1d = np.linspace(bbox[0], bbox[1], n)
+        x_1d = np.linspace(bbox[0], bbox[1], n, endpoint=endpoint)
     elif mode == "cheb":
         x_1d = np.zeros(n)
         i = 0
@@ -46,3 +46,29 @@ def generate_1d_arrays(bbox, n, mode="equal", gain=1):
             x_1d[j] = bbox[0] + (bbox[1] - bbox[0]) * z[i]
             j = j + 1
     return x_1d
+
+def generate_1d_diff(z_1d, periodic=False):
+    """ Generate differences of a 1d array such that each point has a contribution of the difference of the two points next to it"""
+
+    dz = np.ones_like(z_1d)
+
+    if dz.size != 1:
+
+        if periodic:
+
+            period = z_1d[-1] - z_1d[0]
+
+            dz[1:-1] = (z_1d[2:] - z_1d[:-2]) / 2
+            dz[0] = (z_1d[1] - (z_1d[-2] - period)) / 2
+            dz[-1] = ((z_1d[1] + period) - z_1d[-2]) / 2
+
+            # This will have a wrong scale since the enpoints are accounting for more information. We must rescale
+            dz = dz * (period / np.sum(dz))
+        
+        else:
+
+            dz[1:-1] = (z_1d[2:] - z_1d[:-2]) / 2
+            dz[0] = (z_1d[1] - z_1d[0])/2  
+            dz[-1] = (z_1d[-1] - z_1d[-2])/2
+
+    return dz

@@ -5,6 +5,8 @@ from .point_interpolator.single_point_legendre_interpolator import (
     LegendreInterpolator as element_interpolator_c,
 )
 from ..datatypes.msh import Mesh
+from ..datatypes.field import Field, FieldRegistry
+from typing import Union
 
 
 class PRefiner:
@@ -26,7 +28,7 @@ class PRefiner:
         self.lz = None
         self.nelv = None
 
-    def get_new_mesh(self, comm, msh=None):
+    def create_refined_mesh(self, comm, msh=None):
         """Obtained refined/coarsened mesh"""
 
         # See the points per element in the new mesh
@@ -66,12 +68,41 @@ class PRefiner:
         new_msh = Mesh(comm, x=x, y=y, z=z)
 
         return new_msh
+    
+    def create_refined_field(self, comm, fld: Union[Field, FieldRegistry]=None) -> FieldRegistry:
+        
+        
+        if isinstance(fld, FieldRegistry):
+            refined_field = FieldRegistry(comm)
+
+            for key in fld.registry.keys():
+                field_ = self.interpolate_from_field_list(
+                        comm, field_list=[fld.registry[key]]
+                    )
+                refined_field.add_field(comm, field_name=key, field=field_[0].copy(), dtype=field_[0].dtype)
+
+        elif isinstance(fld, Field):
+            
+            refined_field = FieldRegistry(comm)
+
+            for key in fld.fields.keys():
+                for i in range(len(fld.fields[key])):
+                    field_ = self.interpolate_from_field_list(
+                        comm, field_list=[fld.fields[key][i]]
+                    )
+                    refined_field.fields[key].append(field_[0].copy())
+     
+            refined_field.t = fld.t
+            refined_field.update_vars()
+        
+        return refined_field
+
 
     def interpolate_from_field_list(self, comm, field_list=[]):
         """Interpolate any field that was in the old mesh onto the refined/coarsened one"""
         # check the number of fields to interpolate
         number_of_fields = len(field_list)
-
+        
         if isinstance(self.dtype, type(None)):
             dtype = field_list[0].dtype
         else:
@@ -107,13 +138,20 @@ class PRefiner:
 class PMapper:
     """Class to map points from one point distribution to other."""
 
-    def __init__(self, n=8, distribution=["GLL", "GLL", "GLL"]):
+    def __init__(self, n=8, n_new = None, distribution=["GLL", "GLL", "GLL"]):
 
+        self.n_old = n
+        if type(n_new) is type(None):
+            self.n_new = n
+        else:
+            self.n_new = n_new
+        
         # Order of the element
-        self.n = n
+        self.n = self.n_new
 
         # Initialize the element interpolators
-        self.ei = element_interpolator_c(n)
+        self.ei = element_interpolator_c(self.n_old)        
+        self.ei_new = element_interpolator_c(self.n_new)
 
         # Define some dummy variables
         self.lx = None
@@ -125,28 +163,28 @@ class PMapper:
 
         # Select the distribution per direction
         if distribution[0] == "GLL":
-            self.r_dist = self.ei.x_gll
+            self.r_dist = self.ei_new.x_gll
         elif distribution[0] == "EQ":
-            self.r_dist = np.linspace(-1, 1, n)
+            self.r_dist = np.linspace(-1, 1, self.n_new)
 
         if distribution[1] == "GLL":
-            self.s_dist = self.ei.x_gll
+            self.s_dist = self.ei_new.x_gll
         elif distribution[1] == "EQ":
-            self.s_dist = np.linspace(-1, 1, n)
+            self.s_dist = np.linspace(-1, 1, self.n_new)
 
         if distribution[2] == "GLL":
-            self.t_dist = self.ei.x_gll
+            self.t_dist = self.ei_new.x_gll
         elif distribution[2] == "EQ":
-            self.t_dist = np.linspace(-1, 1, n)
+            self.t_dist = np.linspace(-1, 1, self.n_new)
 
-    def get_new_mesh(self, comm, msh=None):
+    def create_mapped_mesh(self, comm, msh=None):
         """Obtained refined/coarsened mesh"""
 
         # See the points per element in the new mesh
-        self.lx = self.n
-        self.ly = self.n
+        self.lx = self.n_new
+        self.ly = self.n_new
         if msh.lz > 1:
-            self.lz = self.n
+            self.lz = self.n_new
         self.nelv = msh.nelv
 
         # Allocate the new coordinates
@@ -171,9 +209,37 @@ class PMapper:
             )
 
         # Create the msh object
-        new_msh = Mesh(comm, x=x, y=y, z=z)
+        new_msh = Mesh(comm, x=x, y=y, z=z, create_connectivity=msh.create_connectivity_bool)
 
         return new_msh
+    
+    def create_mapped_field(self, comm, fld: Union[Field, FieldRegistry]=None) -> FieldRegistry:
+        
+        
+        if isinstance(fld, FieldRegistry):
+            mapped_field = FieldRegistry(comm)
+
+            for key in fld.registry.keys():
+                field_ = self.interpolate_from_field_list(
+                        comm, field_list=[fld.registry[key]]
+                    )
+                mapped_field.add_field(comm, field_name=key, field=field_[0].copy(), dtype=field_[0].dtype)
+
+        elif isinstance(fld, Field):
+            
+            mapped_field = FieldRegistry(comm)
+
+            for key in fld.fields.keys():
+                for i in range(len(fld.fields[key])):
+                    field_ = self.interpolate_from_field_list(
+                        comm, field_list=[fld.fields[key][i]]
+                    )
+                    mapped_field.fields[key].append(field_[0].copy())
+     
+            mapped_field.t = fld.t
+            mapped_field.update_vars()
+        
+        return mapped_field
 
     def interpolate_from_field_list(self, comm, field_list=[]):
         """Interpolate any field that was in the old mesh onto the refined/coarsened one"""

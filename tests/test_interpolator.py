@@ -44,7 +44,7 @@ def test_single_point_interpolator():
     # Create a refined mesh
     n_new = 3
     pref = PRefiner(n_old = msh.lx, n_new = n_new)
-    msh_ref = pref.get_new_mesh(comm, msh = msh)
+    msh_ref = pref.create_refined_mesh(comm, msh = msh)
 
     # Instance an interpolator for the refined mesh to know the exact rst coordinates
     ei_ref = element_interpolator_c(n_new)
@@ -162,7 +162,7 @@ def test_multiple_point_interpolator_numpy():
     # Create a refined mesh
     n_new = 3
     pref = PRefiner(n_old = msh.lx, n_new = n_new)
-    msh_ref = pref.get_new_mesh(comm, msh = msh)
+    msh_ref = pref.create_refined_mesh(comm, msh = msh)
 
     # Instance an interpolator for the refined mesh to know the exact rst coordinates
     ei_ref = element_interpolator_c(n_new)
@@ -290,7 +290,7 @@ def test_multiple_point_interpolator_torch():
     # Create a refined mesh
     n_new = 3
     pref = PRefiner(n_old = msh.lx, n_new = n_new)
-    msh_ref = pref.get_new_mesh(comm, msh = msh)
+    msh_ref = pref.create_refined_mesh(comm, msh = msh)
 
     # Instance an interpolator for the refined mesh to know the exact rst coordinates
     ei_ref = element_interpolator_c(n_new)
@@ -419,7 +419,7 @@ def test_multiple_point_interpolator_torch_autograd():
     # Create a refined mesh
     n_new = 3
     pref = PRefiner(n_old = msh.lx, n_new = n_new)
-    msh_ref = pref.get_new_mesh(comm, msh = msh)
+    msh_ref = pref.create_refined_mesh(comm, msh = msh)
 
     # Instance an interpolator for the refined mesh to know the exact rst coordinates
     ei_ref = element_interpolator_c(n_new)
