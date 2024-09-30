@@ -14,7 +14,7 @@ class SVD:
         self.log = logger
         self.ifget_all_modes = False
         logger.write(
-            "warning",
+            "debug",
             "ifget_all_modes is hard coded to False. This parameter applies to lcl updates. It controls if one gets all modes in the global rotation, despite keeping less modes locally. I do not see a use for this in production runs. Thus it is set to false. If needed, activate in mpi_spSVD.py module",
         )
 
@@ -134,27 +134,23 @@ class SVD:
 
         # Perfrom Svd in all ranks
         # tic_in = time.perf_counter()
-        if rank == 0:
-            print("Performing individual SVD in each rank")
+        self.log.write("debug", "Performing individual SVD in each rank")
         ui, di, vti = np.linalg.svd(xi, full_matrices=False)
         # toc_in = time.perf_counter()
-        if rank == 0:
-            print("Calculating eigen matrices in each rank")
+        self.log.write("debug", f"calculated eigen matrices in each rank")
         yi = np.diag(di) @ vti
         # print(f"Time for SVD of xi in rank {rank}: {toc_in - tic_in:0.4f} seconds")
 
         # Gather yi into y in rank 0
         # prepare the buffer for recieving
         y = None
-        if rank == 0:
-            print("Gathering combined eigen matrix in rank 0")
+        self.log.write("debug", "Gathering combined eigen matrix in rank 0")
         if rank == 0:
             # Generate the buffer to gather in rank 0
             y = np.empty((m * size, m), dtype=xi.dtype)
         comm.Gather(yi, y, root=0)
 
-        if rank == 0:
-            print("Performing SVD of combined eigen matrix in rank 0")
+        self.log.write("debug", "Performing SVD of combined eigen matrix in rank 0")
         if rank == 0:
             # If tank is zero, calculate the svd of the combined eigen matrix
             # Perform the svd of the combined eigen matrix
@@ -167,14 +163,12 @@ class SVD:
             uy = np.empty((m * size, m), dtype=xi.dtype)
             dy = np.empty((m), dtype=np.double)
             vty = np.empty((m, m), dtype=xi.dtype)
-        if rank == 0:
-            print("Broadcasting SVD(y) results")
+        self.log.write("debug", "Broadcasting SVD(y) results")
         comm.Bcast(uy, root=0)
         comm.Bcast(dy, root=0)
         comm.Bcast(vty, root=0)
         # Now matrix multiply each ui by the corresponding entries in uy
-        if rank == 0:
-            print("Performing rotations: local -> global modes")
+        self.log.write("debug", "Performing rotations: local -> global modes")
         u_local = ui @ uy[rank * m : (rank + 1) * m, :]
 
         return u_local, dy, vty
@@ -191,14 +185,14 @@ class SVD:
             u_1t, d_1t, vt_1t = self.gbl_svd(xi, comm)
         else:
             # Find the svd of the new snapshot
-            self.log.write("info", "Performing global SVD #1 in update")
+            self.log.write("debug", "Performing global SVD #1 in update")
             u_tp1, d_tp1, vt_tp1 = self.gbl_svd(xi, comm)
             # 2 contruct matrices to Do the updating
-            self.log.write("info", "Appending Vt matrix in update")
+            self.log.write("debug", "Appending Vt matrix in update")
             v_tilde = scipy.linalg.block_diag(vt_1t.conj().T, vt_tp1.conj().T)
-            self.log.write("info", "Appending New basis to previous ones in update")
+            self.log.write("debug", "Appending New basis to previous ones in update")
             w = np.append(u_1t @ np.diag(d_1t), u_tp1 @ np.diag(d_tp1), axis=1)
-            self.log.write("info", "Performing global SVD #2 in update")
+            self.log.write("debug", "Performing global SVD #2 in update")
             uw, dw, vtw = self.gbl_svd(w, comm)
             # 3 Update
             u_1t = uw

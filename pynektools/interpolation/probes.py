@@ -2,6 +2,10 @@
 
 import json
 import csv
+try:
+    import h5py
+except ImportError:
+    print(f"h5py not found. HDF5 files will not be supported")
 import numpy as np
 import os
 from ..io.ppymech.neksuite import preadnek, pynekread
@@ -9,6 +13,7 @@ from .interpolator import Interpolator
 from ..monitoring.logger import Logger
 from typing import Union
 from ..datatypes.msh import Mesh
+from .utils import transform_from_array_to_list, transform_from_list_to_array
 
 NoneType = type(None)
 
@@ -134,12 +139,13 @@ class Probes:
         self.log.write("info", "Initializing Probes object")
 
         # Assign probes
+        self.data_read_from_structured_mesh = False
         if isinstance(probes, np.ndarray) or isinstance(probes, NoneType):
             self.log.write("info", "Probes provided as keyword argument")
             self.probes = probes
         elif isinstance(probes, str):
             self.log.write("info", f"Reading probes from {probes}")
-            self.probes = read_probes(comm, probes)
+            self.probes = read_probes(self, comm, probes)
         else:
             print(
                 "ERROR: Probes must be provided as a string, numpy array or None if the probes are not distributed"
@@ -269,11 +275,12 @@ class Probes:
         self.number_of_fields = None
         self.my_interpolated_fields = None
         self.interpolated_fields = None
+        self.written_file_counter = 0
 
         self.log.write("info", "Probes object initialized")
         self.log.toc()
 
-    def interpolate_from_field_list(self, t, field_list, comm, write_data=True):
+    def interpolate_from_field_list(self, t, field_list, comm, write_data=True, field_names: list[str] = None):
         """
         Interpolate the probes from a list of fields.
 
@@ -414,6 +421,14 @@ class Probes:
 
         # Write the data
         if write_data:
+            # Define the name of the interpolated fields
+            if field_names is None:
+                self.field_names = [f"field_{i}" for i in range(self.number_of_fields)]
+            else:
+                self.field_names = field_names
+            
+            self.written_file_counter += 1
+
             if not self.distributed_probes:
                 if comm.Get_rank() == 0:
                     write_interpolated_data(self, parallel=False)
@@ -426,16 +441,20 @@ def write_coordinates(self, parallel=False):
     # Write the coordinates
     if self.output_fname.split(".")[-1] == "csv":
         write_coordinates_csv(self, parallel)
+    elif self.output_fname.split(".")[-1] == "hdf5":
+        write_coordinates_hdf5(self, parallel)
     else:
-        raise ValueError("Output file must be a csv file")
+        raise ValueError("Output file must be a csv or hdf5 file")
 
 
 def write_interpolated_data(self, parallel=False):
 
     if self.output_fname.split(".")[-1] == "csv":
         write_interpolated_data_csv(self, parallel)
+    elif self.output_fname.split(".")[-1] == "hdf5":
+        write_interpolated_data_hdf5(self, parallel)
     else:
-        raise ValueError("Output file must be a csv file")
+        raise ValueError("Output file must be a csv or hdf5 file")
 
 
 def write_warnings(self, parallel=False):
@@ -467,6 +486,7 @@ def write_warnings(self, parallel=False):
 
         i += 1
     path = os.path.dirname(self.output_fname)
+    if path == "": path = "."
     fname = os.path.basename(self.output_fname)
     fname = fname.split(".")[0]
 
@@ -545,6 +565,33 @@ def write_coordinates_csv(self, parallel=True):
             header=header,
         )
 
+def write_coordinates_hdf5(self, parallel=True):
+    
+    ## Write the coordinates
+    self.log.write("info", "Writing probe coordinates to {}".format(self.output_fname))
+
+    path = os.path.dirname(self.output_fname)
+    if path == "": path = "."
+    fname = os.path.basename(self.output_fname)
+    fname = f"coordinates_{fname}"
+    if not parallel:
+        with h5py.File(f"{path}/{fname}", "w") as f:
+            if self.data_read_from_structured_mesh:
+                coord_list = transform_from_list_to_array(self.input_nx, self.input_ny, self.input_nz, self.probes)
+                f.create_dataset("x", data=coord_list[0])
+                f.create_dataset("y", data=coord_list[1])
+                f.create_dataset("z", data=coord_list[2])
+            else:
+                f.create_dataset("xyz", data=self.probes)
+    else:    
+        with h5py.File(f"{path}/rank_{self.itp.rt.comm.Get_rank()}_{fname}", "w") as f:
+            if self.data_read_from_structured_mesh:
+                coord_list = transform_from_list_to_array(self.input_nx, self.input_ny, self.input_nz, self.itp.probes)
+                f.create_dataset("x", data=coord_list[0])
+                f.create_dataset("y", data=coord_list[1])
+                f.create_dataset("z", data=coord_list[2])
+            else:
+                f.create_dataset("xyz", data=self.itp.probes)
 
 def write_interpolated_data_csv(self, parallel=True):
 
@@ -561,6 +608,37 @@ def write_interpolated_data_csv(self, parallel=True):
             self.interpolated_fields,
             "a",
         )
+
+def write_interpolated_data_hdf5(self, parallel=True):
+
+    path = os.path.dirname(self.output_fname)
+    if path == "": path = "."
+    fname = os.path.basename(self.output_fname)
+    fname = fname.split(".")[0]
+    if not parallel:
+        fname = f"{fname}{str(self.written_file_counter).zfill(5)}.hdf5"
+    else:
+        fname = f"rank_{self.itp.rt.comm.Get_rank()}_{fname}{str(self.written_file_counter).zfill(5)}.hdf5"
+        
+    self.log.write("info", f"Writing interpolated fields to {path}/{fname}")
+
+    with h5py.File(f"{path}/{fname}", "w") as f:
+        
+        if self.data_read_from_structured_mesh:
+            
+            field_list = transform_from_list_to_array(self.input_nx, self.input_ny, self.input_nz, self.interpolated_fields)
+
+            for i in range(len(field_list)):
+                if i == 0:
+                    f.attrs["time"] = self.interpolated_fields[0, i]
+                else:
+                    f.create_dataset(f"{self.field_names[i-1]}", data=field_list[i])
+        else:
+            for i in range(self.interpolated_fields.shape[1]):
+                if i == 0:
+                    f.attrs["time"] = self.interpolated_fields[0, i]
+                else:
+                    f.create_dataset(f"{self.field_names[i-1]}", data=self.interpolated_fields[:, i])
 
 
 def write_csv(fname, data, mode, header=None):
@@ -596,25 +674,61 @@ def write_csv(fname, data, mode, header=None):
         writer.writerow(data_pos)
 
 
-def read_probes(comm, fname):
+def read_probes(self, comm, fname):
 
     if fname.split(".")[-1] == "csv":
         # For csv files, read in rank 0 only
         if comm.Get_rank() == 0:
-            probes = read_probes_csv(fname)
+            probes = read_probes_csv(self, fname)
+        else:
+            probes = None
+    elif fname.split(".")[-1] == "hdf5":
+        # For hdf5 initially add support for reading in rank 0 only
+        if comm.Get_rank() == 0:
+            probes = read_probes_hdf5(self, fname)
         else:
             probes = None
     else:
-        raise ValueError("Probes must be a csv file")
+        raise ValueError("Probes must be a csv or hdf5 file")
 
     return probes
 
 
-def read_probes_csv(fname):
+def read_probes_csv(self, fname):
     file = open(fname)
     probes = np.array(list(csv.reader(file)), dtype=np.double)
     return probes
 
+def read_probes_hdf5(self, fname):
+    with h5py.File(fname, "r") as f:
+
+        # Check if there is a key that indicates which are the probes
+        probe_list_key = f.attrs.get("probe_list_key", "xyz")
+
+        # Check if the data exists
+        if probe_list_key in f:
+            probes = f[probe_list_key][:]
+        else:
+            self.log.write("warning", f"Warning: {probe_list_key} not found in {fname}")
+            self.log.write("warning", f"Attemping to use x,y,z coordinates")
+            try:
+                x = f["x"][:]
+                y = f["y"][:]
+                z = f["z"][:]
+            except KeyError:
+                raise KeyError("x, y, z coordinates not found in the file")
+            nx = x.shape[0]
+            ny = x.shape[1]
+            nz = x.shape[2]
+            probes = transform_from_array_to_list(nx,ny,nz,[x, y, z])
+
+            # Store information on how the data was read to be able to use it when writing
+            self.data_read_from_structured_mesh = True
+            self.input_nx = nx
+            self.input_ny = ny
+            self.input_nz = nz
+
+    return probes
 
 def read_mesh(comm, fname):
 

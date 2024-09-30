@@ -264,7 +264,7 @@ class Mesh:
         we store 3 coordinates for each edge.
         '''
 
-        self.log.write("info", "Getting vertices")
+        self.log.write("info", "Getting edge centers")
 
         if self.gdim == 2:
             self.edge_centers = np.zeros((self.nelv, 4, 3), dtype=self.x.dtype) # 4 vertices, 3 coords (z = 0)
