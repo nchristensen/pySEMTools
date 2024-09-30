@@ -1,0 +1,258 @@
+"""Module that contains methods to perform rotations on 3D data"""
+
+from typing import Union
+import h5py
+import os
+import numpy as np
+
+def cartesian_to_cylindrical_rotation_matrix(x: float, y: float, z: float) -> np.ndarray:
+    """
+    Obtain the rotation matrix for a given coordinate
+
+    This function will accept one coordinate and return the rotation matrix at that coordinate
+    """
+
+    rotation_matrix = np.zeros((3, 3))
+
+    # Define the rotation matrix
+    angle = np.arctan2(y, x)
+    if angle < 0:
+        angle = angle + 2*np.pi
+
+    rotation_matrix[0, 0] = np.cos(angle)
+    rotation_matrix[0, 1] = np.sin(angle)
+    rotation_matrix[0, 2] = 0
+    rotation_matrix[1, 0] = -np.sin(angle)
+    rotation_matrix[1, 1] = np.cos(angle)
+    rotation_matrix[1, 2] = 0
+    rotation_matrix[2, 0] = 0
+    rotation_matrix[2, 1] = 0
+    rotation_matrix[2, 2] = 1
+
+    return rotation_matrix
+
+def rotate_tensor_from_file(msh: Union[str], fld: Union[str], tensor_field_names: list, rotation_matrix: callable, output_file: Union[str] = None, output_field_names: list = None) -> np.ndarray:
+    """
+    Rotate tensor from a file
+
+    This function will rotate a tensor from a file using the rotation matrix
+
+    Parameters
+    ----------
+    msh : Union[str]
+        The mesh file name
+    fld : Union[str]
+        The field file name
+    tensor_field_names : list
+        The names of the tensor fields to be rotated in order
+    rotation_matrix : callable
+        The rotation matrix generator to be used
+
+    Returns
+    -------
+    np.ndarray
+        The rotated tensor
+    """
+
+    #Read the mesh data
+    path = os.path.dirname(msh)
+    if path == '': path = '.'
+    prefix = os.path.basename(msh).split('.')[0]
+    extension = os.path.basename(msh).split('.')[1]
+    if extension == 'hdf5':
+        with h5py.File(msh, 'r') as f:
+            x = f["x"][:]
+            y = f["y"][:]
+            z = f["z"][:]
+    else:
+        raise ValueError('The mesh file must be in HDF5 format')
+    
+    # Read the tensor data
+    path = os.path.dirname(fld)
+    if path == '': path = '.'
+    prefix = os.path.basename(fld).split('.')[0]
+    extension = os.path.basename(fld).split('.')[1]
+    if extension == 'hdf5':
+        with h5py.File(fld, 'r') as f:
+            tensor = []
+            for field_name in tensor_field_names:
+                tensor.append(f[field_name][:])
+    else:
+        raise ValueError('The field file must be in HDF5 format')
+    
+    # Rotate the tensor
+    if len(tensor) == 3:
+        rotated_tensor = rotate_rank1_tensor(x, y, z, tensor, rotation_matrix)
+    elif len(tensor) == 9:
+        rotated_tensor = rotate_rank2_tensor(x, y, z, tensor, rotation_matrix)
+    else:
+        raise ValueError('Rotation in this type of tensor is not implemented')
+    
+    if not isinstance(output_file, type(None)):
+        path = os.path.dirname(output_file)
+        if path == '': path = '.'
+        prefix = os.path.basename(output_file).split('.')[0]
+        extension = os.path.basename(output_file).split('.')[1]
+        if extension == 'hdf5':
+            with h5py.File(output_file, 'w') as f:
+                for i, field_name in enumerate(tensor_field_names):
+                    if isinstance(output_field_names, type(None)):
+                        f.create_dataset(f"rot_{field_name}", data=rotated_tensor[i])
+                    else:
+                        f.create_dataset(f"{output_field_names[i]}", data=rotated_tensor[i])
+        else:
+            raise ValueError('The output file must be in HDF5 format')
+    else:
+        return rotated_tensor 
+
+def rotate_rank1_tensor(x: np.ndarray, y: np.ndarray, z: np.ndarray, tensor: list[np.ndarray], rotation_matrix: callable) -> np.ndarray:
+    """
+    Rotate a rank 1 tensor
+
+    This function will rotate a rank 1 tensor using the rotation matrix
+
+    Parameters
+    ----------
+    x : np.ndarray
+        The x coordinate of the tensor
+    y : np.ndarray
+        The y coordinate of the tensor
+    z : np.ndarray
+        The z coordinate of the tensor
+    tensor : list[np.ndarray, np.ndarray, np.ndarray]
+        The tensor to be rotated. A rank 1 tensor is a list of 3 np.ndarrays.
+        each of them corresponding to the x, y, and z components of the column vector that is the tensor
+    rotation_matrix : callable
+        The rotation matrix generator to be used
+
+    Returns
+    -------
+    list[np.ndarray, np.ndarray, np.ndarray]
+        The rotated tensor
+    """
+
+    field_shape = x.shape
+    field_flattened_shape = x.size
+
+    # Flatten the fields to make them easier to treat
+    x.shape = (field_flattened_shape,)
+    y.shape = (field_flattened_shape,)
+    z.shape = (field_flattened_shape,)
+    
+    # Flatten and allocate new data
+    rotated_tensor = []
+    for i, _ in enumerate(tensor):
+        tensor[i].shape = (field_flattened_shape,)
+        rotated_tensor.append(np.zeros_like(tensor[i]))
+
+
+    point_tensor = np.zeros((3, 1))
+    for i in range(0, x.size):
+
+        # Get the rotation matrix
+        rotation_matrix_ = rotation_matrix(x[i], y[i], z[i])
+
+        # assig the tensor
+        point_tensor[0, 0] = tensor[0][i]
+        point_tensor[1, 0] = tensor[1][i]
+        point_tensor[2, 0] = tensor[2][i]
+
+        # Rotate the tensor
+        rotated_point_tensor = rotation_matrix_@point_tensor
+
+        # Assign the rotated tensor
+        rotated_tensor[0][i] = rotated_point_tensor[0, 0]
+        rotated_tensor[1][i] = rotated_point_tensor[1, 0]
+        rotated_tensor[2][i] = rotated_point_tensor[2, 0]
+
+    # Reshape the fields
+    x.shape = field_shape
+    y.shape = field_shape
+    z.shape = field_shape
+    for i, _ in enumerate(rotated_tensor):
+        tensor[i].shape = field_shape
+        rotated_tensor[i].shape = field_shape
+
+    return rotated_tensor
+
+def rotate_rank2_tensor(x: np.ndarray, y: np.ndarray, z: np.ndarray, tensor: list[np.ndarray], rotation_matrix: callable) -> np.ndarray:
+    """
+    Rotate a rank 2 tensor
+
+    This function will rotate a rank 2 tensor using the rotation matrix
+
+    Parameters
+    ----------
+    x : np.ndarray
+        The x coordinate of the tensor
+    y : np.ndarray
+        The y coordinate of the tensor
+    z : np.ndarray
+        The z coordinate of the tensor
+    tensor : list[np.ndarray, np.ndarray, np.ndarray]
+        The tensor to be rotated. A rank 2 tensor is a list of 3x3 np.ndarrays.
+        each 3 entries of the list will fill a row of the tensor
+    rotation_matrix : callable
+        The rotation matrix generator to be used
+
+    Returns
+    -------
+    list[np.ndarray, np.ndarray, np.ndarray]
+        The rotated tensor
+    """
+
+    field_shape = x.shape
+    field_flattened_shape = x.size
+
+    # Flatten the fields to make them easier to treat
+    x.shape = (field_flattened_shape,)
+    y.shape = (field_flattened_shape,)
+    z.shape = (field_flattened_shape,)
+    
+    # Flatten and allocate new data
+    rotated_tensor = []
+    for i, _ in enumerate(tensor):
+        tensor[i].shape = (field_flattened_shape,)
+        rotated_tensor.append(np.zeros_like(tensor[i]))
+
+
+    point_tensor = np.zeros((3, 3))
+    for i in range(0, x.size):
+
+        # Get the rotation matrix
+        rotation_matrix_ = rotation_matrix(x[i], y[i], z[i])
+
+        # assig the tensor
+        point_tensor[0, 0] = tensor[0][i]
+        point_tensor[0, 1] = tensor[1][i]
+        point_tensor[0, 2] = tensor[2][i]
+        point_tensor[1, 0] = tensor[3][i]
+        point_tensor[1, 1] = tensor[4][i]
+        point_tensor[1, 2] = tensor[5][i]
+        point_tensor[2, 0] = tensor[6][i]
+        point_tensor[2, 1] = tensor[7][i]
+        point_tensor[2, 2] = tensor[8][i]  
+
+        # Rotate the tensor
+        rotated_point_tensor = rotation_matrix_@point_tensor@rotation_matrix_.T
+
+        # Assign the rotated tensor
+        rotated_tensor[0][i] = rotated_point_tensor[0, 0]
+        rotated_tensor[1][i] = rotated_point_tensor[0, 1]
+        rotated_tensor[2][i] = rotated_point_tensor[0, 2]
+        rotated_tensor[3][i] = rotated_point_tensor[1, 0]
+        rotated_tensor[4][i] = rotated_point_tensor[1, 1]
+        rotated_tensor[5][i] = rotated_point_tensor[1, 2]
+        rotated_tensor[6][i] = rotated_point_tensor[2, 0]
+        rotated_tensor[7][i] = rotated_point_tensor[2, 1]
+        rotated_tensor[8][i] = rotated_point_tensor[2, 2]
+
+    # Reshape the fields
+    x.shape = field_shape
+    y.shape = field_shape
+    z.shape = field_shape
+    for i, _ in enumerate(rotated_tensor):
+        tensor[i].shape = field_shape
+        rotated_tensor[i].shape = field_shape
+
+    return rotated_tensor
