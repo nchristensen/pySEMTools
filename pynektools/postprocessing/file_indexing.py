@@ -211,7 +211,7 @@ def index_files_from_log(comm, logpath="", logname="", progress_reports=50):
     for file in added_files:
         logger.write("info", f"Writing {file} file index")
         logger.tic()
-        with open(path + file + "_index.json", "w") as outfile:
+        with open(path + os.path.basename(file).split('.')[0] + "_index.json", "w") as outfile:
             outfile.write(json.dumps(files[file], indent=4))
         logger.toc()
 
@@ -304,7 +304,7 @@ def index_files_from_folder(
     # Do a test to see if the file type exist and if one wants to overwrite it
     remove = []
     for ftype in added_files:
-        index_fname = folder_path + ftype + "_index.json"
+        index_fname = folder_path + os.path.basename(ftype).split('.')[0] + "_index.json"
         file_exists = os.path.exists(index_fname)
         if file_exists:
             logger.write("warning", f"File {index_fname} exists. Overwrite?")
@@ -401,7 +401,7 @@ def index_files_from_folder(
         logger.write("info", f"Writing {file} file index")
         logger.tic()
         if comm.Get_rank() == 0:
-            with open(output_folder + file + "_index.json", "w") as outfile:
+            with open(output_folder + os.path.basename(file).split(".")[0] + "_index.json", "w") as outfile:
                 outfile.write(json.dumps(files[file], indent=4))
         comm.Barrier()
         logger.toc()
