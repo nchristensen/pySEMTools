@@ -1,0 +1,27 @@
+{
+    "dir_1": {
+        "min_value": 0,
+        "max_value": 0.05,
+        "number_of_points": 30,
+        "point_distribution": "equal",
+        "point_distribution_gain" : 1,
+        "periodic": false
+    },
+    "dir_2": {
+        "min_value": 0,
+        "max_value": 6.283185307179586,
+        "number_of_points": 30,
+        "point_distribution": "equal",
+        "point_distribution_gain" : 1,
+        "periodic": true
+    },
+    "dir_3": {
+        "min_value": 0,
+        "max_value": 1,
+        "number_of_points": 80,
+        "point_distribution": "equal",
+        "point_distribution_gain" : 1,
+        "periodic": false
+    },
+    "output_fname": "points.hdf5"
+}
