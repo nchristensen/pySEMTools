@@ -7,5 +7,5 @@ comm = MPI.COMM_WORLD
 
 
 # Create a list with all the index files to be merged
-indices = ["./sem_data/statistics/mean_field.fld_index.json"]
+indices = ["./sem_data/statistics/mean_field_index.json"]
 merge_index_files(comm, index_list=indices, output_fname="case_files_index.json", sort_by_time = False)
