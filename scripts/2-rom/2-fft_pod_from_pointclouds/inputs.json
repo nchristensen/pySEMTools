@@ -1,0 +1,35 @@
+{
+    "file_sequence" : {
+        "fname" : "../../1-interpolation/2-interpolation_file_sequence/interpolated_fields.hdf5",
+        "first_index": 1,
+        "number_of_files" : 15,
+        "fill_name_with_zeros" : 5
+    },
+    "pod_fields" : ["u", "v", "w"],
+    "mass_matrix" : {
+        "fname" : "../../1-interpolation/1-structured_mesh_generation/points.hdf5",
+        "key" : "mass"
+    },
+    "pod_modes_to_update" : 15,
+    "batch_size" : 15,
+    "fft_axis" : 1,
+    "outputs" : {
+        "prefix" : "pod.vtk",
+        "write_modes" : {
+            "write" : true,
+            "wavenumbers": "all",
+            "modes" : "all"
+        },
+        "write_reconstruction" : {
+            "write" : true,
+            "wavenumbers": "all",
+            "modes" : "all",
+            "snapshots" : "all"
+        },
+        "write_state" : {
+            "write" : true,
+            "name" : "pod_state.hdf5"
+        }
+        
+    }
+}
