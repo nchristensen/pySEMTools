@@ -44,6 +44,7 @@ jobs:
           pip install pytest-json-report
           pip install pympler
           pip install memory_profiler
+          pip install h5py
           pip install .
           
       - name: Run unit tests
