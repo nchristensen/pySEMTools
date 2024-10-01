@@ -8,3 +8,4 @@ dist
 *.hdf5
 *.vts
 *.png
+*.npy
