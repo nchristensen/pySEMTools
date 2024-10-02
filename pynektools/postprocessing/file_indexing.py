@@ -211,7 +211,7 @@ def index_files_from_log(comm, logpath="", logname="", progress_reports=50):
     for file in added_files:
         logger.write("info", f"Writing {file} file index")
         logger.tic()
-        with open(path + file + "_index.json", "w") as outfile:
+        with open(path + os.path.basename(file).split('.')[0] + "_index.json", "w") as outfile:
             outfile.write(json.dumps(files[file], indent=4))
         logger.toc()
 
@@ -225,6 +225,8 @@ def index_files_from_folder(
     stat_start_time=0,
     output_folder="",
     file_type="",
+    include_time_interval: bool = True,
+    include_file_contents: bool = False,
 ):
     """
     Index files based on a folder.
@@ -302,7 +304,7 @@ def index_files_from_folder(
     # Do a test to see if the file type exist and if one wants to overwrite it
     remove = []
     for ftype in added_files:
-        index_fname = folder_path + ftype + "_index.json"
+        index_fname = folder_path + os.path.basename(ftype).split('.')[0] + "_index.json"
         file_exists = os.path.exists(index_fname)
         if file_exists:
             logger.write("warning", f"File {index_fname} exists. Overwrite?")
@@ -325,7 +327,11 @@ def index_files_from_folder(
     files_last_sample = {}
     for ftype in added_files:
         files[ftype] = dict()
-        files[ftype]["simulation_start_time"] = run_start_time
+        if include_time_interval:
+            if "stat" in ftype or "mean" in ftype:
+                files[ftype]["statistics_start_time"] = stat_start_time
+            else:
+                files[ftype]["simulation_start_time"] = run_start_time
         files_index[ftype] = 0
 
     for i, file_in_folder in enumerate(files_in_folder):
@@ -335,7 +341,7 @@ def index_files_from_folder(
         if ftype not in added_files:
             continue
 
-        logger.write("info", f"Indexing file: {file_in_folder}")
+        logger.write("debug", f"Indexing file: {file_in_folder}")
 
         files[ftype][files_index[ftype]] = dict()
         files[ftype][files_index[ftype]]["fname"] = file_in_folder
@@ -350,32 +356,41 @@ def index_files_from_folder(
         files[ftype][files_index[ftype]]["time"] = current_time
 
         if files_index[ftype] == 0:
-            if "stat" in ftype or "mean" in ftype:
-                files[ftype][files_index[ftype]][
-                    "time_previous_output"
-                ] = stat_start_time
-            else:
-                files[ftype][files_index[ftype]][
-                    "time_previous_output"
-                ] = run_start_time
+            if include_time_interval:
+                if "stat" in ftype or "mean" in ftype:
+                    files[ftype][files_index[ftype]][
+                        "time_previous_output"
+                    ] = stat_start_time
+                else:
+                    files[ftype][files_index[ftype]][
+                        "time_previous_output"
+                    ] = run_start_time
         else:
-            files[ftype][files_index[ftype]]["time_previous_output"] = files[ftype][
-                files_index[ftype] - 1
-            ]["time"]
+            if include_time_interval:
+                files[ftype][files_index[ftype]]["time_previous_output"] = files[ftype][
+                    files_index[ftype] - 1
+                ]["time"]
 
-        files[ftype][files_index[ftype]]["time_interval"] = (
-            current_time - files[ftype][files_index[ftype]]["time_previous_output"]
-        )
+        if include_time_interval:
+            files[ftype][files_index[ftype]]["time_interval"] = (
+                current_time - files[ftype][files_index[ftype]]["time_previous_output"]
+            )
+        
+        if include_file_contents:
+            files[ftype][files_index[ftype]]["file_contents"] = {"mesh_fields" : header.nb_vars[0],
+                                                                 "velocity_fields" : header.nb_vars[1],
+                                                                 "pressure_fields" : header.nb_vars[2],
+                                                                 "scalar_fields" : header.nb_vars[3]}
 
         for key in files[ftype][files_index[ftype]].keys():
-            logger.write("info", f"{key}: {files[ftype][files_index[ftype]][key]}")
+            logger.write("debug", f"{key}: {files[ftype][files_index[ftype]][key]}")
 
         files_index[ftype] += 1
 
-        if comm.Get_rank() == 0:
-            print(
-                "========================================================================================="
-            )
+        #if comm.Get_rank() == 0:
+        #    print(
+        #        "========================================================================================="
+        #    )
 
     logger.write("info", "Check finished")
 
@@ -386,7 +401,7 @@ def index_files_from_folder(
         logger.write("info", f"Writing {file} file index")
         logger.tic()
         if comm.Get_rank() == 0:
-            with open(output_folder + file + "_index.json", "w") as outfile:
+            with open(output_folder + os.path.basename(file).split(".")[0] + "_index.json", "w") as outfile:
                 outfile.write(json.dumps(files[file], indent=4))
         comm.Barrier()
         logger.toc()

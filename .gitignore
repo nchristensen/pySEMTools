@@ -5,3 +5,7 @@ __pycache__
 *_checkpoints
 dist
 *.egg-info
+*.hdf5
+*.vts
+*.png
+*.npy

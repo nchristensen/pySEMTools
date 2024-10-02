@@ -11,3 +11,6 @@ dependencies = [
     "scipy",
     "pre-commit"
 ]
+
+[project.scripts]
+pynektools_index-files = "pynektools.cli.index_files:main"

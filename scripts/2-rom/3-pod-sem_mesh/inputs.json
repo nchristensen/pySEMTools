@@ -1,0 +1,20 @@
+{
+"Version": 1.0,
+"number_of_snapshots": 15,
+"batch_size"         : 100,
+"keep_modes"         : 100,
+"write_modes"        : 10,
+"fields"             : [0,1,2],
+"IO":{
+	"mesh_data": {
+		"dataPath" : "/home/adperez/software/pyNekTools/examples/data/sem_data/instantaneous/cylinder_rbc_nelv_600/",
+		"casename"           : "field",
+		"first_index"        : 801
+	},
+	"field_data": {
+		"dataPath" : "/home/adperez/software/pyNekTools/examples/data/sem_data/instantaneous/cylinder_rbc_nelv_600/",
+		"casename"           : "field",
+		"first_index"        : 801
+	}
+}
+}

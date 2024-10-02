@@ -12,7 +12,8 @@ def average_field_files(
     comm,
     field_index_name="",
     output_folder="./",
-    output_batch_t_len=50,
+    output_name="",
+    output_batch_t_len=50000,
     mesh_index="",
     dtype=np.single,
     rel_tol=0.05,
@@ -184,12 +185,21 @@ def average_field_files(
         ):
 
             if i == 0:
-                out_fname = (
-                    batches[batch][file]["fname"].split(".")[0][:-1]
-                    + "0.f"
-                    + str(batch).zfill(5)
-                )
-                out_fname = "batch_" + out_fname
+                if output_name == "":
+                    out_fname = (
+                        batches[batch][file]["fname"].split(".")[0][:-1]
+                        + "0.f"
+                        + str(batch).zfill(5)
+                    )
+                
+                    out_fname = "batch_" + out_fname
+                else:
+                    prefix = os.path.basename(output_name).split(".")[0]
+                    out_fname = (
+                        prefix
+                        + "0.f"
+                        + str(batch).zfill(5)
+                    )                
 
             fname = batches[batch][file]["path"]
             file_dt = batches[batch][file]["time_interval"]

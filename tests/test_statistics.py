@@ -87,7 +87,7 @@ def test_time_averaging_1_batches():
     index_files_from_folder(comm, folder_path=".", run_start_time=0, stat_start_time = 0 )
 
     # Now average the fields and write them to disk
-    average_field_files(comm, field_index_name = "./mean_rbc.fld_index.json", output_folder = "./", output_batch_t_len=70) 
+    average_field_files(comm, field_index_name = "./mean_rbc_index.json", output_folder = "./", output_batch_t_len=70) 
 
 
     # Now read the files and see if they are correct
@@ -111,7 +111,7 @@ def test_time_averaging_1_batches():
         os.system("rm ./mean_rbc0.f00000")
         os.system("rm ./mean_rbc0.f00001")
         os.system("rm ./mean_rbc0.f00002")
-        os.system("rm ./mean_rbc.fld_index.json")
+        os.system("rm ./mean_rbc_index.json")
         os.system("rm ./batches.json")
         os.system("rm ./batch_mean_rbc0.f00000")
     comm.Barrier()
@@ -186,7 +186,7 @@ def test_time_averaging_2_batches():
     index_files_from_folder(comm, folder_path=".", run_start_time=0, stat_start_time = 0 )
 
     # Now average the fields and write them to disk
-    average_field_files(comm, field_index_name = "./mean_rbc.fld_index.json", output_folder = "./", output_batch_t_len=42) 
+    average_field_files(comm, field_index_name = "./mean_rbc_index.json", output_folder = "./", output_batch_t_len=42) 
 
 
     # Now read the files and see if they are correct
@@ -227,7 +227,7 @@ def test_time_averaging_2_batches():
         os.system("rm ./mean_rbc0.f00000")
         os.system("rm ./mean_rbc0.f00001")
         os.system("rm ./mean_rbc0.f00002")
-        os.system("rm ./mean_rbc.fld_index.json")
+        os.system("rm ./mean_rbc_index.json")
         os.system("rm ./batches.json")
         os.system("rm ./batch_mean_rbc0.f00000")
         os.system("rm ./batch_mean_rbc0.f00001")

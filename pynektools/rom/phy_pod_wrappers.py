@@ -301,7 +301,7 @@ def write_3dfield_to_file(
             )
 
             # Write 3D field
-            sufix = f"_mode{mode}.vtk"
+            sufix = f"mode{mode}.vtk"
 
             # Check the extension and path of the file
             ## Path
