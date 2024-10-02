@@ -10,7 +10,7 @@ import json
 
 def interpolate_fields_from_disk(comm: MPI.Comm,
                                 query_points_fname: str,
-                                sem_mesh_fname: str,
+                                sem_mesh_fname: Union[list, str],
                                 field_interpolation_settings: dict,
                                 interpolated_fields_output_fname: str = "interpolated_fields.hdf5",
                                 dtype: np.dtype = np.single,
@@ -37,8 +37,9 @@ def interpolate_fields_from_disk(comm: MPI.Comm,
         The MPI communicator
     query_points_fname : str
         The filename of the query points
-    sem_mesh_fname : str
+    sem_mesh_fname : Union[str, list]
         The filename of the SEM mesh
+        if the input is a list, the first element must be the filename and the second element must be the dtype of the SEM mesh in memory
     field_interpolation_settings : dict
         The settings for the field interpolation
         The dictionary must have the following keys:

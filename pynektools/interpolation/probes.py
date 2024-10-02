@@ -2,6 +2,7 @@
 
 import json
 import csv
+
 try:
     import h5py
 except ImportError:
@@ -34,24 +35,18 @@ class Probes:
     ----------
     comm : MPI communicator
         MPI communicator.
-    filename : str, optional
-        Path to JSON file containing paths for probes, mesh and output data. Default is None.
-        If probes are passed as agrument, the JSON part containing this is ignored.
-        If msh is passed as argument, the JSON part containing this is ignored.
-        If this file is not passed, the output data is written to the current directory.
-        If this file is not passed, the msh and probes must be arguments.
-    probes : ndarray, optional
-        2D array of probe coordinates. shape = (n_probes, 3). Default is None.
-        If this is passed, the probes are scattered to all ranks from rank 0.
-        any probe object that was not passed in rank 0 will be ignored.
-    msh : Mesh, optional
-        If this is passed, the mesh is assigned from this object.
-        The mesh object is by default a distributed data type and it is treated as so.
-        In other words, the mesh is not scattered to all ranks.
+    output_fname : str
+        Output file name. Default is "./interpolated_fields.csv".
+    probes : Union[np.ndarray, str]
+        Probes coordinates. If a string, it is assumed to be a file name.
+    msh : Union[Mesh, str, list]
+        Mesh data. If a string, it is assumed to be a file name. If it is a list
+        the first entry is the file name and the second is the dtype of the data.
+        if it is a Mesh object, the x, y, z coordinates are taken from the object.
     write_coords : bool
-        If True, the probe coordinates are written to a csv file. Default is True.
+        If True, the coordinates of the probes are written to a file. Default is True.
     progress_bar : bool
-        If True, a progress bar is displayed. Default is False.
+        If True, a progress bar is shown. Default is False.
     point_interpolator_type : str
         Type of point interpolator. Default is single_point_legendre.
         options are: single_point_legendre, single_point_lagrange,
@@ -71,15 +66,19 @@ class Probes:
         Number of bins in the global tree. Only used if the global tree is domain_binning.
         Default is 1024.
     use_autograd : bool
-        If True, autograd is used to compute the interpolation. Default is False.
-        This is only used if the interpolator is a torch interpolator.
+        If True, autograd is used. Default is False.
+    find_points_tol : float
+        The tolerance to use when finding points. Default is np.finfo(np.double).eps * 10.
+    find_points_max_iter : int
+        The maximum number of iterations to use when finding points. Default is
+        50.
 
     Attributes
     ----------
     probes : ndarray
-        2D array of probe coordinates. shape = (n_probes, 3). Held at Rank 0.
+        2D array of probe coordinates. shape = (n_probes, 3).
     interpolated_fields : ndarray
-        2D array of interpolated fields at probes. shape = (n_probes, n_fields + 1). Held at Rank 0.
+        2D array of interpolated fields at probes. shape = (n_probes, n_fields + 1).
         The first column is always time, the rest are the interpolated fields.
 
     Notes
@@ -118,7 +117,7 @@ class Probes:
         comm,
         output_fname: str = "./interpolated_fields.csv",
         probes: Union[np.ndarray, str] = None,
-        msh=Union[Mesh, str],
+        msh=Union[Mesh, str, list],
         write_coords: bool = True,
         progress_bar: bool = False,
         point_interpolator_type: str = "single_point_legendre",
@@ -193,6 +192,14 @@ class Probes:
         elif isinstance(msh, str):
             self.log.write("info", f"Reading mesh from {msh}")
             self.x, self.y, self.z = read_mesh(comm, msh)
+        elif isinstance(msh, list):
+            fname = msh[0]
+            if len(msh) == 1:
+                dtype = np.single
+            else:
+                dtype = msh[1]
+            self.log.write("info", f"Reading mesh from {fname} with dtype {dtype}")
+            self.x, self.y, self.z = read_mesh(comm, fname, dtype=dtype)
         else:
             raise ValueError("msh must be provided as argument")
 
@@ -280,7 +287,9 @@ class Probes:
         self.log.write("info", "Probes object initialized")
         self.log.toc()
 
-    def interpolate_from_field_list(self, t, field_list, comm, write_data=True, field_names: list[str] = None):
+    def interpolate_from_field_list(
+        self, t, field_list, comm, write_data=True, field_names: list[str] = None
+    ):
         """
         Interpolate the probes from a list of fields.
 
@@ -426,7 +435,7 @@ class Probes:
                 self.field_names = [f"field_{i}" for i in range(self.number_of_fields)]
             else:
                 self.field_names = field_names
-            
+
             self.written_file_counter += 1
 
             if not self.distributed_probes:
@@ -486,7 +495,8 @@ def write_warnings(self, parallel=False):
 
         i += 1
     path = os.path.dirname(self.output_fname)
-    if path == "": path = "."
+    if path == "":
+        path = "."
     fname = os.path.basename(self.output_fname)
     fname = fname.split(".")[0]
 
@@ -565,33 +575,40 @@ def write_coordinates_csv(self, parallel=True):
             header=header,
         )
 
+
 def write_coordinates_hdf5(self, parallel=True):
-    
+
     ## Write the coordinates
     self.log.write("info", "Writing probe coordinates to {}".format(self.output_fname))
 
     path = os.path.dirname(self.output_fname)
-    if path == "": path = "."
+    if path == "":
+        path = "."
     fname = os.path.basename(self.output_fname)
     fname = f"coordinates_{fname}"
     if not parallel:
         with h5py.File(f"{path}/{fname}", "w") as f:
             if self.data_read_from_structured_mesh:
-                coord_list = transform_from_list_to_array(self.input_nx, self.input_ny, self.input_nz, self.probes)
+                coord_list = transform_from_list_to_array(
+                    self.input_nx, self.input_ny, self.input_nz, self.probes
+                )
                 f.create_dataset("x", data=coord_list[0])
                 f.create_dataset("y", data=coord_list[1])
                 f.create_dataset("z", data=coord_list[2])
             else:
                 f.create_dataset("xyz", data=self.probes)
-    else:    
+    else:
         with h5py.File(f"{path}/rank_{self.itp.rt.comm.Get_rank()}_{fname}", "w") as f:
             if self.data_read_from_structured_mesh:
-                coord_list = transform_from_list_to_array(self.input_nx, self.input_ny, self.input_nz, self.itp.probes)
+                coord_list = transform_from_list_to_array(
+                    self.input_nx, self.input_ny, self.input_nz, self.itp.probes
+                )
                 f.create_dataset("x", data=coord_list[0])
                 f.create_dataset("y", data=coord_list[1])
                 f.create_dataset("z", data=coord_list[2])
             else:
                 f.create_dataset("xyz", data=self.itp.probes)
+
 
 def write_interpolated_data_csv(self, parallel=True):
 
@@ -609,24 +626,28 @@ def write_interpolated_data_csv(self, parallel=True):
             "a",
         )
 
+
 def write_interpolated_data_hdf5(self, parallel=True):
 
     path = os.path.dirname(self.output_fname)
-    if path == "": path = "."
+    if path == "":
+        path = "."
     fname = os.path.basename(self.output_fname)
     fname = fname.split(".")[0]
     if not parallel:
         fname = f"{fname}{str(self.written_file_counter).zfill(5)}.hdf5"
     else:
         fname = f"rank_{self.itp.rt.comm.Get_rank()}_{fname}{str(self.written_file_counter).zfill(5)}.hdf5"
-        
+
     self.log.write("info", f"Writing interpolated fields to {path}/{fname}")
 
     with h5py.File(f"{path}/{fname}", "w") as f:
-        
+
         if self.data_read_from_structured_mesh:
-            
-            field_list = transform_from_list_to_array(self.input_nx, self.input_ny, self.input_nz, self.interpolated_fields)
+
+            field_list = transform_from_list_to_array(
+                self.input_nx, self.input_ny, self.input_nz, self.interpolated_fields
+            )
 
             for i in range(len(field_list)):
                 if i == 0:
@@ -638,7 +659,9 @@ def write_interpolated_data_hdf5(self, parallel=True):
                 if i == 0:
                     f.attrs["time"] = self.interpolated_fields[0, i]
                 else:
-                    f.create_dataset(f"{self.field_names[i-1]}", data=self.interpolated_fields[:, i])
+                    f.create_dataset(
+                        f"{self.field_names[i-1]}", data=self.interpolated_fields[:, i]
+                    )
 
 
 def write_csv(fname, data, mode, header=None):
@@ -699,6 +722,7 @@ def read_probes_csv(self, fname):
     probes = np.array(list(csv.reader(file)), dtype=np.double)
     return probes
 
+
 def read_probes_hdf5(self, fname):
     with h5py.File(fname, "r") as f:
 
@@ -720,7 +744,7 @@ def read_probes_hdf5(self, fname):
             nx = x.shape[0]
             ny = x.shape[1]
             nz = x.shape[2]
-            probes = transform_from_array_to_list(nx,ny,nz,[x, y, z])
+            probes = transform_from_array_to_list(nx, ny, nz, [x, y, z])
 
             # Store information on how the data was read to be able to use it when writing
             self.data_read_from_structured_mesh = True
@@ -730,9 +754,10 @@ def read_probes_hdf5(self, fname):
 
     return probes
 
-def read_mesh(comm, fname):
+
+def read_mesh(comm, fname, dtype=np.single):
 
     msh = Mesh(comm, create_connectivity=False)
-    pynekread(fname, comm, data_dtype=np.single, msh=msh)
+    pynekread(fname, comm, data_dtype=dtype, msh=msh)
 
     return msh.x, msh.y, msh.z

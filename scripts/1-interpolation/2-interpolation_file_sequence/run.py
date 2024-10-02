@@ -17,13 +17,21 @@ def main():
     query_points_fname = inputs['query_points_fname']
     sem_mesh_fname = inputs['spectral_element_mesh_fname']
     interpolated_fields_output_fname = inputs['output_sequence_fname']
+    sem_dtype_str = inputs.get('spectral_element_mesh_type_in_memory', 'single')
+
+    if sem_dtype_str == 'single':
+        sem_dtype = np.single
+    elif sem_dtype_str == 'double':
+        sem_dtype = np.double
+    else:
+        raise ValueError(f"Invalid spectral element mesh data type: {sem_dtype_str}")
 
     field_interpolation_dictionary = {}
     field_interpolation_dictionary['input_type'] = "file_index"
     field_interpolation_dictionary['file_index'] = inputs["file_index_to_interpolate"]
     field_interpolation_dictionary['fields_to_interpolate'] = inputs["fields_to_interpolate"]
 
-    interpolate_fields_from_disk(comm, query_points_fname, sem_mesh_fname, field_interpolation_dictionary, interpolated_fields_output_fname=interpolated_fields_output_fname)
+    interpolate_fields_from_disk(comm, query_points_fname, [sem_mesh_fname, sem_dtype], field_interpolation_dictionary, interpolated_fields_output_fname=interpolated_fields_output_fname)
 
 if __name__ == "__main__":
     main()
