@@ -34,24 +34,18 @@ class Probes:
     ----------
     comm : MPI communicator
         MPI communicator.
-    filename : str, optional
-        Path to JSON file containing paths for probes, mesh and output data. Default is None.
-        If probes are passed as agrument, the JSON part containing this is ignored.
-        If msh is passed as argument, the JSON part containing this is ignored.
-        If this file is not passed, the output data is written to the current directory.
-        If this file is not passed, the msh and probes must be arguments.
-    probes : ndarray, optional
-        2D array of probe coordinates. shape = (n_probes, 3). Default is None.
-        If this is passed, the probes are scattered to all ranks from rank 0.
-        any probe object that was not passed in rank 0 will be ignored.
-    msh : Mesh, optional
-        If this is passed, the mesh is assigned from this object.
-        The mesh object is by default a distributed data type and it is treated as so.
-        In other words, the mesh is not scattered to all ranks.
+    output_fname : str
+        Output file name. Default is "./interpolated_fields.csv".
+    probes : Union[np.ndarray, str]
+        Probes coordinates. If a string, it is assumed to be a file name.
+    msh : Union[Mesh, str, list]
+        Mesh data. If a string, it is assumed to be a file name. If it is a list
+        the first entry is the file name and the second is the dtype of the data.
+        if it is a Mesh object, the x, y, z coordinates are taken from the object.
     write_coords : bool
-        If True, the probe coordinates are written to a csv file. Default is True.
+        If True, the coordinates of the probes are written to a file. Default is True.
     progress_bar : bool
-        If True, a progress bar is displayed. Default is False.
+        If True, a progress bar is shown. Default is False.
     point_interpolator_type : str
         Type of point interpolator. Default is single_point_legendre.
         options are: single_point_legendre, single_point_lagrange,
@@ -71,15 +65,19 @@ class Probes:
         Number of bins in the global tree. Only used if the global tree is domain_binning.
         Default is 1024.
     use_autograd : bool
-        If True, autograd is used to compute the interpolation. Default is False.
-        This is only used if the interpolator is a torch interpolator.
+        If True, autograd is used. Default is False.
+    find_points_tol : float
+        The tolerance to use when finding points. Default is np.finfo(np.double).eps * 10.
+    find_points_max_iter : int
+        The maximum number of iterations to use when finding points. Default is
+        50.
 
     Attributes
     ----------
     probes : ndarray
-        2D array of probe coordinates. shape = (n_probes, 3). Held at Rank 0.
+        2D array of probe coordinates. shape = (n_probes, 3).
     interpolated_fields : ndarray
-        2D array of interpolated fields at probes. shape = (n_probes, n_fields + 1). Held at Rank 0.
+        2D array of interpolated fields at probes. shape = (n_probes, n_fields + 1).
         The first column is always time, the rest are the interpolated fields.
 
     Notes
@@ -118,7 +116,7 @@ class Probes:
         comm,
         output_fname: str = "./interpolated_fields.csv",
         probes: Union[np.ndarray, str] = None,
-        msh=Union[Mesh, str],
+        msh=Union[Mesh, str, list],
         write_coords: bool = True,
         progress_bar: bool = False,
         point_interpolator_type: str = "single_point_legendre",
@@ -193,6 +191,14 @@ class Probes:
         elif isinstance(msh, str):
             self.log.write("info", f"Reading mesh from {msh}")
             self.x, self.y, self.z = read_mesh(comm, msh)
+        elif isinstance(msh, list):
+            fname = msh[0]
+            if len(msh) == 1:
+                dtype = np.single
+            else:
+                dtype = msh[1]
+            self.log.write("info", f"Reading mesh from {msh} with dtype {dtype}")
+            self.x, self.y, self.z = read_mesh(comm, fname, dtype = dtype)
         else:
             raise ValueError("msh must be provided as argument")
 
@@ -730,9 +736,9 @@ def read_probes_hdf5(self, fname):
 
     return probes
 
-def read_mesh(comm, fname):
+def read_mesh(comm, fname, dtype = np.single):
 
     msh = Mesh(comm, create_connectivity=False)
-    pynekread(fname, comm, data_dtype=np.single, msh=msh)
+    pynekread(fname, comm, data_dtype=dtype, msh=msh)
 
     return msh.x, msh.y, msh.z
