@@ -198,7 +198,7 @@ class Probes:
                 dtype = np.single
             else:
                 dtype = msh[1]
-            self.log.write("info", f"Reading mesh from {msh} with dtype {dtype}")
+            self.log.write("info", f"Reading mesh from {fname} with dtype {dtype}")
             self.x, self.y, self.z = read_mesh(comm, fname, dtype=dtype)
         else:
             raise ValueError("msh must be provided as argument")
