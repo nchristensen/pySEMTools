@@ -4,5 +4,8 @@
     "spectral_element_mesh_type_in_memory" : "single",
     "output_sequence_fname" : "interpolated_fields.hdf5",
     "file_index_to_interpolate" : "/home/adperez/software/pyNekTools/examples/data/sem_data/instantaneous/cylinder_rbc_nelv_600/field_index.json",
-    "fields_to_interpolate": ["all"]
+    "fields_to_interpolate": ["all"],
+    "interpolation_settings" : {
+        "find_points_max_iter" : 50
+    }
 }
