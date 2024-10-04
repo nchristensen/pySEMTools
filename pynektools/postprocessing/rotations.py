@@ -4,6 +4,8 @@ from typing import Union
 import h5py
 import os
 import numpy as np
+from ..io.wrappers import read_data
+
 
 def cartesian_to_cylindrical_rotation_matrix(x: float, y: float, z: float) -> np.ndarray:
     """
@@ -31,7 +33,7 @@ def cartesian_to_cylindrical_rotation_matrix(x: float, y: float, z: float) -> np
 
     return rotation_matrix
 
-def rotate_tensor(msh: Union[str, list[np.ndarray]], fld: Union[str, list[np.ndarray]], tensor_field_names: list, rotation_matrix: callable, output_file: Union[str] = None, output_field_names: list = None) -> np.ndarray:
+def rotate_tensor(comm, msh: Union[str, list[np.ndarray]], fld: Union[str, list[np.ndarray]], tensor_field_names: list, rotation_matrix: callable, output_file: Union[str] = None, output_field_names: list = None) -> np.ndarray:
     """
     Rotate tensor from a file
 
@@ -39,6 +41,8 @@ def rotate_tensor(msh: Union[str, list[np.ndarray]], fld: Union[str, list[np.nda
 
     Parameters
     ----------
+    comm : MPI.COMM_WORLD
+        The MPI communicator.
     msh : Union[str, list[np.ndarray]]
         If it is a string, it is the mesh file name.
         If it is a list of np.ndarrays, it is the mesh data. Should be a list with [x,y,z]
@@ -62,15 +66,12 @@ def rotate_tensor(msh: Union[str, list[np.ndarray]], fld: Union[str, list[np.nda
 
     #Read the mesh data
     if isinstance(msh, str):
-        path = os.path.dirname(msh)
-        if path == '': path = '.'
-        prefix = os.path.basename(msh).split('.')[0]
-        extension = os.path.basename(msh).split('.')[1]
-        if extension == 'hdf5':
-            with h5py.File(msh, 'r') as f:
-                x = f["x"][:]
-                y = f["y"][:]
-                z = f["z"][:]
+        
+        data = read_data(comm, msh, ["x", "y", "z"], dtype = np.single)
+        x = np.copy(data["x"])
+        y = np.copy(data["y"])
+        z = np.copy(data["z"])
+
     elif isinstance(msh, list):
         x = msh[0]
         y = msh[1]
@@ -80,15 +81,12 @@ def rotate_tensor(msh: Union[str, list[np.ndarray]], fld: Union[str, list[np.nda
     
     # Read the tensor data
     if isinstance(fld, str):
-        path = os.path.dirname(fld)
-        if path == '': path = '.'
-        prefix = os.path.basename(fld).split('.')[0]
-        extension = os.path.basename(fld).split('.')[1]
-        if extension == 'hdf5':
-            with h5py.File(fld, 'r') as f:
-                tensor = []
-                for field_name in tensor_field_names:
-                    tensor.append(f[field_name][:])
+
+        data = read_data(comm, fld, tensor_field_names, dtype = np.single)
+        tensor = []
+        for field_name in tensor_field_names:
+            tensor.append(data[field_name])    
+
     elif isinstance(fld, list):
         tensor = fld
     else:
