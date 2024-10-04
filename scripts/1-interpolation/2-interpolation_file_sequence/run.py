@@ -31,7 +31,10 @@ def main():
     field_interpolation_dictionary['file_index'] = inputs["file_index_to_interpolate"]
     field_interpolation_dictionary['fields_to_interpolate'] = inputs["fields_to_interpolate"]
 
-    interpolate_fields_from_disk(comm, query_points_fname, [sem_mesh_fname, sem_dtype], field_interpolation_dictionary, interpolated_fields_output_fname=interpolated_fields_output_fname)
+    # Interpolation settings that must have the same format as probe
+    interpolation_settings = inputs.get('interpolation_settings', {})
+
+    interpolate_fields_from_disk(comm, query_points_fname, [sem_mesh_fname, sem_dtype], field_interpolation_dictionary, interpolated_fields_output_fname=interpolated_fields_output_fname, **interpolation_settings)
 
 if __name__ == "__main__":
     main()

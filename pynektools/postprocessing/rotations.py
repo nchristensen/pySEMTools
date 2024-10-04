@@ -4,6 +4,8 @@ from typing import Union
 import h5py
 import os
 import numpy as np
+from ..io.wrappers import read_data
+
 
 def cartesian_to_cylindrical_rotation_matrix(x: float, y: float, z: float) -> np.ndarray:
     """
@@ -31,7 +33,7 @@ def cartesian_to_cylindrical_rotation_matrix(x: float, y: float, z: float) -> np
 
     return rotation_matrix
 
-def rotate_tensor_from_file(msh: Union[str], fld: Union[str], tensor_field_names: list, rotation_matrix: callable, output_file: Union[str] = None, output_field_names: list = None) -> np.ndarray:
+def rotate_tensor(comm, msh: Union[str, list[np.ndarray]], fld: Union[str, list[np.ndarray]], tensor_field_names: list, rotation_matrix: callable, output_file: Union[str] = None, output_field_names: list = None) -> np.ndarray:
     """
     Rotate tensor from a file
 
@@ -39,14 +41,22 @@ def rotate_tensor_from_file(msh: Union[str], fld: Union[str], tensor_field_names
 
     Parameters
     ----------
-    msh : Union[str]
-        The mesh file name
-    fld : Union[str]
-        The field file name
+    comm : MPI.COMM_WORLD
+        The MPI communicator.
+    msh : Union[str, list[np.ndarray]]
+        If it is a string, it is the mesh file name.
+        If it is a list of np.ndarrays, it is the mesh data. Should be a list with [x,y,z]
+    fld : Union[str, list[np.ndarray]]
+        If it is a string, it is the field file name.
+        If it is a list of np.ndarrays, it is the field data. Should be the same size a tensor field names
     tensor_field_names : list
         The names of the tensor fields to be rotated in order
     rotation_matrix : callable
         The rotation matrix generator to be used
+    output_file : Union[str], optional
+        The output file name, by default None
+    output_field_names : list, optional
+        The names of the output fields, by default None
 
     Returns
     -------
@@ -55,28 +65,30 @@ def rotate_tensor_from_file(msh: Union[str], fld: Union[str], tensor_field_names
     """
 
     #Read the mesh data
-    path = os.path.dirname(msh)
-    if path == '': path = '.'
-    prefix = os.path.basename(msh).split('.')[0]
-    extension = os.path.basename(msh).split('.')[1]
-    if extension == 'hdf5':
-        with h5py.File(msh, 'r') as f:
-            x = f["x"][:]
-            y = f["y"][:]
-            z = f["z"][:]
+    if isinstance(msh, str):
+        
+        data = read_data(comm, msh, ["x", "y", "z"], dtype = np.single)
+        x = np.copy(data["x"])
+        y = np.copy(data["y"])
+        z = np.copy(data["z"])
+
+    elif isinstance(msh, list):
+        x = msh[0]
+        y = msh[1]
+        z = msh[2]
     else:
         raise ValueError('The mesh file must be in HDF5 format')
     
     # Read the tensor data
-    path = os.path.dirname(fld)
-    if path == '': path = '.'
-    prefix = os.path.basename(fld).split('.')[0]
-    extension = os.path.basename(fld).split('.')[1]
-    if extension == 'hdf5':
-        with h5py.File(fld, 'r') as f:
-            tensor = []
-            for field_name in tensor_field_names:
-                tensor.append(f[field_name][:])
+    if isinstance(fld, str):
+
+        data = read_data(comm, fld, tensor_field_names, dtype = np.single)
+        tensor = []
+        for field_name in tensor_field_names:
+            tensor.append(data[field_name])    
+
+    elif isinstance(fld, list):
+        tensor = fld
     else:
         raise ValueError('The field file must be in HDF5 format')
     
