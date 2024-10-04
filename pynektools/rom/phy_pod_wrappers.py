@@ -6,19 +6,24 @@ import numpy as np
 import h5py
 import os
 from pyevtk.hl import gridToVTK
-
+from ..io.wrappers import read_data
+from ..datatypes.msh import Mesh
+from ..datatypes.coef import Coef
+from typing import Union
 
 def pod_from_files(
     comm,
     file_sequence: list[str],
     pod_fields: list[str],
     mass_matrix_fname: str,
-    mass_matrix_key: str,
+    mass_matrix_key: Union[str, list[str]],
     k: int,
     p: int,
 ) -> tuple:
     """
     Perform POD on a sequence of snapshot while applying fft in an homogenous direction of choice.
+
+    This can be used on the spectral element mesh. In that case, indicate ["x", "y", "z"] as the mass_matrix_key.
 
     Parameters
     ----------
@@ -54,8 +59,24 @@ def pod_from_files(
     number_of_pod_fields = len(pod_fields)
 
     # Load the mass matrix
-    with h5py.File(mass_matrix_fname, "r") as f:
-        bm = f[mass_matrix_key][:]
+    ## If it is in a file with a key
+    if isinstance(mass_matrix_key, str):
+        mass_matrix_key = [mass_matrix_key]
+        mass_data = read_data(comm, mass_matrix_fname, mass_matrix_key)
+        bm = mass_data[mass_matrix_key[0]]
+        del mass_data
+    ## If it should be created from a SEM mesh
+    elif isinstance(mass_matrix_key, list):
+        if mass_matrix_key != ["x", "y", "z"]:
+            raise ValueError("Only ['x', 'y', 'z'] is supported for the spectral element mesh")
+        
+        mass_data = read_data(comm, mass_matrix_fname, mass_matrix_key)
+        msh = Mesh(comm, x=mass_data['x'], y=mass_data['y'], z=mass_data['z'], create_connectivity=False)
+        coef = Coef(msh, comm)
+        bm = np.copy(coef.B)
+        del mass_data, msh, coef
+
+    # Remove zero entries from the mass matrix
     bm[np.where(bm == 0)] = 1e-12
     field_3d_shape = bm.shape
 
@@ -79,11 +100,11 @@ def pod_from_files(
     while j < len(file_sequence):
 
         # Load the snapshot data
-        fname = file_sequence[j]
-        with h5py.File(fname, "r") as f:
-            fld_data = []
-            for field in pod_fields:
-                fld_data.append(f[field][:])
+        fname = file_sequence[j] 
+        data = read_data(comm, fname, pod_fields, dtype = np.single)
+        fld_data = []
+        for field_name in pod_fields:
+            fld_data.append(data[field_name])    
 
         # Put the snapshot data into a column array
         ioh.copy_fieldlist_to_xi(fld_data)
