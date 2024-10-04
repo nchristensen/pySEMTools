@@ -284,6 +284,8 @@ def pod_fourier_1_homogenous_direction(
     """
     Perform POD on a sequence of snapshot while applying fft in an homogenous direction of choice.
 
+    This will not work on the spectral element mesh, therefore we have the mass matrix as a parameter.
+
     Parameters
     ----------
     comm : MPI.Comm
