@@ -385,10 +385,13 @@ class Router:
         else:
             recvbuf = None
 
-        # Act accordingly if the data is too large
-        recv_pos = 0
+        # Chunk the data if it is too large
         if np.any(sendcounts >= int32_limit):
 
+            # Initialize the recieve displacement
+            recv_pos = 0
+
+            # Initialize buffers to keep track of moved data 
             chunk_sent = np.zeros_like(sendcounts)
             chunk_sendcounts = np.zeros_like(sendcounts)
             chunk_msg = True
@@ -398,38 +401,57 @@ class Router:
 
             while chunk_msg:
 
-                chunk_sendcounts = sendcounts - chunk_sent          
+                # Identify the number of data that is left to send
+                chunk_sendcounts = sendcounts - chunk_sent
+
+                # As soon as one rank has too much data, only sent data up to that rank
+                # This is done this way to avoid the int32 limit, while keeping it simple
+                # to put in the full recieve buffer that is returned.          
                 already_found_limit = False
                 for i in range(len(chunk_sendcounts)):
                     if not already_found_limit:
+                        # If no sendcount is too large, do nothing
+                        # if sentcount is too large, set it to the limit and
+                        # mark that the rest of sendcounts will be 0 for this iteration
                         if chunk_sendcounts[i] >= int32_limit:
                             chunk_sendcounts[i] = int32_limit - 100
                             already_found_limit = True
                     else:
+                        # If we have found one rank that has too large sendcount,
+                        # set all the subsequent rank sendcount to 0
                         chunk_sendcounts[i] = 0
                 
                 # Reset for next iteration
                 already_found_limit = False
 
+                # Set a temporary recieve buffer with the size of the current chunk
                 if rank == root:
                     # print("sendcounts: {}, total: {}".format(sendcounts, sum(sendcounts)))
                     temp_recvbuf = np.empty(sum(chunk_sendcounts), dtype=dtype)
                 else:
                     temp_recvbuf = None
-                
+
+                # Each rank starts from the index that was left off in the previous iteration                
                 send_start_id = chunk_sent[rank]
+                # and end at the sendcount of the current iteration
                 send_end_id = send_start_id + chunk_sendcounts[rank]
                 self.comm.Gatherv(sendbuf=sendbuff[send_start_id:send_end_id], recvbuf=(temp_recvbuf, chunk_sendcounts), root=root)
 
+                # In the root rank, update the recieve buffer with the data recieved this iteration
                 if rank == root:
                     recvbuf[recv_pos:recv_pos+sum(chunk_sendcounts)] = temp_recvbuf
                     recv_pos = recv_pos + sum(chunk_sendcounts)
-                
+
+                # Update the sendcounts that have been sent 
                 chunk_sent = chunk_sent + chunk_sendcounts
 
+                # Once the sent sendcounts are the same that the original sendcounts,
+                # the process is over.
                 if np.sum(chunk_sent) == np.sum(sendcounts):
                     chunk_msg = False
                     break 
+        
+        # Or simply send the data
         else:
 
             self.comm.Gatherv(sendbuf=sendbuff, recvbuf=(recvbuf, sendcounts), root=root)
