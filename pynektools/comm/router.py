@@ -4,6 +4,7 @@ import numpy as np
 
 NoneType = type(None)
 
+int32_limit = int(2 ** 31 - 1)
 
 class Router:
     """
@@ -372,16 +373,66 @@ class Router:
 
         rank = self.comm.Get_rank()
 
+        # Populate the send buffer
+        sendbuff = np.zeros((data.size), dtype=dtype)
+        sendbuff[:] = data.flatten()
+
         # Collect local array sizes using the high-level mpi4py gather
         sendcounts = np.array(self.comm.allgather(data.size), dtype=np.ulong)
-
         if rank == root:
             # print("sendcounts: {}, total: {}".format(sendcounts, sum(sendcounts)))
             recvbuf = np.empty(sum(sendcounts), dtype=dtype)
         else:
             recvbuf = None
 
-        self.comm.Gatherv(sendbuf=data, recvbuf=(recvbuf, sendcounts), root=root)
+        # Act accordingly if the data is too large
+        recv_pos = 0
+        if np.any(sendcounts >= int32_limit):
+
+            chunk_sent = np.zeros_like(sendcounts)
+            chunk_sendcounts = np.zeros_like(sendcounts)
+            chunk_msg = True
+            
+            if self.comm.Get_rank() == root:
+                print("Data size is too large for a single send, using chunks")
+
+            while chunk_msg:
+
+                chunk_sendcounts = sendcounts - chunk_sent          
+                already_found_limit = False
+                for i in range(len(chunk_sendcounts)):
+                    if not already_found_limit:
+                        if chunk_sendcounts[i] >= int32_limit:
+                            chunk_sendcounts[i] = int32_limit - 100
+                            already_found_limit = True
+                    else:
+                        chunk_sendcounts[i] = 0
+                
+                # Reset for next iteration
+                already_found_limit = False
+
+                if rank == root:
+                    # print("sendcounts: {}, total: {}".format(sendcounts, sum(sendcounts)))
+                    temp_recvbuf = np.empty(sum(chunk_sendcounts), dtype=dtype)
+                else:
+                    temp_recvbuf = None
+                
+                send_start_id = chunk_sent[rank]
+                send_end_id = send_start_id + chunk_sendcounts[rank]
+                self.comm.Gatherv(sendbuf=sendbuff[send_start_id:send_end_id], recvbuf=(temp_recvbuf, chunk_sendcounts), root=root)
+
+                if rank == root:
+                    recvbuf[recv_pos:recv_pos+sum(chunk_sendcounts)] = temp_recvbuf
+                    recv_pos = recv_pos + sum(chunk_sendcounts)
+                
+                chunk_sent = chunk_sent + chunk_sendcounts
+
+                if np.sum(chunk_sent) == np.sum(sendcounts):
+                    chunk_msg = False
+                    break 
+        else:
+
+            self.comm.Gatherv(sendbuf=sendbuff, recvbuf=(recvbuf, sendcounts), root=root)
 
         return recvbuf, sendcounts
 
