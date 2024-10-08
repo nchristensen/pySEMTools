@@ -135,7 +135,21 @@ class Probes:
         self.log = Logger(comm=comm, module_name="Probes")
 
         self.log.tic()
-        self.log.write("info", "Initializing Probes object")
+        self.log.write("info", "Initializing Probes object:")
+        self.log.write("info", f" ======= Settings =======")
+        self.log.write("info", f"output_fname: {output_fname}")
+        self.log.write("info", f"write_coords: {write_coords}")
+        self.log.write("info", f"progress_bar: {progress_bar}")
+        self.log.write("info", f"point_interpolator_type: {point_interpolator_type}")
+        self.log.write("info", f"max_pts: {max_pts}")
+        self.log.write("info", f"find_points_comm_pattern: {find_points_comm_pattern}")
+        self.log.write("info", f"elem_percent_expansion: {elem_percent_expansion}")
+        self.log.write("info", f"global_tree_type: {global_tree_type}")
+        self.log.write("info", f"global_tree_nbins: {global_tree_nbins}")
+        self.log.write("info", f"use_autograd: {use_autograd}")
+        self.log.write("info", f"find_points_tol: {find_points_tol}")
+        self.log.write("info", f"find_points_max_iter: {find_points_max_iter}")
+        self.log.write("info", f" ========================")
 
         # Assign probes
         self.data_read_from_structured_mesh = False
@@ -273,6 +287,15 @@ class Probes:
                     write_warnings(self, parallel=False)
             else:
                 write_warnings(self, parallel=True)
+        elif (not self.distributed_probes) and (not write_coords):        
+            if comm.Get_rank() == 0:
+                nfound = len(np.where(self.itp.err_code == 1)[0])
+                nnotfound = len(np.where(self.itp.err_code == 0)[0])
+                nwarning = len(np.where(self.itp.err_code == -10)[0])
+                self.log.write(
+                    "info",
+                    f"Found {nfound} points, {nnotfound} not found, {nwarning} with warnings",
+                )
 
         ## init dummy variables
         self.fld_data = None
@@ -470,6 +493,11 @@ def write_warnings(self, parallel=False):
 
     # Write out a file with the points with warnings
     indices = np.where(self.itp.err_code != 1)[0]
+
+    if len(indices) == 0:
+        self.log.write("info", "All points were found without warnings")
+        return
+
     # Write the points with warnings in a json file
     point_warning = {}
     # point_warning["mesh_file_path"] = msh_fld_fname
