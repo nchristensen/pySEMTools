@@ -999,6 +999,9 @@ class Interpolator:
         for dest_rank in my_dest:
             position_in_this_rank = [point_ind for point_ind, _ in enumerate(probe_not_found) if dest_rank in candidate_ranks_per_point[point_ind]]
             points_in_buffer.append(position_in_this_rank)
+        # Create a dictionary to map points to their indices for each buffer
+        points_index_map = {buffer_id: {point: idx for idx, point in enumerate(points_in_buffer[buffer_id])} for buffer_id in range(len(points_in_buffer))}
+
 
         my_source, buff_probes = self.rt.all_to_all(
             destination=my_dest, 
@@ -1144,7 +1147,8 @@ class Interpolator:
 
             # Check which are the relevant buffers for this ranks and the index of the point in the buffer
             relevant_buffers_ids = [dest_rank_ind for dest_rank_ind, dest_rank in enumerate(my_dest) if dest_rank in candidate_ranks_per_point[point]]
-            point_id_in_relevant_buffer = [points_in_buffer[buffer_id].index(point) for buffer_id in relevant_buffers_ids]
+            #point_id_in_relevant_buffer = [points_in_buffer[buffer_id].index(point) for buffer_id in relevant_buffers_ids]
+            point_id_in_relevant_buffer = [points_index_map[buffer_id][point] for buffer_id in relevant_buffers_ids]
 
             # Gather the error codes and test patterns using advanced indexing
             all_err_codes = [obuff_err_code[buffer_id][point_id_in_relevant_buffer[i]] for i, buffer_id in enumerate(relevant_buffers_ids)]
