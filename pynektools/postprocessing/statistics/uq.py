@@ -88,7 +88,7 @@ def NOBM(comm, field_sequence: Union[list[str], list[dict[str, np.ndarray]]], fi
         if not isinstance(output_field_names, type(None)):
             for i, field_name in enumerate(field_names):
                 new_key = output_field_names[i]
-                mean[f"mean_{new_key}"] = mean.pop(field_name)
-                var[f"var_{new_key}"] = var.pop(field_name)
+                mean[f"{new_key}"] = mean.pop(field_name)
+                var[f"{new_key}"] = var.pop(field_name)
 
         return mean, var
