@@ -978,7 +978,7 @@ class Interpolator:
         # Get candidate ranks from a global kd tree
         # These are the destination ranks
         self.log.write("info", "Obtaining candidate ranks and sources")
-        my_dest, candidate_ranks_per_point = get_candidate_ranks(self, comm)
+        my_dest = get_candidate_ranks(self, comm)
 
         # Create temporary arrays that store the points that have not been found
         not_found = np.where(self.err_code_partition != 1)[0]
@@ -994,46 +994,26 @@ class Interpolator:
         # Send data to my candidates and recieve from ranks where I am candidate
         self.log.write("info", "Send data to candidates and recieve from sources")
 
-        # Determine which point to send to which rank
-        points_in_buffer = []
-        for dest_rank in my_dest:
-            position_in_this_rank = [point_ind for point_ind, _ in enumerate(probe_not_found) if dest_rank in candidate_ranks_per_point[point_ind]]
-            points_in_buffer.append(position_in_this_rank)
-
-        my_source, buff_probes = self.rt.all_to_all(
-            destination=my_dest, 
-            data= [probe_not_found[points_in_buffer[i]] for i in range(len(my_dest))],
-            dtype=np.double, tag=1
+        my_source, buff_probes = self.rt.send_recv(
+            destination=my_dest, data=probe_not_found, dtype=np.double, tag=1
         )
-        _, buff_probes_rst = self.rt.all_to_all(
-            destination=my_dest,
-            data=[probe_rst_not_found[points_in_buffer[i]] for i in range(len(my_dest))],
-            dtype=np.double, tag=2
+        _, buff_probes_rst = self.rt.send_recv(
+            destination=my_dest, data=probe_rst_not_found, dtype=np.double, tag=2
         )
-        _, buff_el_owner = self.rt.all_to_all(
-            destination=my_dest,
-            data=[el_owner_not_found[points_in_buffer[i]] for i in range(len(my_dest))],
-            dtype=np.int64, tag=3
+        _, buff_el_owner = self.rt.send_recv(
+            destination=my_dest, data=el_owner_not_found, dtype=np.int64, tag=3
         )
-        _, buff_glb_el_owner = self.rt.all_to_all(
-            destination=my_dest,
-            data=[glb_el_owner_not_found[points_in_buffer[i]] for i in range(len(my_dest))], 
-            dtype=np.int64, tag=4
+        _, buff_glb_el_owner = self.rt.send_recv(
+            destination=my_dest, data=glb_el_owner_not_found, dtype=np.int64, tag=4
         )
-        _, buff_rank_owner = self.rt.all_to_all(
-            destination=my_dest, 
-            data=[rank_owner_not_found[points_in_buffer[i]] for i in range(len(my_dest))],
-            dtype=np.int64, tag=5
+        _, buff_rank_owner = self.rt.send_recv(
+            destination=my_dest, data=rank_owner_not_found, dtype=np.int64, tag=5
         )
-        _, buff_err_code = self.rt.all_to_all(
-            destination=my_dest, 
-            data=[err_code_not_found[points_in_buffer[i]] for i in range(len(my_dest))],
-            dtype=np.int64, tag=6
+        _, buff_err_code = self.rt.send_recv(
+            destination=my_dest, data=err_code_not_found, dtype=np.int64, tag=6
         )
-        _, buff_test_pattern = self.rt.all_to_all(
-            destination=my_dest, 
-            data=[test_pattern_not_found[points_in_buffer[i]] for i in range(len(my_dest))], 
-            dtype=np.double, tag=7
+        _, buff_test_pattern = self.rt.send_recv(
+            destination=my_dest, data=test_pattern_not_found, dtype=np.double, tag=7
         )
 
         # Reshape the data from the probes
@@ -1097,25 +1077,25 @@ class Interpolator:
         # Set the request to Recieve back the data that I have sent to my candidates
         self.log.write("info", "Send data to sources and recieve from candidates")
 
-        _, obuff_probes = self.rt.all_to_all(
+        _, obuff_probes = self.rt.send_recv(
             destination=my_source, data=buff_probes, dtype=np.double, tag=11
         )
-        _, obuff_probes_rst = self.rt.all_to_all(
+        _, obuff_probes_rst = self.rt.send_recv(
             destination=my_source, data=buff_probes_rst, dtype=np.double, tag=12
         )
-        _, obuff_el_owner = self.rt.all_to_all(
+        _, obuff_el_owner = self.rt.send_recv(
             destination=my_source, data=buff_el_owner, dtype=np.int64, tag=13
         )
-        _, obuff_glb_el_owner = self.rt.all_to_all(
+        _, obuff_glb_el_owner = self.rt.send_recv(
             destination=my_source, data=buff_glb_el_owner, dtype=np.int64, tag=14
         )
-        _, obuff_rank_owner = self.rt.all_to_all(
+        _, obuff_rank_owner = self.rt.send_recv(
             destination=my_source, data=buff_rank_owner, dtype=np.int64, tag=15
         )
-        _, obuff_err_code = self.rt.all_to_all(
+        _, obuff_err_code = self.rt.send_recv(
             destination=my_source, data=buff_err_code, dtype=np.int64, tag=16
         )
-        _, obuff_test_pattern = self.rt.all_to_all(
+        _, obuff_test_pattern = self.rt.send_recv(
             destination=my_source, data=buff_test_pattern, dtype=np.double, tag=17
         )
 
@@ -1142,35 +1122,25 @@ class Interpolator:
         )
         for point in range(0, n_not_found):
 
-            # Check which are the relevant buffers for this ranks
-            relevant_buffers_ids = [dest_rank_ind for dest_rank_ind, dest_rank in enumerate(my_dest) if dest_rank in candidate_ranks_per_point[point]]
-
             # These are the error code and test patterns for
             # this point from all the ranks that sent back
-            all_err_codes = []
-            all_test_patterns = []
-            for buffer_id in relevant_buffers_ids:
-                point_id_in_buffer = points_in_buffer[buffer_id].index(point)
-                all_err_codes.append(obuff_err_code[buffer_id][point_id_in_buffer])
-                all_test_patterns.append(obuff_test_pattern[buffer_id][point_id_in_buffer])
-
+            all_err_codes = [arr[point] for arr in obuff_err_code]
+            all_test_patterns = [arr[point] for arr in obuff_test_pattern]
 
             # Check if any rank had certainty that it had found the point
-            # These indices are given with respect to the relevant buffers
             found_err_code = np.where(np.array(all_err_codes) == 1)[0]
 
             # If the point was found in any rank, just choose the first
             # one in the list (in case there was more than one founder):
             if found_err_code.size > 0:
-                index = relevant_buffers_ids[found_err_code[0]]
-                point_id_in_buffer = points_in_buffer[index].index(point)
-                self.probe_partition[point, :] = obuff_probes[index][point_id_in_buffer, :]
-                self.probe_rst_partition[point, :] = obuff_probes_rst[index][point_id_in_buffer, :]
-                self.el_owner_partition[point] = obuff_el_owner[index][point_id_in_buffer]
-                self.glb_el_owner_partition[point] = obuff_glb_el_owner[index][point_id_in_buffer]
-                self.rank_owner_partition[point] = obuff_rank_owner[index][point_id_in_buffer]
-                self.err_code_partition[point] = obuff_err_code[index][point_id_in_buffer]
-                self.test_pattern_partition[point] = obuff_test_pattern[index][point_id_in_buffer]
+                index = found_err_code[0]
+                self.probe_partition[point, :] = obuff_probes[index][point, :]
+                self.probe_rst_partition[point, :] = obuff_probes_rst[index][point, :]
+                self.el_owner_partition[point] = obuff_el_owner[index][point]
+                self.glb_el_owner_partition[point] = obuff_glb_el_owner[index][point]
+                self.rank_owner_partition[point] = obuff_rank_owner[index][point]
+                self.err_code_partition[point] = obuff_err_code[index][point]
+                self.test_pattern_partition[point] = obuff_test_pattern[index][point]
 
                 # skip the rest of the loop
                 continue
@@ -1181,15 +1151,14 @@ class Interpolator:
                 np.array(all_test_patterns) == np.array(all_test_patterns).min()
             )[0]
             if min_test_pattern.size > 0:
-                index = relevant_buffers_ids[min_test_pattern[0]]
-                point_id_in_buffer = points_in_buffer[index].index(point)
-                self.probe_partition[point, :] = obuff_probes[index][point_id_in_buffer, :]
-                self.probe_rst_partition[point, :] = obuff_probes_rst[index][point_id_in_buffer, :]
-                self.el_owner_partition[point] = obuff_el_owner[index][point_id_in_buffer]
-                self.glb_el_owner_partition[point] = obuff_glb_el_owner[index][point_id_in_buffer]
-                self.rank_owner_partition[point] = obuff_rank_owner[index][point_id_in_buffer]
-                self.err_code_partition[point] = obuff_err_code[index][point_id_in_buffer]
-                self.test_pattern_partition[point] = obuff_test_pattern[index][point_id_in_buffer]
+                index = min_test_pattern[0]
+                self.probe_partition[point, :] = obuff_probes[index][point, :]
+                self.probe_rst_partition[point, :] = obuff_probes_rst[index][point, :]
+                self.el_owner_partition[point] = obuff_el_owner[index][point]
+                self.glb_el_owner_partition[point] = obuff_glb_el_owner[index][point]
+                self.rank_owner_partition[point] = obuff_rank_owner[index][point]
+                self.err_code_partition[point] = obuff_err_code[index][point]
+                self.test_pattern_partition[point] = obuff_test_pattern[index][point]
 
         # Go through the points again, if the test pattern was
         #  too large, mark that point as not found
@@ -1637,7 +1606,7 @@ def get_candidate_ranks(self, comm):
         ]
         candidate_ranks = np.unique(flattened_list)
 
-    return candidate_ranks, candidate_ranks_per_point
+    return candidate_ranks
 
 
 def domain_binning_map_probe_to_rank(self, probe_to_bin_map):
