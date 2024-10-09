@@ -53,13 +53,13 @@ class DataCompressor:
         self.io.SetEngine("BP5")
 
         # Declare useful data
-        self.glb_nelv = np.ones((1), dtype=np.uint64)
+        self.glb_nelv = np.ones((1), dtype=np.uint)
         self.lx = 0
         self.ly = 0
         self.lz = 0
-        self.lxyz = np.ones((1), dtype=np.uint64)
-        self.gdim = np.ones((1), dtype=np.uint64)
-        self.wrd_size = np.ones((1), dtype=np.uint64) * wrd_size
+        self.lxyz = np.ones((1), dtype=np.uint)
+        self.gdim = np.ones((1), dtype=np.uint)
+        self.wrd_size = np.ones((1), dtype=np.uint) * wrd_size
         if wrd_size == 4:
             self.dtype = np.single
         elif wrd_size == 8:
@@ -128,7 +128,7 @@ class DataCompressor:
         step_status = self.write_bp.BeginStep()
 
         # Declare header adios2 variables
-        tmp = np.zeros((1), dtype=np.uint64)
+        tmp = np.zeros((1), dtype=np.uint)
         hdr_elems = self.io.DefineVariable("global_elements", tmp)
         hdr_lxyz = self.io.DefineVariable("points_per_element", tmp)
         hdr_gdim = self.io.DefineVariable("problem_dimension", tmp)
