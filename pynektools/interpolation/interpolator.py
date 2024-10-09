@@ -1142,13 +1142,18 @@ class Interpolator:
         )
         for point in range(0, n_not_found):
 
-            # Check which are the relevant buffers for this ranks and the index of the point in the buffer
+            # Check which are the relevant buffers for this ranks
             relevant_buffers_ids = [dest_rank_ind for dest_rank_ind, dest_rank in enumerate(my_dest) if dest_rank in candidate_ranks_per_point[point]]
-            point_id_in_relevant_buffer = [points_in_buffer[buffer_id].index(point) for buffer_id in relevant_buffers_ids]
 
-            # Gather the error codes and test patterns using advanced indexing
-            all_err_codes = [obuff_err_code[buffer_id][point_id_in_relevant_buffer[i]] for i, buffer_id in enumerate(relevant_buffers_ids)]
-            all_test_patterns = [obuff_test_pattern[buffer_id][point_id_in_relevant_buffer[i]] for i, buffer_id in enumerate(relevant_buffers_ids)]
+            # These are the error code and test patterns for
+            # this point from all the ranks that sent back
+            all_err_codes = []
+            all_test_patterns = []
+            for buffer_id in relevant_buffers_ids:
+                point_id_in_buffer = points_in_buffer[buffer_id].index(point)
+                all_err_codes.append(obuff_err_code[buffer_id][point_id_in_buffer])
+                all_test_patterns.append(obuff_test_pattern[buffer_id][point_id_in_buffer])
+
 
             # Check if any rank had certainty that it had found the point
             # These indices are given with respect to the relevant buffers
@@ -1158,7 +1163,7 @@ class Interpolator:
             # one in the list (in case there was more than one founder):
             if found_err_code.size > 0:
                 index = relevant_buffers_ids[found_err_code[0]]
-                point_id_in_buffer = point_id_in_relevant_buffer[found_err_code[0]]
+                point_id_in_buffer = points_in_buffer[index].index(point)
                 self.probe_partition[point, :] = obuff_probes[index][point_id_in_buffer, :]
                 self.probe_rst_partition[point, :] = obuff_probes_rst[index][point_id_in_buffer, :]
                 self.el_owner_partition[point] = obuff_el_owner[index][point_id_in_buffer]
@@ -1177,7 +1182,7 @@ class Interpolator:
             )[0]
             if min_test_pattern.size > 0:
                 index = relevant_buffers_ids[min_test_pattern[0]]
-                point_id_in_buffer = point_id_in_relevant_buffer[min_test_pattern[0]]
+                point_id_in_buffer = points_in_buffer[index].index(point)
                 self.probe_partition[point, :] = obuff_probes[index][point_id_in_buffer, :]
                 self.probe_rst_partition[point, :] = obuff_probes_rst[index][point_id_in_buffer, :]
                 self.el_owner_partition[point] = obuff_el_owner[index][point_id_in_buffer]
