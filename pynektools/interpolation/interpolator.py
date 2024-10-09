@@ -131,12 +131,12 @@ class Interpolator:
         global_tree_nbins=None,
     ):
 
-        if find_points_comm_pattern == "collective":
+        if find_points_comm_pattern == "broadcast":
             self.log.write(
                 "info", "Communication pattern selected does not need global tree"
             )
 
-        elif find_points_comm_pattern == "point_to_point":
+        elif (find_points_comm_pattern == "point_to_point") or (find_points_comm_pattern == "collective"):
             self.global_tree_type = global_tree_type
             self.log.write("info", f"Using global_tree of type: {global_tree_type}")
             if global_tree_type == "rank_bbox":
@@ -481,8 +481,8 @@ class Interpolator:
                 "using communication pattern: {}".format(find_points_comm_pattern),
             )
 
-        if find_points_comm_pattern == "collective":
-            self.find_points_collective_(
+        if find_points_comm_pattern == "broadcast":
+            self.find_points_broadcast(
                 comm,
                 use_kdtree=use_kdtree,
                 test_tol=test_tol,
@@ -490,17 +490,18 @@ class Interpolator:
                 tol=tol,
                 max_iter=max_iter,
             )
-        elif find_points_comm_pattern == "point_to_point":
-            self.find_points_point_to_point_(
+        elif (find_points_comm_pattern == "point_to_point") or (find_points_comm_pattern == "collective"):
+            self.find_points_(
                 comm,
                 use_kdtree=use_kdtree,
                 test_tol=test_tol,
                 elem_percent_expansion=elem_percent_expansion,
                 tol=tol,
                 max_iter=max_iter,
+                comm_pattern = find_points_comm_pattern
             )
 
-    def find_points_collective_(
+    def find_points_broadcast(
         self,
         comm,
         use_kdtree=True,
@@ -941,7 +942,7 @@ class Interpolator:
 
         return
 
-    def find_points_point_to_point_(
+    def find_points_(
         self,
         comm,
         use_kdtree=True,
@@ -949,6 +950,7 @@ class Interpolator:
         elem_percent_expansion=0.01,
         tol=np.finfo(np.double).eps * 10,
         max_iter=50,
+        comm_pattern = "point_to_point"
     ):
         """Find points using the point to point implementation"""
         rank = comm.Get_rank()
@@ -994,25 +996,25 @@ class Interpolator:
         # Send data to my candidates and recieve from ranks where I am candidate
         self.log.write("info", "Send data to candidates and recieve from sources")
 
-        my_source, buff_probes = self.rt.send_recv(
+        my_source, buff_probes = self.rt.transfer_data( comm_pattern,
             destination=my_dest, data=probe_not_found, dtype=np.double, tag=1
         )
-        _, buff_probes_rst = self.rt.send_recv(
+        _, buff_probes_rst = self.rt.transfer_data( comm_pattern,
             destination=my_dest, data=probe_rst_not_found, dtype=np.double, tag=2
         )
-        _, buff_el_owner = self.rt.send_recv(
+        _, buff_el_owner = self.rt.transfer_data( comm_pattern,
             destination=my_dest, data=el_owner_not_found, dtype=np.int64, tag=3
         )
-        _, buff_glb_el_owner = self.rt.send_recv(
+        _, buff_glb_el_owner = self.rt.transfer_data( comm_pattern,
             destination=my_dest, data=glb_el_owner_not_found, dtype=np.int64, tag=4
         )
-        _, buff_rank_owner = self.rt.send_recv(
+        _, buff_rank_owner = self.rt.transfer_data( comm_pattern,
             destination=my_dest, data=rank_owner_not_found, dtype=np.int64, tag=5
         )
-        _, buff_err_code = self.rt.send_recv(
+        _, buff_err_code = self.rt.transfer_data( comm_pattern,
             destination=my_dest, data=err_code_not_found, dtype=np.int64, tag=6
         )
-        _, buff_test_pattern = self.rt.send_recv(
+        _, buff_test_pattern = self.rt.transfer_data( comm_pattern,
             destination=my_dest, data=test_pattern_not_found, dtype=np.double, tag=7
         )
 
@@ -1077,25 +1079,25 @@ class Interpolator:
         # Set the request to Recieve back the data that I have sent to my candidates
         self.log.write("info", "Send data to sources and recieve from candidates")
 
-        _, obuff_probes = self.rt.send_recv(
+        _, obuff_probes = self.rt.transfer_data( comm_pattern,
             destination=my_source, data=buff_probes, dtype=np.double, tag=11
         )
-        _, obuff_probes_rst = self.rt.send_recv(
+        _, obuff_probes_rst = self.rt.transfer_data( comm_pattern,
             destination=my_source, data=buff_probes_rst, dtype=np.double, tag=12
         )
-        _, obuff_el_owner = self.rt.send_recv(
+        _, obuff_el_owner = self.rt.transfer_data( comm_pattern,
             destination=my_source, data=buff_el_owner, dtype=np.int64, tag=13
         )
-        _, obuff_glb_el_owner = self.rt.send_recv(
+        _, obuff_glb_el_owner = self.rt.transfer_data( comm_pattern,
             destination=my_source, data=buff_glb_el_owner, dtype=np.int64, tag=14
         )
-        _, obuff_rank_owner = self.rt.send_recv(
+        _, obuff_rank_owner = self.rt.transfer_data( comm_pattern,
             destination=my_source, data=buff_rank_owner, dtype=np.int64, tag=15
         )
-        _, obuff_err_code = self.rt.send_recv(
+        _, obuff_err_code = self.rt.transfer_data( comm_pattern,
             destination=my_source, data=buff_err_code, dtype=np.int64, tag=16
         )
-        _, obuff_test_pattern = self.rt.send_recv(
+        _, obuff_test_pattern = self.rt.transfer_data( comm_pattern,
             destination=my_source, data=buff_test_pattern, dtype=np.double, tag=17
         )
 
@@ -1605,6 +1607,8 @@ def get_candidate_ranks(self, comm):
             item for sublist in candidate_ranks_per_point for item in sublist
         ]
         candidate_ranks = np.unique(flattened_list)
+    else:
+        raise ValueError("Global tree has not been set up")
 
     return candidate_ranks
 

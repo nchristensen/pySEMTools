@@ -54,7 +54,7 @@ class Router:
         self.destination_displacement = np.zeros((comm.Get_size()), dtype=np.ulong)
         self.source_displacement = np.zeros((comm.Get_size()), dtype=np.ulong)
 
-    def route_data(self, keyword, **kwargs):
+    def transfer_data(self, comm_pattern, **kwargs):
         """
         Moves data between ranks in the specified patthern.
 
@@ -83,16 +83,14 @@ class Router:
         """
 
         router_factory = {
-            "distribute_p2p": self.send_recv,
-            "distribute_a2a": self.all_to_all,
-            "gather": self.gather_in_root,
-            "scatter": self.scatter_from_root,
+            "point_to_point": self.send_recv,
+            "collective": self.all_to_all,
         }
 
-        if keyword not in router_factory:
-            raise ValueError(f"Method '{keyword}' not recognized.")
+        if comm_pattern not in router_factory:
+            raise ValueError(f"Method '{comm_pattern}' not recognized.")
 
-        return router_factory[keyword](**kwargs)
+        return router_factory[comm_pattern](**kwargs)
 
     def send_recv(self, destination=None, data=None, dtype=None, tag=None):
         """
