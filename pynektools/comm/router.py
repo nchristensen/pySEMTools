@@ -47,12 +47,12 @@ class Router:
 
         self.comm = comm
         # Specifies a buffer to see how many points I send to each rank
-        self.destination_count = np.zeros((comm.Get_size()), dtype=np.ulong)
+        self.destination_count = np.zeros((comm.Get_size()), dtype=np.uint64)
         # Specifies a buffer to see how many points I recieve from each rank
-        self.source_count = np.zeros((comm.Get_size()), dtype=np.ulong)
+        self.source_count = np.zeros((comm.Get_size()), dtype=np.uint64)
         # Displacements for all to all communication
-        self.destination_displacement = np.zeros((comm.Get_size()), dtype=np.ulong)
-        self.source_displacement = np.zeros((comm.Get_size()), dtype=np.ulong)
+        self.destination_displacement = np.zeros((comm.Get_size()), dtype=np.uint64)
+        self.source_displacement = np.zeros((comm.Get_size()), dtype=np.uint64)
 
     def route_data(self, keyword, **kwargs):
         """
@@ -378,7 +378,7 @@ class Router:
         sendbuff[:] = data.flatten()
 
         # Collect local array sizes using the high-level mpi4py gather
-        sendcounts = np.array(self.comm.allgather(data.size), dtype=np.ulong)
+        sendcounts = np.array(self.comm.allgather(data.size), dtype=np.uint64)
         if rank == root:
             # print("sendcounts: {}, total: {}".format(sendcounts, sum(sendcounts)))
             recvbuf = np.empty(sum(sendcounts), dtype=dtype)
@@ -498,7 +498,7 @@ class Router:
         if self.comm.Get_rank() == root:
             if isinstance(sendcounts, NoneType):
                 # Divide the data equally among all processes
-                sendcounts = np.zeros((self.comm.Get_size()), dtype=np.ulong)
+                sendcounts = np.zeros((self.comm.Get_size()), dtype=np.uint64)
                 sendcounts[:] = data.size // self.comm.Get_size()
 
             sendbuf = data.flatten()
@@ -553,7 +553,7 @@ class Router:
             count = 1
 
         # Collect local array sizes using the high-level mpi4py gather
-        sendcounts = np.array(self.comm.allgather(count), dtype=np.ulong)
+        sendcounts = np.array(self.comm.allgather(count), dtype=np.uint64)
 
         recvbuf = np.empty(sum(sendcounts), dtype=dtype)
 
