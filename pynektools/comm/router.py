@@ -380,8 +380,10 @@ class Router:
         # Collect local array sizes using the high-level mpi4py gather
         sendcounts = np.array(self.comm.allgather(data.size), dtype=np.uint)
         if rank == root:
-            # print("sendcounts: {}, total: {}".format(sendcounts, np.sum(sendcounts)))
-            recvbuf = np.empty(np.sum(sendcounts), dtype=dtype)
+            # print("sendcounts: {}, total: {}".format(sendcounts, sum(sendcounts)))
+            print(np.sum(sendcounts))
+            print(dtype)
+            recvbuf = np.empty(sum(sendcounts), dtype=dtype)
         else:
             recvbuf = None
 
@@ -426,8 +428,8 @@ class Router:
 
                 # Set a temporary recieve buffer with the size of the current chunk
                 if rank == root:
-                    # print("sendcounts: {}, total: {}".format(sendcounts, np.sum(sendcounts)))
-                    temp_recvbuf = np.empty(np.sum(chunk_sendcounts), dtype=dtype)
+                    # print("sendcounts: {}, total: {}".format(sendcounts, sum(sendcounts)))
+                    temp_recvbuf = np.empty(sum(chunk_sendcounts), dtype=dtype)
                 else:
                     temp_recvbuf = None
 
@@ -439,8 +441,8 @@ class Router:
 
                 # In the root rank, update the recieve buffer with the data recieved this iteration
                 if rank == root:
-                    recvbuf[recv_pos:recv_pos+np.sum(chunk_sendcounts)] = temp_recvbuf
-                    recv_pos = recv_pos + np.sum(chunk_sendcounts)
+                    recvbuf[recv_pos:recv_pos+sum(chunk_sendcounts)] = temp_recvbuf
+                    recv_pos = recv_pos + sum(chunk_sendcounts)
 
                 # Update the sendcounts that have been sent 
                 chunk_sent = chunk_sent + chunk_sendcounts
@@ -555,7 +557,7 @@ class Router:
         # Collect local array sizes using the high-level mpi4py gather
         sendcounts = np.array(self.comm.allgather(count), dtype=np.uint)
 
-        recvbuf = np.empty(np.sum(sendcounts), dtype=dtype)
+        recvbuf = np.empty(sum(sendcounts), dtype=dtype)
 
         self.comm.Allgatherv(sendbuf=data, recvbuf=(recvbuf, sendcounts))
 
