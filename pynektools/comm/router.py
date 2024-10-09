@@ -4,7 +4,7 @@ import numpy as np
 
 NoneType = type(None)
 
-int32_limit = int(2 ** 31 - 1)
+int32_limit = np.int64(2 ** 31 - 1)
 
 class Router:
     """
@@ -47,12 +47,12 @@ class Router:
 
         self.comm = comm
         # Specifies a buffer to see how many points I send to each rank
-        self.destination_count = np.zeros((comm.Get_size()), dtype=np.ulong)
+        self.destination_count = np.zeros((comm.Get_size()), dtype=np.int64)
         # Specifies a buffer to see how many points I recieve from each rank
-        self.source_count = np.zeros((comm.Get_size()), dtype=np.ulong)
+        self.source_count = np.zeros((comm.Get_size()), dtype=np.int64)
         # Displacements for all to all communication
-        self.destination_displacement = np.zeros((comm.Get_size()), dtype=np.ulong)
-        self.source_displacement = np.zeros((comm.Get_size()), dtype=np.ulong)
+        self.destination_displacement = np.zeros((comm.Get_size()), dtype=np.int64)
+        self.source_displacement = np.zeros((comm.Get_size()), dtype=np.int64)
 
     def transfer_data(self, comm_pattern, **kwargs):
         """
@@ -158,6 +158,9 @@ class Router:
         self.comm.Alltoall(sendbuf=self.destination_count, recvbuf=self.source_count)
         sources = np.where(self.source_count != 0)[0]
 
+        # Check if any message is too large
+        check_sendrecv_counts(self.comm, self.source_count)
+
         # =========================
         # Allocate recieve buffers
         # =========================
@@ -258,6 +261,9 @@ class Router:
         self.source_count[:] = 0
         self.comm.Alltoall(sendbuf=self.destination_count, recvbuf=self.source_count)
         sources = np.where(self.source_count != 0)[0]
+
+        # Check if any message is too large
+        check_sendrecv_counts(self.comm, self.source_count)
 
         # ==============================
         # Allocate send and recv buffers
@@ -376,7 +382,7 @@ class Router:
         sendbuff[:] = data.flatten()
 
         # Collect local array sizes using the high-level mpi4py gather
-        sendcounts = np.array(self.comm.allgather(data.size), dtype=np.ulong)
+        sendcounts = np.array(self.comm.allgather(data.size), dtype=np.int64)
         if rank == root:
             # print("sendcounts: {}, total: {}".format(sendcounts, np.sum(sendcounts)))
             recvbuf = np.empty(np.sum(sendcounts), dtype=dtype)
@@ -496,15 +502,17 @@ class Router:
         if self.comm.Get_rank() == root:
             if isinstance(sendcounts, NoneType):
                 # Divide the data equally among all processes
-                sendcounts = np.zeros((self.comm.Get_size()), dtype=np.ulong)
+                sendcounts = np.zeros((self.comm.Get_size()), dtype=np.int64)
                 sendcounts[:] = data.size // self.comm.Get_size()
 
             sendbuf = data.flatten()
         else:
             sendbuf = None
 
-        rank = self.comm.Get_rank()
+        # Check if any message is too large
+        check_sendrecv_counts(self.comm, sendcounts)
 
+        rank = self.comm.Get_rank()
         recvbuf = np.ones(sendcounts[rank], dtype=dtype) * -100
 
         self.comm.Scatterv(sendbuf=(sendbuf, sendcounts), recvbuf=recvbuf, root=root)
@@ -551,10 +559,21 @@ class Router:
             count = 1
 
         # Collect local array sizes using the high-level mpi4py gather
-        sendcounts = np.array(self.comm.allgather(count), dtype=np.ulong)
+        sendcounts = np.array(self.comm.allgather(count), dtype=np.int64)
+
+        # Check if any message is too large
+        check_sendrecv_counts(self.comm, sendcounts)
 
         recvbuf = np.empty(np.sum(sendcounts), dtype=dtype)
 
         self.comm.Allgatherv(sendbuf=data, recvbuf=(recvbuf, sendcounts))
 
         return recvbuf, sendcounts
+
+def check_sendrecv_counts(comm, sendrecv_count: np.ndarray):
+
+    if np.any(sendrecv_count >= int32_limit):
+        raise ValueError("Send/Recv sendcount is too large for a single send according to MPI standard (max int32 = 2**31 -1 counts), use chunks or more ranks")
+    elif np.any(sendrecv_count < 0):
+        raise ValueError("Send/Recv sendcount cannot be negative, you might have overflowed the int32 limit")
+    
