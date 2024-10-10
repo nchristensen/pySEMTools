@@ -233,6 +233,7 @@ class LegendreInterpolator(MultiplePointInterpolator):
         # create an integer array to store the number of iterations that it took for each point
         iterations_per_point = np.zeros_like(xj, dtype=np.int32)
         iterations_per_point[:, :, :, :] = max_iterations
+        points_already_found = np.any(iterations_per_point[:npoints, :nelems] < max_iterations, axis=(2,3))  
 
         while (
             np.any(np.linalg.norm(self.eps_rst[:npoints, :nelems], axis=(2, 3)) > tol)
@@ -265,6 +266,10 @@ class LegendreInterpolator(MultiplePointInterpolator):
             self.eps_rst[:npoints, :nelems, 2, 0] = (
                 self.zj[:npoints, :nelems, :, :] - zj_found
             )[:, :, 0, 0]
+
+            # zero out differences of points that have already been found, so they do not keep being updated
+            self.eps_rst[np.where(points_already_found)] = 0
+
             jac_inv = np.linalg.inv(self.jac[:npoints, :nelems])
 
             # Find the new guess
@@ -279,10 +284,13 @@ class LegendreInterpolator(MultiplePointInterpolator):
             self.tj[:npoints, :nelems, 0, 0] = self.rstj[:npoints, :nelems, 2, 0]
             self.iterations += 1
 
-            points_found = (
+            # Determine which points have already been found so they are not updated anymore
+            points_found_this_it = (
                 np.linalg.norm(self.eps_rst[:npoints, :nelems], axis=(2, 3)) <= tol
             )
-            iterations_per_point[points_found] = self.iterations
+            points_already_found = np.any(iterations_per_point[:npoints, :nelems] < max_iterations, axis=(2,3))
+            # Update the number of iterations only if the point has newly been found
+            iterations_per_point[(points_found_this_it & ~points_already_found)] = self.iterations
 
         # Check if points are inside the element
         limit = 1 + np.finfo(np.single).eps
