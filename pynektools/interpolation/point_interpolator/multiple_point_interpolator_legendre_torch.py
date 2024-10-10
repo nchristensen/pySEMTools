@@ -447,6 +447,7 @@ class LegendreInterpolator(MultiplePointInterpolator):
             npoints, nelems, 1, 1, dtype=torch.int32, device=device
         )
         iterations_per_point[:, :, :, :] = max_iterations
+        points_already_found = torch.any(iterations_per_point[:npoints, :nelems] < max_iterations, dim=(2, 3))
 
         while (
             torch.any(torch.norm(self.eps_rst[:npoints, :nelems], dim=(2, 3)) > tol)
@@ -482,6 +483,9 @@ class LegendreInterpolator(MultiplePointInterpolator):
                 self.eps_rst[:npoints, :nelems, 2, 0] = (
                     self.zj[:npoints, :nelems, :, :] - zj_found
                 )[:, :, 0, 0]
+                # zero out differences of points that have already been found, so they do not keep being updated
+                self.eps_rst[torch.where(points_already_found)] = 0
+
                 jac_inv = invert_jac(self.jac[:npoints, :nelems])
 
                 # Find the new guess
@@ -497,11 +501,14 @@ class LegendreInterpolator(MultiplePointInterpolator):
                 self.sj[:npoints, :nelems, 0, 0] = self.rstj[:npoints, :nelems, 1, 0]
                 self.tj[:npoints, :nelems, 0, 0] = self.rstj[:npoints, :nelems, 2, 0]
                 self.iterations += 1
-
-                points_found = (
+                
+                # Determine which points have already been found so they are not updated anymore
+                points_found_this_it = (
                     torch.norm(self.eps_rst[:npoints, :nelems], dim=(2, 3)) <= tol
                 )
-                iterations_per_point[points_found] = self.iterations
+                points_already_found = torch.any(iterations_per_point[:npoints, :nelems] < max_iterations, dim=(2, 3))
+                # Update the number of iterations only if the point has newly been found
+                iterations_per_point[(points_found_this_it & ~points_already_found)] = self.iterations
 
         with torch.no_grad():
             # Check if points are inside the element

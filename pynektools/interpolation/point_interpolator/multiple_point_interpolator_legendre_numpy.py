@@ -233,6 +233,7 @@ class LegendreInterpolator(MultiplePointInterpolator):
         # create an integer array to store the number of iterations that it took for each point
         iterations_per_point = np.zeros_like(xj, dtype=np.int32)
         iterations_per_point[:, :, :, :] = max_iterations
+        points_already_found = np.any(iterations_per_point[:npoints, :nelems] < max_iterations, axis=(2,3))  
 
         while (
             np.any(np.linalg.norm(self.eps_rst[:npoints, :nelems], axis=(2, 3)) > tol)
@@ -265,7 +266,12 @@ class LegendreInterpolator(MultiplePointInterpolator):
             self.eps_rst[:npoints, :nelems, 2, 0] = (
                 self.zj[:npoints, :nelems, :, :] - zj_found
             )[:, :, 0, 0]
-            jac_inv = np.linalg.inv(self.jac[:npoints, :nelems])
+
+            # zero out differences of points that have already been found, so they do not keep being updated
+            self.eps_rst[np.where(points_already_found)] = 0
+
+            #jac_inv = np.linalg.inv(self.jac[:npoints, :nelems])
+            jac_inv = invert_jac(self.jac[:npoints, :nelems])
 
             # Find the new guess
             self.rstj[:npoints, :nelems] = self.rstj[:npoints, :nelems] - (
@@ -279,10 +285,13 @@ class LegendreInterpolator(MultiplePointInterpolator):
             self.tj[:npoints, :nelems, 0, 0] = self.rstj[:npoints, :nelems, 2, 0]
             self.iterations += 1
 
-            points_found = (
+            # Determine which points have already been found so they are not updated anymore
+            points_found_this_it = (
                 np.linalg.norm(self.eps_rst[:npoints, :nelems], axis=(2, 3)) <= tol
             )
-            iterations_per_point[points_found] = self.iterations
+            points_already_found = np.any(iterations_per_point[:npoints, :nelems] < max_iterations, axis=(2,3))
+            # Update the number of iterations only if the point has newly been found
+            iterations_per_point[(points_found_this_it & ~points_already_found)] = self.iterations
 
         # Check if points are inside the element
         limit = 1 + np.finfo(np.single).eps
@@ -776,3 +785,34 @@ def update_checked_elements(
     for i in range(0, len(pt_not_found_indices)):
         checked_elements[pt_not_found_indices[i]].append(elem_to_check_per_point[i])
     return checked_elements
+
+def invert_jac(jac):
+    """
+    Invert the jacobian matrix
+    """
+
+    jac_inv = np.zeros_like(jac)
+
+    a = jac[:, :, 0, 0]
+    b = jac[:, :, 0, 1]
+    c = jac[:, :, 0, 2]
+    d = jac[:, :, 1, 0]
+    e = jac[:, :, 1, 1]
+    f = jac[:, :, 1, 2]
+    g = jac[:, :, 2, 0]
+    h = jac[:, :, 2, 1]
+    i = jac[:, :, 2, 2]
+
+    det = a * (e * i - f * h) - b * (d * i - f * g) + c * (d * h - e * g)
+
+    jac_inv[:, :, 0, 0] = (e * i - f * h) / det
+    jac_inv[:, :, 0, 1] = (c * h - b * i) / det
+    jac_inv[:, :, 0, 2] = (b * f - c * e) / det
+    jac_inv[:, :, 1, 0] = (f * g - d * i) / det
+    jac_inv[:, :, 1, 1] = (a * i - c * g) / det
+    jac_inv[:, :, 1, 2] = (c * d - a * f) / det
+    jac_inv[:, :, 2, 0] = (d * h - e * g) / det
+    jac_inv[:, :, 2, 1] = (b * g - a * h) / det
+    jac_inv[:, :, 2, 2] = (a * e - b * d) / det
+
+    return jac_inv
