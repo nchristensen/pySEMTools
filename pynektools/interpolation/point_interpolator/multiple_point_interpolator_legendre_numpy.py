@@ -270,7 +270,8 @@ class LegendreInterpolator(MultiplePointInterpolator):
             # zero out differences of points that have already been found, so they do not keep being updated
             self.eps_rst[np.where(points_already_found)] = 0
 
-            jac_inv = np.linalg.inv(self.jac[:npoints, :nelems])
+            #jac_inv = np.linalg.inv(self.jac[:npoints, :nelems])
+            jac_inv = invert_jac(self.jac[:npoints, :nelems])
 
             # Find the new guess
             self.rstj[:npoints, :nelems] = self.rstj[:npoints, :nelems] - (
@@ -784,3 +785,34 @@ def update_checked_elements(
     for i in range(0, len(pt_not_found_indices)):
         checked_elements[pt_not_found_indices[i]].append(elem_to_check_per_point[i])
     return checked_elements
+
+def invert_jac(jac):
+    """
+    Invert the jacobian matrix
+    """
+
+    jac_inv = np.zeros_like(jac)
+
+    a = jac[:, :, 0, 0]
+    b = jac[:, :, 0, 1]
+    c = jac[:, :, 0, 2]
+    d = jac[:, :, 1, 0]
+    e = jac[:, :, 1, 1]
+    f = jac[:, :, 1, 2]
+    g = jac[:, :, 2, 0]
+    h = jac[:, :, 2, 1]
+    i = jac[:, :, 2, 2]
+
+    det = a * (e * i - f * h) - b * (d * i - f * g) + c * (d * h - e * g)
+
+    jac_inv[:, :, 0, 0] = (e * i - f * h) / det
+    jac_inv[:, :, 0, 1] = (c * h - b * i) / det
+    jac_inv[:, :, 0, 2] = (b * f - c * e) / det
+    jac_inv[:, :, 1, 0] = (f * g - d * i) / det
+    jac_inv[:, :, 1, 1] = (a * i - c * g) / det
+    jac_inv[:, :, 1, 2] = (c * d - a * f) / det
+    jac_inv[:, :, 2, 0] = (d * h - e * g) / det
+    jac_inv[:, :, 2, 1] = (b * g - a * h) / det
+    jac_inv[:, :, 2, 2] = (a * e - b * d) / det
+
+    return jac_inv
