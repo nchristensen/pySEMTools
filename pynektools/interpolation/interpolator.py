@@ -468,6 +468,7 @@ class Interpolator:
     def find_points(
         self,
         comm,
+        find_points_iterative=False,
         find_points_comm_pattern="point_to_point",
         use_kdtree=True,
         test_tol=1e-4,
@@ -491,7 +492,7 @@ class Interpolator:
                 tol=tol,
                 max_iter=max_iter,
             )
-        elif (find_points_comm_pattern == "point_to_point") or (find_points_comm_pattern == "collective"):
+        elif ((find_points_comm_pattern == "point_to_point") or (find_points_comm_pattern == "collective")) and not find_points_iterative:
             self.find_points_(
                 comm,
                 use_kdtree=use_kdtree,
@@ -500,6 +501,15 @@ class Interpolator:
                 tol=tol,
                 max_iter=max_iter,
                 comm_pattern = find_points_comm_pattern
+            )
+        elif ((find_points_comm_pattern == "point_to_point") or (find_points_comm_pattern == "collective")) and find_points_iterative:
+            self.find_points_iterative(
+                comm,
+                use_kdtree=use_kdtree,
+                test_tol=test_tol,
+                elem_percent_expansion=elem_percent_expansion,
+                tol=tol,
+                max_iter=max_iter,
             )
 
     def find_points_broadcast(
@@ -1226,7 +1236,7 @@ class Interpolator:
 
         for search_iteration in range(0, max_candidates[0]):
 
-            self.log.write("info", f"Search iteration: {search_iteration+1} out of {max_candidates}")
+            self.log.write("info", f"Search iteration: {search_iteration+1} out of {max_candidates[0]}")
 
             try:
                 my_it_dest = [my_dest[search_iteration]]
