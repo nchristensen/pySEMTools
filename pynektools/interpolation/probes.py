@@ -53,6 +53,9 @@ class Probes:
         multiple_point_legendre_numpy, multiple_point_legendre_torch.
     max_pts : int, optional
         Maximum number of points to interpolate. Default is 128. Used if multiple point interpolator is selected.
+    find_points_iterative : bool
+        If True, iterative search is used to find points. Default is False. This would be recommended, as less memory would be used.
+        It can potentially be slower, however. It is kept false by default for performance reasons.
     find_points_comm_pattern : str
         Communication pattern for finding points. Default is point_to_point.
         options are: point_to_point, collective.
@@ -122,6 +125,7 @@ class Probes:
         progress_bar: bool = False,
         point_interpolator_type: str = "single_point_legendre",
         max_pts: int = 128,
+        find_points_iterative: bool = False,
         find_points_comm_pattern: str = "point_to_point",
         elem_percent_expansion: float = 0.01,
         global_tree_type: str = "rank_bbox",
@@ -142,6 +146,7 @@ class Probes:
         self.log.write("info", f"progress_bar: {progress_bar}")
         self.log.write("info", f"point_interpolator_type: {point_interpolator_type}")
         self.log.write("info", f"max_pts: {max_pts}")
+        self.log.write("info", f"find_points_iterative: {find_points_iterative}")
         self.log.write("info", f"find_points_comm_pattern: {find_points_comm_pattern}")
         self.log.write("info", f"elem_percent_expansion: {elem_percent_expansion}")
         self.log.write("info", f"global_tree_type: {global_tree_type}")
@@ -252,6 +257,7 @@ class Probes:
         self.log.write("info", "Finding points")
         self.itp.find_points(
             comm,
+            find_points_iterative=find_points_iterative,
             find_points_comm_pattern=find_points_comm_pattern,
             elem_percent_expansion=elem_percent_expansion,
             tol=find_points_tol,
