@@ -9,6 +9,7 @@ from mpi4py import MPI  # for the timer
 from .point_interpolator.point_interpolator_factory import get_point_interpolator
 from ..monitoring.logger import Logger
 from ..comm.router import Router
+from collections import Counter as collections_counter
 
 NoneType = type(None)
 
@@ -1823,6 +1824,7 @@ def get_candidate_ranks(self, comm):
     """
 
     if self.global_tree_type == "rank_bbox":
+        # Obtain the candidates of each point
         candidate_ranks_per_point = self.global_tree.query_ball_point(
             x=self.probe_partition,
             r=self.search_radious * (1 + 1e-6),
@@ -1833,10 +1835,17 @@ def get_candidate_ranks(self, comm):
             return_length=False,
         )
 
+        # Obtain the unique candidates of this rank
+        ## 1. flatten the list of lists
         flattened_list = [
             item for sublist in candidate_ranks_per_point for item in sublist
         ]
+        ## 2. count the number of times each rank appears
+        counts = collections_counter(flattened_list)
+        ## 3. filter the ranks that appear more than once
         candidate_ranks = list(set(flattened_list))
+        ## 4. sort the ranks by the number of points that has it as candidate
+        candidate_ranks.sort(key=lambda x: counts[x], reverse=True)
 
     elif self.global_tree_type == "domain_binning":
 
@@ -1859,10 +1868,16 @@ def get_candidate_ranks(self, comm):
 
         # Now, from the candidates per point, get the candidates
         # that this rank has.
+        # 1. Flatten the list of lists
         flattened_list = [
             item for sublist in candidate_ranks_per_point for item in sublist
         ]
+        # 2. Count the number of times each rank appears
+        counts = collections_counter(flattened_list)
+        # 3. Filter the ranks that appear more than once
         candidate_ranks = list(set(flattened_list))
+        # 4. Sort the ranks by the number of points that has it as candidate
+        candidate_ranks.sort(key=lambda x: counts[x], reverse=True)
     else:
         raise ValueError("Global tree has not been set up")
 
