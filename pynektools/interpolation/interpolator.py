@@ -9,6 +9,7 @@ from mpi4py import MPI  # for the timer
 from .point_interpolator.point_interpolator_factory import get_point_interpolator
 from ..monitoring.logger import Logger
 from ..comm.router import Router
+from collections import Counter as collections_counter
 
 NoneType = type(None)
 
@@ -467,6 +468,7 @@ class Interpolator:
     def find_points(
         self,
         comm,
+        find_points_iterative=False,
         find_points_comm_pattern="point_to_point",
         use_kdtree=True,
         test_tol=1e-4,
@@ -490,7 +492,7 @@ class Interpolator:
                 tol=tol,
                 max_iter=max_iter,
             )
-        elif (find_points_comm_pattern == "point_to_point") or (find_points_comm_pattern == "collective"):
+        elif ((find_points_comm_pattern == "point_to_point") or (find_points_comm_pattern == "collective")) and not find_points_iterative:
             self.find_points_(
                 comm,
                 use_kdtree=use_kdtree,
@@ -499,6 +501,15 @@ class Interpolator:
                 tol=tol,
                 max_iter=max_iter,
                 comm_pattern = find_points_comm_pattern
+            )
+        elif ((find_points_comm_pattern == "point_to_point") or (find_points_comm_pattern == "collective")) and find_points_iterative:
+            self.find_points_iterative(
+                comm,
+                use_kdtree=use_kdtree,
+                test_tol=test_tol,
+                elem_percent_expansion=elem_percent_expansion,
+                tol=tol,
+                max_iter=max_iter,
             )
 
     def find_points_broadcast(
@@ -1179,6 +1190,262 @@ class Interpolator:
 
         return
 
+    def find_points_iterative(
+        self,
+        comm,
+        use_kdtree=True,
+        test_tol=1e-4,
+        elem_percent_expansion=0.01,
+        tol=np.finfo(np.double).eps * 10,
+        max_iter=50,
+        comm_pattern = "point_to_point"
+    ):
+        """Find points using the point to point implementation"""
+        rank = comm.Get_rank()
+        self.rank = rank
+
+        self.log.write("info", "Finding points - start")
+        self.log.tic()
+        start_time = MPI.Wtime()
+
+        # First each rank finds their bounding box
+        self.log.write("info", "Finding bounding box of sem mesh")
+        self.my_bbox = get_bbox_from_coordinates(self.x, self.y, self.z)
+
+        if use_kdtree:
+            # Get bbox centroids and max radius from center to corner
+            self.my_bbox_centroids, self.my_bbox_maxdist = (
+                get_bbox_centroids_and_max_dist(self.my_bbox)
+            )
+
+            # Build a KDtree with my information
+            self.log.write("info", "Creating KD tree with local bbox centroids")
+            self.my_tree = KDTree(self.my_bbox_centroids)
+
+        # nelv = self.x.shape[0]
+        self.ranks_ive_checked = []
+
+        # Get candidate ranks from a global kd tree
+        # These are the destination ranks
+        self.log.write("info", "Obtaining candidate ranks and sources")
+        my_dest = get_candidate_ranks(self, comm)
+
+        self.log.write("info", "Determining maximun number of candidates")
+        max_candidates = np.ones((1), dtype=np.int64) * len(my_dest)
+        max_candidates = comm.allreduce(max_candidates, op=MPI.MAX)
+
+        for search_iteration in range(0, max_candidates[0]):
+
+            self.log.write("info", f"Search iteration: {search_iteration+1} out of {max_candidates[0]}")
+
+            try:
+                my_it_dest = [my_dest[search_iteration]]
+            except IndexError:
+                my_it_dest = []
+
+            # Create temporary arrays that store the points that have not been found
+            not_found = np.where(self.err_code_partition != 1)[0]
+            n_not_found = not_found.size
+            probe_not_found = self.probe_partition[not_found]
+            probe_rst_not_found = self.probe_rst_partition[not_found]
+            el_owner_not_found = self.el_owner_partition[not_found]
+            glb_el_owner_not_found = self.glb_el_owner_partition[not_found]
+            rank_owner_not_found = self.rank_owner_partition[not_found]
+            err_code_not_found = self.err_code_partition[not_found]
+            test_pattern_not_found = self.test_pattern_partition[not_found]
+
+            # Send data to my candidates and recieve from ranks where I am candidate
+            self.log.write("info", "Send data to candidates and recieve from sources")
+
+            my_source, buff_probes = self.rt.transfer_data( comm_pattern,
+                destination=my_it_dest, data=probe_not_found, dtype=np.double, tag=1
+            )
+            _, buff_probes_rst = self.rt.transfer_data( comm_pattern,
+                destination=my_it_dest, data=probe_rst_not_found, dtype=np.double, tag=2
+            )
+            _, buff_el_owner = self.rt.transfer_data( comm_pattern,
+                destination=my_it_dest, data=el_owner_not_found, dtype=np.int64, tag=3
+            )
+            _, buff_glb_el_owner = self.rt.transfer_data( comm_pattern,
+                destination=my_it_dest, data=glb_el_owner_not_found, dtype=np.int64, tag=4
+            )
+            _, buff_rank_owner = self.rt.transfer_data( comm_pattern,
+                destination=my_it_dest, data=rank_owner_not_found, dtype=np.int64, tag=5
+            )
+            _, buff_err_code = self.rt.transfer_data( comm_pattern,
+                destination=my_it_dest, data=err_code_not_found, dtype=np.int64, tag=6
+            )
+            _, buff_test_pattern = self.rt.transfer_data( comm_pattern,
+                destination=my_it_dest, data=test_pattern_not_found, dtype=np.double, tag=7
+            )
+
+            # Reshape the data from the probes
+            for source_index in range(0, len(my_source)):
+                buff_probes[source_index] = buff_probes[source_index].reshape(-1, 3)
+                buff_probes_rst[source_index] = buff_probes_rst[source_index].reshape(-1, 3)
+
+            # Set the information for the coordinate search in this rank
+            self.log.write("info", "Find rst coordinates for the points")
+            mesh_info = {}
+            mesh_info["x"] = self.x
+            mesh_info["y"] = self.y
+            mesh_info["z"] = self.z
+            mesh_info["bbox"] = self.my_bbox
+            if hasattr(self, "my_tree"):
+                mesh_info["kd_tree"] = self.my_tree
+                mesh_info["bbox_max_dist"] = self.my_bbox_maxdist
+
+            settings = {}
+            settings["not_found_code"] = -10
+            settings["use_test_pattern"] = True
+            settings["elem_percent_expansion"] = elem_percent_expansion
+            settings["progress_bar"] = self.progress_bar
+            settings["find_pts_tol"] = tol
+            settings["find_pts_max_iterations"] = max_iter
+
+            buffers = {}
+            buffers["r"] = self.r
+            buffers["s"] = self.s
+            buffers["t"] = self.t
+            buffers["test_interp"] = self.test_interp
+
+            # Now find the rst coordinates for the points stored in each of the buffers
+            for source_index in range(0, len(my_source)):
+
+                self.log.write(
+                    "debug", f"Processing batch: {source_index} out of {len(my_source)}"
+                )
+
+                probes_info = {}
+                probes_info["probes"] = buff_probes[source_index]
+                probes_info["probes_rst"] = buff_probes_rst[source_index]
+                probes_info["el_owner"] = buff_el_owner[source_index]
+                probes_info["glb_el_owner"] = buff_glb_el_owner[source_index]
+                probes_info["rank_owner"] = buff_rank_owner[source_index]
+                probes_info["err_code"] = buff_err_code[source_index]
+                probes_info["test_pattern"] = buff_test_pattern[source_index]
+                probes_info["rank"] = rank
+                probes_info["offset_el"] = self.offset_el
+
+                [
+                    buff_probes[source_index],
+                    buff_probes_rst[source_index],
+                    buff_el_owner[source_index],
+                    buff_glb_el_owner[source_index],
+                    buff_rank_owner[source_index],
+                    buff_err_code[source_index],
+                    buff_test_pattern[source_index],
+                ] = self.ei.find_rst(probes_info, mesh_info, settings, buffers=buffers)
+
+            # Set the request to Recieve back the data that I have sent to my candidates
+            self.log.write("info", "Send data to sources and recieve from candidates")
+
+            _, obuff_probes = self.rt.transfer_data( comm_pattern,
+                destination=my_source, data=buff_probes, dtype=np.double, tag=11
+            )
+            _, obuff_probes_rst = self.rt.transfer_data( comm_pattern,
+                destination=my_source, data=buff_probes_rst, dtype=np.double, tag=12
+            )
+            _, obuff_el_owner = self.rt.transfer_data( comm_pattern,
+                destination=my_source, data=buff_el_owner, dtype=np.int64, tag=13
+            )
+            _, obuff_glb_el_owner = self.rt.transfer_data( comm_pattern,
+                destination=my_source, data=buff_glb_el_owner, dtype=np.int64, tag=14
+            )
+            _, obuff_rank_owner = self.rt.transfer_data( comm_pattern,
+                destination=my_source, data=buff_rank_owner, dtype=np.int64, tag=15
+            )
+            _, obuff_err_code = self.rt.transfer_data( comm_pattern,
+                destination=my_source, data=buff_err_code, dtype=np.int64, tag=16
+            )
+            _, obuff_test_pattern = self.rt.transfer_data( comm_pattern,
+                destination=my_source, data=buff_test_pattern, dtype=np.double, tag=17
+            )
+
+            # Reshape the data from the probes
+            for dest_index in range(0, len(my_it_dest)):
+                obuff_probes[dest_index] = obuff_probes[dest_index].reshape(-1, 3)
+                obuff_probes_rst[dest_index] = obuff_probes_rst[dest_index].reshape(-1, 3)
+
+            # Free resources from previous buffers if possible
+            del (
+                buff_probes,
+                buff_probes_rst,
+                buff_el_owner,
+                buff_glb_el_owner,
+                buff_rank_owner,
+                buff_err_code,
+                buff_test_pattern,
+            )
+
+            # Skip the rest of the if this rank did not have candidates to send to
+            if len(my_it_dest) == 0:
+                continue
+
+            # Now loop through all the points in the buffers that
+            # have been sent back and determine which point was found
+            self.log.write(
+                "info", "Determine which points were found and find best candidate"
+            )
+            for relative_point, absolute_point  in enumerate(not_found):
+
+                # These are the error code and test patterns for
+                # this point from all the ranks that sent back
+                all_err_codes = [arr[relative_point] for arr in obuff_err_code]
+                all_test_patterns = [arr[relative_point] for arr in obuff_test_pattern]
+
+                # Check if any rank had certainty that it had found the point
+                found_err_code = np.where(np.array(all_err_codes) == 1)[0]
+
+                # If the point was found in any rank, just choose the first
+                # one in the list (in case there was more than one founder):
+                if found_err_code.size > 0:
+                    index = found_err_code[0]
+                    self.probe_partition[absolute_point, :] = obuff_probes[index][relative_point, :]
+                    self.probe_rst_partition[absolute_point, :] = obuff_probes_rst[index][relative_point, :]
+                    self.el_owner_partition[absolute_point] = obuff_el_owner[index][relative_point]
+                    self.glb_el_owner_partition[absolute_point] = obuff_glb_el_owner[index][relative_point]
+                    self.rank_owner_partition[absolute_point] = obuff_rank_owner[index][relative_point]
+                    self.err_code_partition[absolute_point] = obuff_err_code[index][relative_point]
+                    self.test_pattern_partition[absolute_point] = obuff_test_pattern[index][relative_point]
+
+                    # skip the rest of the loop
+                    continue
+
+                # If the point was not found with certainty, then choose as
+                # owner the the one that produced the smaller error in the test pattern
+                min_test_pattern = np.where(
+                    np.array(all_test_patterns) == np.array(all_test_patterns).min()
+                )[0]
+                if min_test_pattern.size > 0:
+                    index = min_test_pattern[0]
+                    if obuff_test_pattern[index][relative_point] < self.test_pattern_partition[absolute_point]:
+                        self.probe_partition[absolute_point, :] = obuff_probes[index][relative_point, :]
+                        self.probe_rst_partition[absolute_point, :] = obuff_probes_rst[index][relative_point, :]
+                        self.el_owner_partition[absolute_point] = obuff_el_owner[index][relative_point]
+                        self.glb_el_owner_partition[absolute_point] = obuff_glb_el_owner[index][relative_point]
+                        self.rank_owner_partition[absolute_point] = obuff_rank_owner[index][relative_point]
+                        self.err_code_partition[absolute_point] = obuff_err_code[index][relative_point]
+                        self.test_pattern_partition[absolute_point] = obuff_test_pattern[index][relative_point]
+
+        # Go through the points again, if the test pattern was
+        #  too large, mark that point as not found
+        for j in range(0, len(self.test_pattern_partition)):
+            # After all iteration are done, check if some points
+            #  were not found. Use the error code and the test pattern
+            if (
+                self.err_code_partition[j] != 1
+                and self.test_pattern_partition[j] > test_tol
+            ):
+                self.err_code_partition[j] = 0
+
+        comm.Barrier()
+        self.log.write("info", "Finding points - finished")
+        self.log.toc()
+
+        return
+
+
     def redistribute_probes_to_owners_from_io_rank(self, io_rank, comm):
         """Redistribute the probes to the ranks that
         have been determined in the search"""
@@ -1567,6 +1834,7 @@ def get_candidate_ranks(self, comm):
     """
 
     if self.global_tree_type == "rank_bbox":
+        # Obtain the candidates of each point
         candidate_ranks_per_point = self.global_tree.query_ball_point(
             x=self.probe_partition,
             r=self.search_radious * (1 + 1e-6),
@@ -1577,10 +1845,17 @@ def get_candidate_ranks(self, comm):
             return_length=False,
         )
 
+        # Obtain the unique candidates of this rank
+        ## 1. flatten the list of lists
         flattened_list = [
             item for sublist in candidate_ranks_per_point for item in sublist
         ]
+        ## 2. count the number of times each rank appears
+        counts = collections_counter(flattened_list)
+        ## 3. filter the ranks that appear more than once
         candidate_ranks = list(set(flattened_list))
+        ## 4. sort the ranks by the number of points that has it as candidate
+        candidate_ranks.sort(key=lambda x: counts[x], reverse=True)
 
     elif self.global_tree_type == "domain_binning":
 
@@ -1603,10 +1878,16 @@ def get_candidate_ranks(self, comm):
 
         # Now, from the candidates per point, get the candidates
         # that this rank has.
+        # 1. Flatten the list of lists
         flattened_list = [
             item for sublist in candidate_ranks_per_point for item in sublist
         ]
-        candidate_ranks = np.unique(flattened_list)
+        # 2. Count the number of times each rank appears
+        counts = collections_counter(flattened_list)
+        # 3. Filter the ranks that appear more than once
+        candidate_ranks = list(set(flattened_list))
+        # 4. Sort the ranks by the number of points that has it as candidate
+        candidate_ranks.sort(key=lambda x: counts[x], reverse=True)
     else:
         raise ValueError("Global tree has not been set up")
 
@@ -1623,10 +1904,10 @@ def domain_binning_map_probe_to_rank(self, probe_to_bin_map):
     ]
     # In the previous map every point gets a set of lists, now make it
     # just one list with the unique ranks.
-    probe_to_rank_map = [
-        np.unique([item for sublist in probe_to_rank[i] for item in sublist])
+    probe_to_rank_map = np.array([
+        np.unique([item for sublist in probe_to_rank[i] for item in sublist]).tolist()
         for i in range(len(probe_to_rank))
-    ]
+    ], dtype = object)
 
     return probe_to_rank_map
 
