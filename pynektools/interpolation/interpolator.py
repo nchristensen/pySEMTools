@@ -1606,7 +1606,7 @@ def get_candidate_ranks(self, comm):
         flattened_list = [
             item for sublist in candidate_ranks_per_point for item in sublist
         ]
-        candidate_ranks = np.unique(flattened_list)
+        candidate_ranks = list(set(flattened_list))
     else:
         raise ValueError("Global tree has not been set up")
 
@@ -1623,10 +1623,10 @@ def domain_binning_map_probe_to_rank(self, probe_to_bin_map):
     ]
     # In the previous map every point gets a set of lists, now make it
     # just one list with the unique ranks.
-    probe_to_rank_map = [
-        np.unique([item for sublist in probe_to_rank[i] for item in sublist])
+    probe_to_rank_map = np.array([
+        np.unique([item for sublist in probe_to_rank[i] for item in sublist]).tolist()
         for i in range(len(probe_to_rank))
-    ]
+    ], dtype = object)
 
     return probe_to_rank_map
 
