@@ -165,37 +165,36 @@ class Interpolator:
         rank_bbox[0, 4] = np.min(self.z)
         rank_bbox[0, 5] = np.max(self.z)
 
-        rank_bbox_dist = np.zeros((1, 3), dtype=np.double)
-        rank_bbox_dist[0, 0] = rank_bbox[0, 1] - rank_bbox[0, 0]
-        rank_bbox_dist[0, 1] = rank_bbox[0, 3] - rank_bbox[0, 2]
-        rank_bbox_dist[0, 2] = rank_bbox[0, 5] - rank_bbox[0, 4]
-        rank_bbox_max_dist = np.max(
+        # Gather the bounding boxes in all ranks
+        self.global_bbox = np.zeros((size * 6), dtype=np.double)
+        comm.Allgather(
+            [rank_bbox.flatten(), MPI.DOUBLE], [self.global_bbox, MPI.DOUBLE]
+        )
+        self.global_bbox = self.global_bbox.reshape((size, 6))
+
+        # Get the centroids and max distances
+        bbox_dist = np.zeros((size, 3), dtype=np.double)
+        bbox_dist[:, 0] = self.global_bbox[:, 1] - self.global_bbox[:, 0]
+        bbox_dist[:, 1] = self.global_bbox[:, 3] - self.global_bbox[:, 2]
+        bbox_dist[:, 2] = self.global_bbox[:, 5] - self.global_bbox[:, 4]
+        bbox_max_dist = np.max(
             np.sqrt(
-                rank_bbox_dist[:, 0] ** 2
-                + rank_bbox_dist[:, 1] ** 2
-                + rank_bbox_dist[:, 2] ** 2
+                bbox_dist[:, 0] ** 2
+                + bbox_dist[:, 1] ** 2
+                + bbox_dist[:, 2] ** 2
             )
             / 2
         )
 
-        rank_bbox_centroid = np.zeros((1, 3))
-        rank_bbox_centroid[:, 0] = rank_bbox[:, 0] + rank_bbox_dist[:, 0] / 2
-        rank_bbox_centroid[:, 1] = rank_bbox[:, 2] + rank_bbox_dist[:, 1] / 2
-        rank_bbox_centroid[:, 2] = rank_bbox[:, 4] + rank_bbox_dist[:, 2] / 2
+        bbox_centroid = np.zeros((size, 3))
+        bbox_centroid[:, 0] = self.global_bbox[:, 0] + bbox_dist[:, 0] / 2
+        bbox_centroid[:, 1] = self.global_bbox[:, 2] + bbox_dist[:, 1] / 2
+        bbox_centroid[:, 2] = self.global_bbox[:, 4] + bbox_dist[:, 2] / 2
 
-        global_centroids = np.zeros((size * 3), dtype=np.double)
-        global_max_dist = np.zeros((size), dtype=np.double)
-
-        # Gather in all ranks
-        comm.Allgather(
-            [rank_bbox_centroid.flatten(), MPI.DOUBLE], [global_centroids, MPI.DOUBLE]
-        )
-        comm.Allgather([rank_bbox_max_dist, MPI.DOUBLE], [global_max_dist, MPI.DOUBLE])
-        global_centroids = global_centroids.reshape((size, 3))
         # Create a tree with the rank centroids
         self.log.write("info", "Creating global KD tree with rank centroids")
-        self.global_tree = KDTree(global_centroids)
-        self.search_radious = np.max(global_max_dist)
+        self.global_tree = KDTree(bbox_centroid)
+        self.search_radious = bbox_max_dist
 
         self.log.toc()
 
@@ -1850,11 +1849,20 @@ def get_candidate_ranks(self, comm):
             return_length=False,
         )
 
+        # Check if the points are really in the bounding box
+        candidate_ranks_per_point_bool = np.array(
+            [[pt_in_bbox(point, self.global_bbox[candidate], rel_tol = 0.01) for candidate in candidate_ranks_per_point[i]]
+            for i, point in enumerate(self.probe_partition)], dtype=object)
+        
         # Obtain the unique candidates of this rank
         ## 1. flatten the list of lists
         flattened_list = [
-            item for sublist in candidate_ranks_per_point for item in sublist
+            item
+            for sublist, bool_sublist in zip(candidate_ranks_per_point, candidate_ranks_per_point_bool)
+            for item, is_true in zip(sublist, bool_sublist)
+            if is_true
         ]
+
         ## 2. count the number of times each rank appears
         counts = collections_counter(flattened_list)
         ## 3. filter the ranks that appear more than once
