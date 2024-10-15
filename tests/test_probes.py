@@ -71,26 +71,28 @@ def test_probes_msh_single():
     tlist = []
     point_int_l = ["single_point_legendre", "multiple_point_legendre_numpy", "multiple_point_legendre_torch"]
     global_tree_type_l = ["rank_bbox", "domain_binning"]
+    find_points_iterative = [[False], [True, 1]]
 
     for point_int in point_int_l:
         for global_tree_type in global_tree_type_l:
-            # Create the probes object
-            log.write("warning", f"Creating probes with point_int = {point_int} and global_tree_type = {global_tree_type}")
-            log.tic()
-            probes = Probes(comm, probes=xyz, msh=msh, point_interpolator_type=point_int, find_points_comm_pattern="point_to_point", global_tree_type=global_tree_type)    
+            for find_points_it in find_points_iterative:
+                # Create the probes object
+                log.write("warning", f"Creating probes with point_int = {point_int} and global_tree_type = {global_tree_type} and find_points_it = {find_points_it}")
+                log.tic()
+                probes = Probes(comm, probes=xyz, msh=msh, point_interpolator_type=point_int, find_points_comm_pattern="point_to_point", global_tree_type=global_tree_type, find_points_iterative=find_points_it)    
 
-            # Interpolate the data
-            probes.interpolate_from_field_list(0, [msh.x, msh.y, msh.z], comm, write_data=False)
+                # Interpolate the data
+                probes.interpolate_from_field_list(0, [msh.x, msh.y, msh.z], comm, write_data=False)
 
-            passed = False
-            if comm.Get_rank() == 0: 
+                passed = False
+                if comm.Get_rank() == 0: 
 
-                passed = np.allclose(probes.interpolated_fields[:,1:], xyz, atol=1e-7)
+                    passed = np.allclose(probes.interpolated_fields[:,1:], xyz, atol=1e-7)
 
-            log.write("warning", f"Test passed = {passed}")
-            log.toc()
-            tlist.append(passed)
- 
+                log.write("warning", f"Test passed = {passed}")
+                log.toc()
+                tlist.append(passed)
+    
 
     passed = np.all(tlist)
 

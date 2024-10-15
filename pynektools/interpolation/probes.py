@@ -53,9 +53,9 @@ class Probes:
         multiple_point_legendre_numpy, multiple_point_legendre_torch.
     max_pts : int, optional
         Maximum number of points to interpolate. Default is 128. Used if multiple point interpolator is selected.
-    find_points_iterative : bool
-        If True, iterative search is used to find points. Default is False. This would be recommended, as less memory would be used.
-        It can potentially be slower, however. It is kept false by default for performance reasons.
+    find_points_iterative : list
+        List with two elements. First element is a boolean that indicates if the search is iterative.
+        Second element is the maximum number of candidate ranks to send the data. This affects memory. Default is [False, 5000].
     find_points_comm_pattern : str
         Communication pattern for finding points. Default is point_to_point.
         options are: point_to_point, collective.
@@ -125,7 +125,7 @@ class Probes:
         progress_bar: bool = False,
         point_interpolator_type: str = "single_point_legendre",
         max_pts: int = 128,
-        find_points_iterative: bool = False,
+        find_points_iterative: list = [False, 5000],
         find_points_comm_pattern: str = "point_to_point",
         elem_percent_expansion: float = 0.01,
         global_tree_type: str = "rank_bbox",
