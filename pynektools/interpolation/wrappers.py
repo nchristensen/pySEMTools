@@ -17,7 +17,7 @@ def interpolate_fields_from_disk(comm: MPI.Comm,
                                 write_coords: bool = True,
                                 point_interpolator_type: str = 'multiple_point_legendre_numpy',
                                 max_pts: int = 256,
-                                find_points_iterative: bool = False,
+                                find_points_iterative: list = [False, 5000],
                                 find_points_comm_pattern: str = 'point_to_point',
                                 elem_percent_expansion: float = 0.01,
                                 global_tree_type: str = "rank_bbox",
@@ -58,8 +58,8 @@ def interpolate_fields_from_disk(comm: MPI.Comm,
         The type of point interpolator to use, by default 'multiple_point_legendre_numpy'
     max_pts : int, optional
         The maximum number of points to interpolate at once, by default 256
-    find_points_iterative : bool, optional
-        Whether to use iterative point finding, by default False
+    find_points_iterative : list, optional
+        Whether to use iterative point finding, by default [False, 5000]
     find_points_comm_pattern : str, optional
         The communication pattern to use for finding points, by default 'point_to_point'
     elem_percent_expansion : float, optional

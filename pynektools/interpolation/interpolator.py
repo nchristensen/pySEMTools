@@ -467,7 +467,7 @@ class Interpolator:
     def find_points(
         self,
         comm,
-        find_points_iterative=False,
+        find_points_iterative: list =[False, 5000],
         find_points_comm_pattern="point_to_point",
         use_kdtree=True,
         test_tol=1e-4,
@@ -476,11 +476,18 @@ class Interpolator:
         max_iter=50,
     ):
         """Public method to dins points across ranks and elements"""
-        if comm.Get_rank() == 0:
-            self.log.write(
-                "info",
-                "using communication pattern: {}".format(find_points_comm_pattern),
-            )
+        self.log.write(
+            "info",
+            "using communication pattern: {}".format(find_points_comm_pattern),
+        )
+        
+        # Check that the inputs are in the correct format 
+        if not isinstance(find_points_iterative, (list, tuple)):
+            find_points_iterative = fp_it_tolist(self, find_points_iterative)
+        elif len(find_points_iterative) == 1:
+            find_points_iterative = fp_it_tolist(self, find_points_iterative[0])
+        elif len(find_points_iterative) != 2:
+            raise ValueError("find_points_iterative must be a list or tuple of length 2")
 
         if find_points_comm_pattern == "broadcast":
             self.find_points_broadcast(
@@ -491,7 +498,7 @@ class Interpolator:
                 tol=tol,
                 max_iter=max_iter,
             )
-        elif ((find_points_comm_pattern == "point_to_point") or (find_points_comm_pattern == "collective")) and not find_points_iterative:
+        elif ((find_points_comm_pattern == "point_to_point") or (find_points_comm_pattern == "collective")) and not find_points_iterative[0]:
             self.find_points_(
                 comm,
                 use_kdtree=use_kdtree,
@@ -501,13 +508,14 @@ class Interpolator:
                 max_iter=max_iter,
                 comm_pattern = find_points_comm_pattern
             )
-        elif ((find_points_comm_pattern == "point_to_point") or (find_points_comm_pattern == "collective")) and find_points_iterative:
+        elif ((find_points_comm_pattern == "point_to_point") or (find_points_comm_pattern == "collective")) and find_points_iterative[0]:
             self.find_points_iterative(
                 comm,
                 use_kdtree=use_kdtree,
                 test_tol=test_tol,
                 elem_percent_expansion=elem_percent_expansion,
                 tol=tol,
+                batch_size=find_points_iterative[1],
                 max_iter=max_iter,
             )
 
@@ -1197,6 +1205,7 @@ class Interpolator:
         elem_percent_expansion=0.01,
         tol=np.finfo(np.double).eps * 10,
         max_iter=50,
+        batch_size=5000,
         comm_pattern = "point_to_point"
     ):
         """Find points using the point to point implementation"""
@@ -1232,15 +1241,27 @@ class Interpolator:
         self.log.write("info", "Determining maximun number of candidates")
         max_candidates = np.ones((1), dtype=np.int64) * len(my_dest)
         max_candidates = comm.allreduce(max_candidates, op=MPI.MAX)
+        if batch_size > max_candidates[0]: batch_size = max_candidates[0]
+        number_of_batches = int(np.ceil(max_candidates[0] / batch_size))
+        self.log.write("info", f"Perfoming {number_of_batches} search iterations processing max {batch_size} candidates per iteration")
 
-        for search_iteration in range(0, max_candidates[0]):
+        for search_iteration in range(0, number_of_batches):
 
-            self.log.write("info", f"Search iteration: {search_iteration+1} out of {max_candidates[0]}")
+            self.log.write("info", f"Search iteration: {search_iteration+1} out of {number_of_batches}")
 
+            start = int(search_iteration * batch_size)
+            end = int((search_iteration + 1) * batch_size)
+            if end > len(my_dest):
+                end = len(my_dest)
             try:
-                my_it_dest = [my_dest[search_iteration]]
+                my_it_dest = my_dest[start:end]
             except IndexError:
                 my_it_dest = []
+
+            # This should never happen but if it does, make sure it is a list
+            if not isinstance(my_it_dest, list):
+                self.log.write("warning", "my_it_dest is not a list, making it one")
+                my_it_dest = [my_it_dest]
 
             # Create temporary arrays that store the points that have not been found
             not_found = np.where(self.err_code_partition != 1)[0]
@@ -1949,3 +1970,13 @@ def get_global_candidate_ranks(comm, candidate_ranks):
     )  # This all gather can be changed for gather and broadcast
 
     return rank_candidates_in_all_ranks
+
+def fp_it_tolist(self, value):
+    if type(value) is int:
+        self.log.write("warning", "find_points_iterative must be a list or tuple, received int. Converting to list")
+        return [True, value]
+    elif type(value) is bool:
+        self.log.write("warning", "find_points_iterative must be a list or tuple, received bool. Converting to list")
+        self.log.write("warning", "Setting comm batch size to 5000. Only used if find_points_iterative is True")
+        return [value, 5000]
+    return value
