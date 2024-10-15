@@ -1362,6 +1362,11 @@ class Interpolator:
                 destination=my_source, data=buff_test_pattern, dtype=np.double, tag=17
             )
 
+            # If no point was sent from this rank, then all buffers will be empty
+            # so skip the rest of the loop
+            if n_not_found < 1:
+                continue
+
             # Reshape the data from the probes
             for dest_index in range(0, len(my_it_dest)):
                 obuff_probes[dest_index] = obuff_probes[dest_index].reshape(-1, 3)
