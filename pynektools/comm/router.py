@@ -390,7 +390,7 @@ class Router:
             recvbuf = None
 
         # Chunk the data if it is too large
-        if np.any(sendcounts >= int32_limit):
+        if np.any(sendcounts >= int32_limit) or np.sum(sendcounts) >= int32_limit:
 
             # Initialize the recieve displacement
             recv_pos = 0
@@ -407,6 +407,8 @@ class Router:
 
                 # Identify the number of data that is left to send
                 chunk_sendcounts = sendcounts - chunk_sent
+                # Get the cumulative sum of the sendcounts to be sent
+                sum_chunk_sendcounts = np.cumsum(chunk_sendcounts)
 
                 # As soon as one rank has too much data, only sent data up to that rank
                 # This is done this way to avoid the int32 limit, while keeping it simple
@@ -414,12 +416,15 @@ class Router:
                 already_found_limit = False
                 for i in range(len(chunk_sendcounts)):
                     if not already_found_limit:
-                        # If no sendcount is too large, do nothing
-                        # if sentcount is too large, set it to the limit and
-                        # mark that the rest of sendcounts will be 0 for this iteration
-                        if chunk_sendcounts[i] >= int32_limit:
-                            chunk_sendcounts[i] = int32_limit - 100
+                        # If The sum is not too large for the rank, do nothing
+                        ## If the sum of the sendcounts is too large, set the sendcount of that rank to the limit
+                        if sum_chunk_sendcounts[i] >= int32_limit:
+                            if i == 0:
+                                chunk_sendcounts[i] = int32_limit
+                            else:
+                                chunk_sendcounts[i] = int32_limit - sum_chunk_sendcounts[i-1]
                             already_found_limit = True
+
                     else:
                         # If we have found one rank that has too large sendcount,
                         # set all the subsequent rank sendcount to 0
