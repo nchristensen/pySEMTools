@@ -1488,6 +1488,7 @@ class Interpolator:
         err_code = self.err_code
 
         # Sort the points by rank to scatter them easily
+        self.log.write("debug", "Scattering probes - sorting")
         if rank == io_rank:
 
             # Before the sorting, assign all the not found probes to rank zero.
@@ -1507,14 +1508,17 @@ class Interpolator:
             sort_by_rank = None
 
         # Check the sendcounts in number of probes
+        self.log.write("debug", "Scattering probes - Defining sendcounts")
         sendcounts = np.zeros((size), dtype=np.int64)
         if rank == io_rank:
-            for root in range(0, size):
-                sendcounts[root] = len(np.where(rank_owner == root)[0])
+            sendcounts[:] = np.bincount(rank_owner, minlength=size)
+
+        self.log.write("debug", "Scattering probes - Broadcasting")
         comm.Bcast(sendcounts, root=0)
 
         root = io_rank
         # Redistribute probes
+        self.log.write("debug", "Scattering probes - probes")
         if rank == root:
             sendbuf = sorted_probes.reshape((sorted_probes.size))
         else:
@@ -1523,6 +1527,7 @@ class Interpolator:
         my_probes = recvbuf.reshape((int(recvbuf.size / 3), 3))
 
         # Redistribute probes rst
+        self.log.write("debug", "Scattering probes - probes rst")
         if rank == root:
             sendbuf = sorted_probes_rst.reshape((sorted_probes_rst.size))
         else:
@@ -1531,6 +1536,7 @@ class Interpolator:
         my_probes_rst = recvbuf.reshape((int(recvbuf.size / 3), 3))
 
         # Redistribute err_code
+        self.log.write("debug", "Scattering probes - err code")
         if rank == root:
             sendbuf = sorted_err_code.reshape((sorted_err_code.size))
         else:
@@ -1539,6 +1545,7 @@ class Interpolator:
         my_err_code = recvbuf
 
         # Redistribute el_owner
+        self.log.write("debug", "Scattering probes - el owner")
         if rank == root:
             sendbuf = sorted_el_owner.reshape((sorted_el_owner.size))
             # print(sendbuf)
@@ -1549,6 +1556,7 @@ class Interpolator:
         my_el_owner = recvbuf
 
         # Redistribute el_owner
+        self.log.write("debug", "Scattering probes - rank owner")
         if rank == root:
             sendbuf = sorted_rank_owner.reshape((sorted_rank_owner.size))
         else:
@@ -1556,6 +1564,7 @@ class Interpolator:
         recvbuf = self.rt.scatter_from_root(sendbuf, sendcounts, root, np.int64)
         my_rank_owner = recvbuf
 
+        self.log.write("info", "Assigning my data")
         self.my_probes = my_probes
         self.my_probes_rst = my_probes_rst
         self.my_err_code = my_err_code
