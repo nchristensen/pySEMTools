@@ -7,7 +7,10 @@ import numpy as np
 from ..monitoring.logger import Logger
 import glob
 from pymech.neksuite.field import read_header
-
+import numpy as np
+from ..datatypes.field import FieldRegistry
+from ..io.ppymech.neksuite import pynekread
+from mpi4py import MPI
 
 def index_files_from_log(comm, logpath="", logname="", progress_reports=50):
     """
@@ -380,7 +383,8 @@ def index_files_from_folder(
             files[ftype][files_index[ftype]]["file_contents"] = {"mesh_fields" : header.nb_vars[0],
                                                                  "velocity_fields" : header.nb_vars[1],
                                                                  "pressure_fields" : header.nb_vars[2],
-                                                                 "scalar_fields" : header.nb_vars[3]}
+                                                                 "temperature_fields" : header.nb_vars[3],
+                                                                 "scalar_fields" : header.nb_vars[4]}
 
         for key in files[ftype][files_index[ftype]].keys():
             logger.write("debug", f"{key}: {files[ftype][files_index[ftype]][key]}")
@@ -527,3 +531,82 @@ def merge_index_files(comm, index_list="", output_fname="", sort_by_time=False):
             outfile.write(json.dumps(consolidated_index, indent=4))
 
     del logger
+
+def inspect_field_files(
+    comm,
+    input_name="",
+    output_name="./",
+):
+    """
+    Check the maximun, minimun and average value of the fields in the index.
+
+
+    Parameters
+    ----------
+    comm : MPI.COMM
+        MPI communicator.
+    field_index_name : str
+        Name of the field index file.
+    output_name : str
+        Name of the output file. Optional. If not provided, the name of the input file name is used
+    """
+
+    logger = Logger(comm=comm, module_name="inspect_field_files")
+    input_path_ = os.path.dirname(input_name)
+    input_name_ = os.path.basename(input_name)
+    output_path_ = os.path.dirname(output_name)
+    if output_path_ == "":
+        output_path_ = os.getcwd()
+    output_name_ = os.path.basename(output_name)
+    if output_name_ == "":
+        output_name_ = f"check_{input_name_}"
+    
+
+    logger.write("info", f"Reading index file: {input_name}")
+    with open(input_name, "r") as infile:
+        index = json.load(infile)
+
+    logger.write("info", f"Checking fields in index file: {input_name}")
+    for index_key in index.keys():
+        try: 
+            int_index = int(index_key)
+        except ValueError:
+            continue
+
+        logger.write("info", f"Checking field in index position: {index_key}")
+        logger.tic()
+
+        fname = index[index_key]["path"]
+        logger.write("info", f"Reading field: {fname}")
+
+        fld = FieldRegistry(comm)
+        pynekread(fname, comm, data_dtype=np.single, fld=fld)
+
+        # Check maximun, minimun and average of the fields
+        for field_key in fld.registry.keys():
+            field = fld.registry[field_key]
+            logger.write("info", f"Checking field: {field_key}")
+            max_field = np.ones((1), dtype = np.double) * np.max(field)
+            min_field = np.ones((1), dtype = np.double) * np.min(field)
+            avg_field = np.ones((1), dtype = np.double) * np.mean(field)
+
+            global_max_field = comm.allreduce(max_field, op=MPI.MAX)
+            global_min_field = comm.allreduce(min_field, op=MPI.MIN)
+            global_avg_field = comm.allreduce(avg_field, op=MPI.SUM) / comm.Get_size()
+
+            logger.write("info", f"Maximun value of field: {global_max_field}")
+            logger.write("info", f"Minimun value of field: {global_min_field}")
+            logger.write("info", f"Unweighted Average value of field: {global_avg_field}")
+
+            index[index_key][field_key] = {"max": global_max_field[0], "min": global_min_field[0], "unweigthed_avg": global_avg_field[0]}
+
+        fld.clear()
+
+        logger.write("info", f"Field in index position: {index_key} checked/finalized")
+        logger.toc()
+
+    logger.write("info", f"Writing field index: {output_path_}/{output_name_}")
+    
+    if comm.Get_rank() == 0:
+        with open(f"{output_path_}/{output_name_}", "w") as outfile:
+            outfile.write(json.dumps(index, indent=4))
