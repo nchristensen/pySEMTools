@@ -88,23 +88,40 @@ def main():
 
         ########################### Put operations here ###########################
 
+        # Fields
+        u = fld.registry["u"]
+        v = fld.registry["v"]
+        w = fld.registry["w"]
+        t = fld.registry["t"]
+
         # Derivatives
         dudz = coef.dudxyz(fld.registry["u"], coef.drdz, coef.dsdz, coef.dtdz)
         dvdz = coef.dudxyz(fld.registry["v"], coef.drdz, coef.dsdz, coef.dtdz)
+        dzdz = coef.dudxyz(msh.z            , coef.drdz, coef.dsdz, coef.dtdz)
+
+        test = np.ones_like(dudz)
+        print(np.allclose(dzdz, test))
 
         # Dssum
         dudz = gs.dssum(field=dudz, msh = msh, average="multiplicity")
         dvdz = gs.dssum(field=dvdz, msh = msh, average="multiplicity")
+        dzdz = gs.dssum(field=dzdz, msh = msh, average="multiplicity")
+        
+        print(np.allclose(dzdz, test))
 
         ########################### Put the fields you want to interpolate in the lists below ###########################        
 
-        field_list = [dudz, dvdz]
-        field_names = ["dudz", "dvdz"]
+        field_list = [u, v, w, t, dudz, dvdz, dzdz]
+        field_names = ["u","v", "w", "t", "dudz", "dvdz", "dzdz"]
         
         ###########################################################################
  
         # Interpolate the fields
         probes.interpolate_from_field_list(fld.t, field_list, comm, write_data=True, field_names=field_names)
+
+        if comm.rank == 0:
+            test2 = np.ones_like(probes.interpolated_fields[:,-1])
+            print(np.allclose(probes.interpolated_fields[:,-1], test2))
 
         # Clear the fields
         fld.clear()
