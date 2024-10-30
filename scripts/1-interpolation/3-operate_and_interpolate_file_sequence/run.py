@@ -93,46 +93,76 @@ def main():
         v = fld.registry["v"]
         w = fld.registry["w"]
         t = fld.registry["t"]
+        p = fld.registry["p"]
 
-        # Derivatives
-        dudz = coef.dudxyz(fld.registry["u"], coef.drdz, coef.dsdz, coef.dtdz)
-        dvdz = coef.dudxyz(fld.registry["v"], coef.drdz, coef.dsdz, coef.dtdz)
-        dzdz = coef.dudxyz(msh.z            , coef.drdz, coef.dsdz, coef.dtdz)
-
-        test = np.ones_like(dudz)
-        print(np.allclose(dzdz, test))
-
-        # Dssum
-        dudz = gs.dssum(field=dudz, msh = msh, average="multiplicity")
-        dvdz = gs.dssum(field=dvdz, msh = msh, average="multiplicity")
-        dzdz = gs.dssum(field=dzdz, msh = msh, average="multiplicity")
+        # Jac(U)
+        dudx = coef.dudxyz(u, coef.drdx, coef.dsdx, coef.dtdx)
+        dudx = gs.dssum(field = dudx, msh = msh, average="multiplicity")
+        dudy = coef.dudxyz(u, coef.drdy, coef.dsdy, coef.dtdy)
+        dudy = gs.dssum(field = dudy, msh = msh, average="multiplicity")
+        dudz = coef.dudxyz(u, coef.drdz, coef.dsdz, coef.dtdz)
+        dudz = gs.dssum(field = dudz, msh = msh, average="multiplicity")
         
-        print(np.allclose(dzdz, test))
+        dvdx = coef.dudxyz(v, coef.drdx, coef.dsdx, coef.dtdx)
+        dvdx = gs.dssum(field = dvdx, msh = msh, average="multiplicity") 
+        dvdy = coef.dudxyz(v, coef.drdy, coef.dsdy, coef.dtdy)
+        dvdy = gs.dssum(field = dvdy, msh = msh, average="multiplicity")
+        dvdz = coef.dudxyz(v, coef.drdz, coef.dsdz, coef.dtdz)
+        dvdz = gs.dssum(field = dvdz, msh = msh, average="multiplicity")
+        
+        dwdx = coef.dudxyz(w, coef.drdx, coef.dsdx, coef.dtdx)
+        dwdx = gs.dssum(field = dwdx, msh = msh, average="multiplicity")
+        dwdy = coef.dudxyz(w, coef.drdy, coef.dsdy, coef.dtdy)
+        dwdy = gs.dssum(field = dwdy, msh = msh, average="multiplicity") 
+        dwdz = coef.dudxyz(w, coef.drdz, coef.dsdz, coef.dtdz)
+        dwdz = gs.dssum(field = dwdz, msh = msh, average="multiplicity")
+        
+        # Grad(T)
+        dtdx = coef.dudxyz(t, coef.drdx, coef.dsdx, coef.dtdx)
+        dtdx = gs.dssum(field = dtdx, msh = msh, average="multiplicity")
+        dtdy = coef.dudxyz(t, coef.drdy, coef.dsdy, coef.dtdy)
+        dtdy = gs.dssum(field = dtdy, msh = msh, average="multiplicity")
+        dtdz = coef.dudxyz(t, coef.drdz, coef.dsdz, coef.dtdz)
+        dtdz = gs.dssum(field = dtdz, msh = msh, average="multiplicity")
 
+        # Grad(P)
+        dpdx = coef.dudxyz(p, coef.drdx, coef.dsdx, coef.dtdx)
+        dpdx = gs.dssum(field = dpdx, msh = msh, average="multiplicity")
+        dpdy = coef.dudxyz(p, coef.drdy, coef.dsdy, coef.dtdy)
+        dpdy = gs.dssum(field = dpdy, msh = msh, average="multiplicity")
+        dpdz = coef.dudxyz(p, coef.drdz, coef.dsdz, coef.dtdz)
+        dpdz = gs.dssum(field = dpdz, msh = msh, average="multiplicity")
+
+        # Some extra
+        ut = u*t
+        vt = v*t
+        wt = w*t
+        
         ########################### Put the fields you want to interpolate in the lists below ###########################        
 
-        field_list = [u, v, w, t, dudz, dvdz, dzdz]
-        field_names = ["u","v", "w", "t", "dudz", "dvdz", "dzdz"]
+        field_list = [u, v, w, t, p,
+                     dudx, dudy, dudz,
+                     dvdx, dvdy, dvdz,
+                     dwdx, dwdy, dwdz,
+                     dtdx, dtdy, dtdz,
+                     dpdx, dpdy, dpdz,
+                     ut, vt, wt]
+        field_names = ["u","v", "w", "t", "p",
+                        "dudx", "dudy", "dudz",
+                        "dvdx", "dvdy", "dvdz",
+                        "dwdx", "dwdy", "dwdz",
+                        "dtdx", "dtdy", "dtdz",
+                        "dpdx", "dpdy", "dpdz",
+                        "ut", "vt", "wt"]
+
         
         ###########################################################################
  
         # Interpolate the fields
         probes.interpolate_from_field_list(fld.t, field_list, comm, write_data=True, field_names=field_names)
 
-        if comm.rank == 0:
-            test2 = np.ones_like(probes.interpolated_fields[:,-1])
-            print(np.allclose(probes.interpolated_fields[:,-1], test2))
-
         # Clear the fields
         fld.clear()
-
-
-
-
-
-
-
-
 
 
 if __name__ == "__main__":
