@@ -46,7 +46,8 @@ def NOBM(comm, field_sequence: Union[list[str], list[dict[str, np.ndarray]]], fi
 
             data = {}
             for key in field_id:
-                data[key] = field_id[key]
+                if key in field_names:
+                    data[key] = field_id[key]
         
         else:
             raise ValueError("The field sequence should be a list of strings or a list of dictionaries")
