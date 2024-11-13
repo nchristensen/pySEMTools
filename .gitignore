@@ -9,3 +9,4 @@ dist
 *.vts
 *.png
 *.npy
+build/
