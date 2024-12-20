@@ -1,10 +1,4 @@
-###########################################################################################
-###########################################################################################
-###########################################################################################
-###########################################################################################
-# generic function to compute the gradient of a scalar field
-###########################################################################################
-###########################################################################################
+#%% generic function to compute the gradient of a scalar field
 def compute_scalar_first_derivative(comm, msh, coef, scalar, scalar_deriv):
     if msh.gdim == 3:
         scalar_deriv.c1 = coef.dudxyz(scalar, coef.drdx, coef.dsdx, coef.dtdx)
@@ -18,36 +12,20 @@ def compute_scalar_first_derivative(comm, msh, coef, scalar, scalar_deriv):
         import sys
 
         sys.exit("supports either 2D or 3D data")
-
-
 ###########################################################################################
 ###########################################################################################
 
 
-###########################################################################################
-###########################################################################################
-###########################################################################################
-###########################################################################################
-# do dssum on a vector with components c1, c2, c3
-###########################################################################################
-###########################################################################################
+#%% do dssum on a vector with components c1, c2, c3
 def do_dssum_on_3comp_vector(dU_dxi, coef, msh):
     coef.dssum(dU_dxi.c1, msh)
     coef.dssum(dU_dxi.c2, msh)
     coef.dssum(dU_dxi.c3, msh)
-
-
 ###########################################################################################
 ###########################################################################################
 
 
-###########################################################################################
-###########################################################################################
-###########################################################################################
-###########################################################################################
-# generic function to compute the diagonal second derivatives of a scalar field from its gradient
-###########################################################################################
-###########################################################################################
+#%% generic function to compute the diagonal second derivatives of a scalar field from its gradient
 def compute_scalar_second_derivative(comm, msh, coef, scalar_deriv, scalar_deriv2):
     if msh.gdim == 3:
         scalar_deriv2.c1 = coef.dudxyz(scalar_deriv.c1, coef.drdx, coef.dsdx, coef.dtdx)
@@ -61,19 +39,11 @@ def compute_scalar_second_derivative(comm, msh, coef, scalar_deriv, scalar_deriv
         import sys
 
         sys.exit("supports either 2D or 3D data")
-
-
 ###########################################################################################
 ###########################################################################################
 
 
-###########################################################################################
-###########################################################################################
-###########################################################################################
-###########################################################################################
-# generic function to write a 9 component field with input as 3 vectors of 3 components each
-###########################################################################################
-###########################################################################################
+#%% generic function to write a 9 component field with input as 3 vectors of 3 components each
 def write_file_9c(comm, msh, dU_dxi, dV_dxi, dW_dxi, fname_gradU, if_write_mesh):
     from pynektools.datatypes.field import FieldRegistry
     from pynektools.io.ppymech.neksuite import pynekwrite
@@ -94,19 +64,11 @@ def write_file_9c(comm, msh, dU_dxi, dV_dxi, dW_dxi, fname_gradU, if_write_mesh)
     pynekwrite(fname_gradU, comm, msh=msh, fld=gradU, wdsz=4, write_mesh=if_write_mesh)
 
     gradU.clear()
-
-
 ###########################################################################################
 ###########################################################################################
 
 
-###########################################################################################
-###########################################################################################
-###########################################################################################
-###########################################################################################
-# generic function to write a 6-component field with input as 2 vectors of 3 components each
-###########################################################################################
-###########################################################################################
+#%% generic function to write a 6-component field with input as 2 vectors of 3 components each
 def write_file_6c(comm, msh, dU_dxi, dV_dxi, fname_gradU, if_write_mesh):
     from pynektools.datatypes.field import FieldRegistry
     from pynektools.io.ppymech.neksuite import pynekwrite
@@ -124,19 +86,11 @@ def write_file_6c(comm, msh, dU_dxi, dV_dxi, fname_gradU, if_write_mesh):
     pynekwrite(fname_gradU, comm, msh=msh, fld=gradU, wdsz=4, write_mesh=if_write_mesh)
 
     gradU.clear()
-
-
 ###########################################################################################
 ###########################################################################################
 
 
-###########################################################################################
-###########################################################################################
-###########################################################################################
-###########################################################################################
-# generic function to write a 3-component (vector) field
-###########################################################################################
-###########################################################################################
+#%% generic function to write a 3-component (vector) field
 def write_file_3c(comm, msh, dU_dxi, fname_gradU, if_write_mesh):
     from pynektools.datatypes.field import FieldRegistry
     from pynektools.io.ppymech.neksuite import pynekwrite
@@ -151,20 +105,11 @@ def write_file_3c(comm, msh, dU_dxi, fname_gradU, if_write_mesh):
     pynekwrite(fname_gradU, comm, msh=msh, fld=gradU, wdsz=4, write_mesh=if_write_mesh)
 
     gradU.clear()
-
-
 ###########################################################################################
 ###########################################################################################
 
 
-###########################################################################################
-###########################################################################################
-###########################################################################################
-###########################################################################################
-## generic function to give the file name depending on the code used
-###########################################################################################
-###########################################################################################
-# function to give the file name based on code, etc.
+#%% generic function to give the file name depending on the code used
 def give_me_the_stat_file_name(
     which_dir, fname_base, stat_file_number, which_code="NEKO", nek5000_stat_type="s"
 ):
@@ -176,10 +121,41 @@ def give_me_the_stat_file_name(
         )
     # print('filename here was: ', output_file_name )
     return output_file_name
-
-
 ###########################################################################################
 ###########################################################################################
+
+
+#%% function to generate the list of fields from the file header
+def return_list_of_vars_from_filename(fname):
+    from pymech.neksuite.field import read_header
+
+    header = read_header(fname)
+    vars_=  header.nb_vars
+
+    vel_fields = vars_[1]
+    pres_fields = vars_[2]
+    temp_fields = vars_[3]
+    scal_fields = vars_[4]
+
+    field_names = []
+    for i in range(vel_fields):
+        tmp = [("vel_"+str(i))]
+        field_names = field_names + tmp
+
+    if pres_fields==1:
+        field_names = field_names + ["pres"]
+
+    if temp_fields==1:
+        field_names = field_names + ["temp"]
+
+    for i in range(scal_fields):
+        tmp = [("scal_"+str(i))]
+        field_names = field_names + tmp
+
+    return field_names
+###########################################################################################
+###########################################################################################
+
 
 
 ###########################################################################################
@@ -204,12 +180,14 @@ def compute_and_write_additional_pstat_fields(
     # do some initial checks
     import sys
 
+    # check if file names are the same
+    if fname_mean != fname_stat:
+        sys.exit(
+            "fname_mean must be the same as fname_stat"
+        )
+
     # see if nek5000 file names, etc. are correct
     if which_code.casefold() == "nek5000":
-        if fname_mean != fname_stat:
-            sys.exit(
-                "for NEK5000 statistics fname_mean must be the same as fname_stat and equal to casename0.fXXXXX"
-            )
         if nek5000_stat_type != "s" and nek5000_stat_type != "t":
             sys.exit(
                 'for NEK5000 statistics nek5000_stat_type can be either "s" or "t"'
@@ -271,8 +249,6 @@ def compute_and_write_additional_pstat_fields(
     fname_hessU = which_dir + "/d2Udx2" + this_ext
     fname_derivP = which_dir + "/dnPdxn" + this_ext
     fname_gradPU = which_dir + "/dPUdx" + this_ext
-    # full_fname_mean = which_dir+"/"+fname_mean
-    # full_fname_stat = which_dir+"/"+fname_stat
     full_fname_mesh = which_dir + "/" + fname_mesh
 
     ###########################################################################################
@@ -308,23 +284,23 @@ def compute_and_write_additional_pstat_fields(
 
         # key names taken from: https://neko.cfd/docs/develop/df/d8f/statistics-guide.html
         #                            "PU"       "PV"      "PW"
-        file_keys_PU = ["scal_17", "scal_18", "scal_19"]
+        file_keys_PU = ["scal_21", "scal_22", "scal_23"]
 
         #                           "UU"  , "VV"  , "WW"  , "UV" ,  "UW"  ,  "VW"  ]
-        file_keys_UiUj = ["vel_0", "vel_1", "vel_2", "temp", "scal_0", "scal_1"]
+        file_keys_UiUj = ["scal_0", "scal_1", "scal_2", "scal_3", "scal_4", "scal_5"]
 
         #                           "UUU"  , "VVV"  , "WWW"  , "UUV"  , "UUW"  , "UVV"  , "UVW"  , "VVW"  ,  "UWW"  ,  "VWW"
         file_keys_UiUjUk = [
-            "scal_2",
-            "scal_3",
-            "scal_4",
-            "scal_5",
             "scal_6",
             "scal_7",
             "scal_8",
             "scal_9",
             "scal_10",
             "scal_11",
+            "scal_12",
+            "scal_13",
+            "scal_14",
+            "scal_15",
         ]
 
     elif which_code.casefold() == "nek5000":
@@ -363,10 +339,6 @@ def compute_and_write_additional_pstat_fields(
 
     ###########################################################################################
     # Read velocity and pressure
-    # if which_code.casefold()=="neko":
-    #     this_file_name = full_fname_mean
-    # elif which_code.casefold()=="nek5000":
-    #     this_file_name = which_dir+"/"+nek5000_stat_type+"01"+fname_mean
     this_file_name = give_me_the_stat_file_name(
         which_dir, fname_mean, "01", which_code, nek5000_stat_type
     )
@@ -420,6 +392,7 @@ def compute_and_write_additional_pstat_fields(
         do_dssum_on_3comp_vector(dU_dxi, coef, msh)
         do_dssum_on_3comp_vector(dV_dxi, coef, msh)
         do_dssum_on_3comp_vector(dW_dxi, coef, msh)
+
     write_file_9c(
         comm, msh, dU_dxi, dV_dxi, dW_dxi, fname_gradU, if_write_mesh=if_write_mesh
     )
@@ -441,12 +414,6 @@ def compute_and_write_additional_pstat_fields(
     del dU_dxi
     del dV_dxi
     del dW_dxi
-    # dU_dxi.clear()
-    # dV_dxi.clear()
-    # dW_dxi.clear()
-    # d2U_dxi2.clear()
-    # d2V_dxi2.clear()
-    # d2W_dxi2.clear()
     ################################
 
     ###########################################################################################
@@ -466,8 +433,6 @@ def compute_and_write_additional_pstat_fields(
     ###############################
     del dP_dxi
     del d2P_dxi2
-    # dP_dxi.clear()
-    # d2P_dxi2.clear()
     mean_fields.clear()  # no longer needed
     ###############################
 
@@ -538,10 +503,6 @@ def compute_and_write_additional_pstat_fields(
         if comm.Get_rank() == 0:
             print("working on: " + actual_field_names[icomp])
 
-        # if which_code.casefold()=="neko":
-        #     this_file_name=full_fname_stat
-        # elif which_code.casefold()=="nek5000":
-        #     this_file_name=
         this_file_name = give_me_the_stat_file_name(
             which_dir,
             fname_stat,
@@ -647,51 +608,8 @@ def compute_and_write_additional_pstat_fields(
     # dQ_dxi.clear()
     stat_fields.clear()
 
-    print("-------As a great man once said: run successful: dying ...")
-
-
-###########################################################################################
-###########################################################################################
-
-
-###########################################################################################
-###########################################################################################
-###########################################################################################
-###########################################################################################
-# user specified function to define the interpolation points
-###########################################################################################
-###########################################################################################
-def user_defined_interpolating_points():
-    import numpy as np
-    import pynektools.interpolation.pointclouds as pcs
-    import pynektools.interpolation.utils as interp_utils
-
-    # from mpi4py import MPI
-
-    # # Get mpi info
-    # comm = MPI.COMM_WORLD
-
-    # Create the coordinates of the plane you want
-    x_bbox = [0.5, 2]
-    y_bbox = [-1, 1]
-    z_bbox = [0, 0.6]  # See how here I am just setting this to be one value
-
-    nx = 100
-    ny = 100
-    nz = 7  # I want my plane to be  in z
-
-    print("generate interpolation points")
-
-    x_1d = pcs.generate_1d_arrays(x_bbox, nx, mode="equal")
-    y_1d = pcs.generate_1d_arrays(y_bbox, ny, mode="equal")
-    z_1d = pcs.generate_1d_arrays(z_bbox, nz, mode="equal")
-    x, y, z = np.meshgrid(x_1d, y_1d, z_1d, indexing="ij")
-
-    xyz = interp_utils.transform_from_array_to_list(nx, ny, nz, [x, y, z])
-
-    return xyz
-
-
+    if comm.Get_rank() == 0:
+        print("-------As a great man once said: run successful: dying ...")
 ###########################################################################################
 ###########################################################################################
 
@@ -723,7 +641,6 @@ def interpolate_all_stat_and_pstat_fields_onto_points(
     from pynektools.datatypes.field import FieldRegistry
     from pynektools.datatypes.coef import Coef
     from pynektools.io.ppymech.neksuite import pynekread
-    from pymech.neksuite.field import read_header
     from pynektools.interpolation.probes import Probes
 
     if if_create_boundingBox_for_interp:
@@ -733,12 +650,14 @@ def interpolate_all_stat_and_pstat_fields_onto_points(
     # do some initial checks
     import sys
 
+    # check if file names are the same
+    if fname_mean != fname_stat:
+        sys.exit(
+            "fname_mean must be the same as fname_stat"
+        )
+
     # see if nek5000 file names, etc. are correct
     if which_code.casefold() == "nek5000":
-        if fname_mean != fname_stat:
-            sys.exit(
-                "for NEK5000 statistics fname_mean must be the same as fname_stat and equal to casename0.fXXXXX"
-            )
         if nek5000_stat_type != "s" and nek5000_stat_type != "t":
             sys.exit(
                 'for NEK5000 statistics nek5000_stat_type can be either "s" or "t"'
@@ -780,12 +699,10 @@ def interpolate_all_stat_and_pstat_fields_onto_points(
     if which_code.casefold() == "neko":
         these_names = [
             give_me_the_stat_file_name(
-                which_dir, fname_mean, "00", which_code, nek5000_stat_type
-            ),
-            give_me_the_stat_file_name(
                 which_dir, fname_stat, "00", which_code, nek5000_stat_type
-            ),
+            )
         ]
+        # these_field_names = [  ]
     elif which_code.casefold() == "nek5000":
         these_names = [
             give_me_the_stat_file_name(
@@ -820,7 +737,7 @@ def interpolate_all_stat_and_pstat_fields_onto_points(
             ),
             give_me_the_stat_file_name(
                 which_dir, fname_mean, "11", which_code, nek5000_stat_type
-            ),
+            )
         ]
 
     # add the name of the additional fields, these are common between neko and nek5000
@@ -848,6 +765,9 @@ def interpolate_all_stat_and_pstat_fields_onto_points(
     for icomp in range(0, 10):
         this_file_name = which_dir + "/d" + actual_field_names[icomp] + "dx" + this_ext
         these_names.append(this_file_name)
+
+    # if comm.Get_rank() == 0:
+    #     print(these_names)
 
     ###########################################################################################
     # read mesh and redefine it based on the boundaring box if said
@@ -897,23 +817,15 @@ def interpolate_all_stat_and_pstat_fields_onto_points(
     )
 
     ###########################################################################################
-    #
-    # interp_fields_size = ( xyz.len(), 144 )     # enough for now
-    # interp_fields = np.zeros( interp_fields_size, dtype=float, order='C', *, like=None)#
-
-    ###########################################################################################
     for fname in these_names:
 
         if comm.Get_rank() == 0:
             print("----------- working on file: ", fname)
 
-        header = read_header(fname)
-        # num_fields = header.nb_vars()
-        # field_names = [] # set to empty for now
-
         #########################
-        ## THIS NEEDS TO BE FIXED
-        field_names = ["vel_0", "vel_1", "vel_2", "temp"]
+        field_names = return_list_of_vars_from_filename(fname)
+        # if comm.Get_rank() == 0:
+        #     print(field_names)
         #########################
 
         for icomp in range(0, len(field_names)):
@@ -947,75 +859,5 @@ def interpolate_all_stat_and_pstat_fields_onto_points(
             )
 
             mean_fields.clear()
-
-
-###########################################################################################
-###########################################################################################
-
-
-###########################################################################################
-###########################################################################################
-###########################################################################################
-###########################################################################################
-# the presumed workflow
-###########################################################################################
-###########################################################################################
-# filenames
-fname_mesh = "s01FD_3d0.f00001"
-fname_mean = "FD_3d0.f00001"
-fname_stat = "FD_3d0.f00001"
-which_dir = "./"
-which_code = "nek5000"
-nek5000_stat_type = "s"
-
-if_do_dssum_before_interp = False  # whether to do dssum before interpolation
-if_create_boundingBox_for_interp = True
-if_do_dssum_on_derivatives = True
-# step 1:
-# the script to average the stat files in TIME goes here
-
-# step 1.5:
-# can take the average in space here: currently only if the output is still 3D
-# the filenames might need to be changed after this call
-# some_function_to_average in space
-
-# # step 2:
-# # compute the additional fields based on the 44 stat fields.
-# compute_and_write_additional_pstat_fields(which_dir,fname_mesh,fname_mean,fname_stat,\
-#                                           if_write_mesh=True,which_code=which_code,nek5000_stat_type=nek5000_stat_type, \
-#                                           if_do_dssum_on_derivatives=if_do_dssum_on_derivatives)
-
-# step <3:
-# define interpolation points
-# this should be called from rank 0 only!!
-xyz = user_defined_interpolating_points()
-
-# step 3:
-# interpolate the 44+N fields onto the interpolation points
-# this function is not working at the moment
-# For starters, we want this function to write the interpolated fields in MATLAB format so we can debug
-interpolate_all_stat_and_pstat_fields_onto_points(
-    which_dir,
-    fname_mesh,
-    fname_mean,
-    fname_stat,
-    xyz,
-    which_code=which_code,
-    nek5000_stat_type=nek5000_stat_type,
-    if_do_dssum_before_interp=if_do_dssum_before_interp,
-    if_create_boundingBox_for_interp=if_create_boundingBox_for_interp,
-)
-
-# step 3.5:
-# potential script to perform averaging on the interpolated fields is called here
-
-# step 4:
-# function to compute budgets is called  here
-
-# step 4.5:
-# scrtipt to plot, etc. the budget terms is called here
-
-# what is missing??
-
 ###########################################################################################
 ###########################################################################################
