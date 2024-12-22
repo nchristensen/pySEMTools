@@ -14,9 +14,9 @@ def user_defined_interpolating_points():
     y_bbox = [-1, 1]
     z_bbox = [0, 4./3.*np.pi]  # See how here I am just setting this to be one value
 
-    nx = 9*7
-    ny = 9*7
-    nz = 9*7  # I want my plane to be  in z
+    nx = 18*7
+    ny = 18*7
+    nz = 18*7  # I want my plane to be  in z
 
     print("generate interpolation points")
 
@@ -60,7 +60,8 @@ if_do_dssum_on_derivatives = False          # whether to do dssum to computed de
 if_do_dssum_before_interp = True            # whether to do dssum before interpolation
 if_create_boundingBox_for_interp = False    # whether to create a bounding box around the point cloud
                                             # useful for cases where there is a cluster of points somewhere
-
+if_pass_points_to_rank0_only = True         # pass all points to rank0 only. this is to avoid passing duplicate points
+                                            # alternative is for each rank to generate its own points only, but that is too complex
 
 # step 1:
 # the script to average the stat files in TIME goes here
@@ -98,6 +99,7 @@ interpolate_all_stat_and_pstat_fields_onto_points(
     nek5000_stat_type=nek5000_stat_type,
     if_do_dssum_before_interp=if_do_dssum_before_interp,
     if_create_boundingBox_for_interp=if_create_boundingBox_for_interp,
+    if_pass_points_to_rank0_only=if_pass_points_to_rank0_only
 )
 
 # step 3.5:
