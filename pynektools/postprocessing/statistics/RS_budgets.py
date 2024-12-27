@@ -631,6 +631,7 @@ def interpolate_all_stat_and_pstat_fields_onto_points(
     nek5000_stat_type="s",
     if_do_dssum_before_interp=True,
     if_create_boundingBox_for_interp=False,
+    if_pass_points_to_rank0_only=True
 ):
 
     from mpi4py import MPI  # equivalent to the use of MPI_init() in C
@@ -808,13 +809,31 @@ def interpolate_all_stat_and_pstat_fields_onto_points(
     #                 point_interpolator_type="multiple_point_legendre_numpy", \
     #                 global_tree_type="domain_binning" , \
     #                 max_pts = 256 )
-    probes = Probes(
-        comm,
-        probes=xyz,
-        msh=msh,
-        point_interpolator_type="multiple_point_legendre_numpy",
-        max_pts=128,
-    )
+    if not if_pass_points_to_rank0_only:
+        probes = Probes(
+            comm,
+            probes=xyz,
+            msh=msh,
+            point_interpolator_type="multiple_point_legendre_numpy",
+            max_pts=128,
+        )
+    else:
+        if comm.Get_rank() == 0:
+            probes = Probes(
+                comm,
+                probes=xyz,
+                msh=msh,
+                point_interpolator_type="multiple_point_legendre_numpy",
+                max_pts=128,
+            )
+        else:
+            probes = Probes(
+                comm,
+                probes=None,
+                msh=msh,
+                point_interpolator_type="multiple_point_legendre_numpy",
+                max_pts=128,
+            )
 
     ###########################################################################################
     for fname in these_names:
