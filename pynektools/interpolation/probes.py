@@ -23,13 +23,17 @@ class Probes:
     """
     Class to interpolate fields at probes from a SEM mesh.
 
-    Main interpolation class. This works in parallel, however, the probes are held at rank 0.
-    therefore if initializing from file, the probes file should be read at rank 0 and then
-    scattered to all ranks.
+    Main interpolation class. This works in parallel.
 
-    If the probes are passed as an argument, they should be passed to all ranks, however only the
-    data in rank 0 will be relevant (an scatter to all other ranks). See example below to observe
-    how to avoid unnecessary replication of data in all ranks when passing probes as argument.
+    If the points to interpolate are available only at rank 0, make sure to only pass them at that rank and set the others to None.
+    In that case, the points will be scattered to all ranks.
+
+    If the points are passed in all ranks, then they will be considered as different points to be interpolated and the work to interpolate will be multiplied.
+    If you are doing this, make sure that the points that each rank pass are different. Otherwise simply pass None in all ranks but 0.
+    
+    See example below to observe how to avoid unnecessary replication of data in all ranks when passing probes as argument if the points are the same in all ranks.
+
+    If reading probes from file, they will be read on rank 0 and scattered unless parallel hdf5 is used, in which case the probes will be read in all ranks. (In development)
 
     Parameters
     ----------
@@ -37,6 +41,7 @@ class Probes:
         MPI communicator.
     output_fname : str
         Output file name. Default is "./interpolated_fields.csv".
+        Note that you can change the file extension to .hdf5 to write in hdf5 format. by using the name "interpolated_fields.hdf5".
     probes : Union[np.ndarray, str]
         Probes coordinates. If a string, it is assumed to be a file name.
     msh : Union[Mesh, str, list]
@@ -108,7 +113,7 @@ class Probes:
     >>> if comm.Get_rank() == 0:
     >>>     probes_data = np.array([[0.0, 0.0, 0.0], [1.0, 1.0, 1.0], [2.0, 2.0, 2.0]])
     >>> else:
-    >>>    probes_data = 1
+    >>>    probes_data = None
     >>> probes = Probes(comm, probes=probes_data, msh=msh)
 
     Note that probes is initialized in all ranks, but the probe_data containing
@@ -336,7 +341,10 @@ class Probes:
             MPI communicator.
 
         write_data : bool
-            If True, the interpolated data is written to a csv file. Default is True.
+            If True, the interpolated data is written to a file. Default is True.
+
+        field_names : list
+            List of names of the interpolated fields. Useful when writing to file. Default is None.
 
         Examples
         --------
