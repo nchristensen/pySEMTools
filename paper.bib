@@ -1,0 +1,65 @@
+@article{PATERA1984,
+title = {A spectral element method for fluid dynamics: Laminar flow in a channel expansion},
+journal = {Journal of Computational Physics},
+volume = {54},
+number = {3},
+pages = {468-488},
+year = {1984},
+issn = {0021-9991},
+doi = {https://doi.org/10.1016/0021-9991(84)90128-1},
+author = {Anthony T Patera},
+abstract = {A spectral element method that combines the generality of the finite element method with the accuracy of spectral techniques is proposed for the numerical solution of the incompressible Navier-Stokes equations. In the spectral element discretization, the computational domain is broken into a series of elements, and the velocity in each element is represented as a high-order Lagrangian interpolant through Chebyshev collocation points. The hyperbolic piece of the governing equations is then treated with an explicit collocation scheme, while the pressure and viscous contributions are treated implicitly with a projection operator derived from a variational principle. The implementation of the technique is demonstrated on a one-dimensional inflow-outflow advection-diffusion equation, and the method is then applied to laminar two-dimensional (separated) flow in a channel expansion. Comparisons are made with experiment and previous numerical work.}
+}
+
+@Misc{nek5000-web-page,
+  author = {Fischer, Paul and Lottes, James W. and Kerkemeier, Stefan G. },
+  note   = {\url{http://nek5000.mcs.anl.gov}},
+  title  = {{Nek5000} {w}eb page},
+  year   = {2008},
+}
+
+
+@Misc{pymech,
+  author = {Mohanan, Ashwin Vishnu and Chauvat, Guillaume and Kleine, Vitor Gabriel and Fabbiane, Nicolò and Canton, Jacopo},
+  title  = {Pymech: A Python software suite for Nek5000 and SIMSON},
+  year   = {2022},
+  doi = {10.5281/zenodo.7358961},
+  publisher = {GitHub},
+  journal = {GitHub repository},
+}
+
+@article{fischer2021nekrs,
+  title={NekRS, a GPU-Accelerated Spectral Element Navier-Stokes Solver},
+  author={Fischer, Paul and Kerkemeier, Stefan and Min, Misun and Lan, Yu-Hsiang and Phillips, Malachi and Rathnayake, Thilina and Merzari, Elia and Tomboulides, Ananias and Karakus, Ali and Chalmers, Noel and others},
+  journal={arXiv preprint arXiv:2104.05829},
+  year={2021}
+}
+
+@article{jansson2024,
+title = {Neko: A modern, portable, and scalable framework for high-fidelity computational fluid dynamics},
+journal = {Computers \& Fluids},
+volume = {275},
+pages = {106243},
+year = {2024},
+issn = {0045-7930},
+doi = {https://doi.org/10.1016/j.compfluid.2024.106243},
+author = {Niclas Jansson and Martin Karp and Artur Podobas and Stefano Markidis and Philipp Schlatter},
+keywords = {Computational fluid dynamics, Spectral element method, Turbulence, Direct numerical simulation}
+}
+
+@inproceedings{jansson2023,
+author = {Jansson, Niclas and Karp, Martin and Perez, Adalberto and Mukha, Timofey and Ju, Yi and Liu, Jiahui and P\'{a}ll, Szil\'{a}rd and Laure, Erwin and Weinkauf, Tino and Schumacher, J\"{o}rg and Schlatter, Philipp and Markidis, Stefano},
+title = {Exploring the Ultimate Regime of Turbulent Rayleigh–B\'{e}nard Convection Through Unprecedented Spectral-Element Simulations},
+year = {2023},
+isbn = {9798400701092},
+publisher = {Association for Computing Machinery},
+address = {New York, NY, USA},
+url = {https://doi.org/10.1145/3581784.3627039},
+doi = {10.1145/3581784.3627039},
+abstract = {We detail our developments in the high-fidelity spectral-element code Neko that are essential for unprecedented large-scale direct numerical simulations of fully developed turbulence. Major innovations are modular multi-backend design enabling performance portability across a wide range of GPUs and CPUs, a GPU-optimized preconditioner with task overlapping for the pressure-Poisson equation and in-situ data compression. We carry out initial runs of Rayleigh-B\'{e}nard Convection (RBC) at extreme scale on the LUMI and Leonardo supercomputers. We show how Neko is able to strongly scale to 16,384 GPUs and obtain results that are not possible without careful consideration and optimization of the entire simulation workflow. These developments in Neko will help resolving the long-standing question regarding the ultimate regime in RBC.},
+booktitle = {Proceedings of the International Conference for High Performance Computing, Networking, Storage and Analysis},
+articleno = {5},
+numpages = {9},
+location = {Denver, CO, USA},
+series = {SC '23}
+}
