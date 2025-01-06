@@ -50,6 +50,19 @@ The motivation behind using the solvers themselves with the data in its raw form
 
 # Features 
 
+`PyNekTools` relies heavily on MPI for Python by @mpi4py, given that it has been designed from the beginning to work on distributed settings. For computations, we rely on NumPy [@numpy]. It has been extensively tested on data produced by Nek5000 and Neko but, as mentioned before, all the methods work on any SEM-like data structure with hexahedral elements. Among its most relevant features are the following:
+
+* **Parallel IO**: A set of routines to perform distributed IO on Nek5000/Neko files and directly keep the data in memory on NumPy arrays or PyMech data objects.
+* **Data compression/streaming**: Through the use of ADIOS2 [@adios2], a set of interfaces is available to perform data compression or to connect Python scripts to running simulations to perform in-situ data processing. 
+* **Parallel data interfaces**: A set of objects that aim to facilitate the transfer of messages among processors. Done to ease the use of MPI functions for more inexperienced users.
+* **Interpolation**: Routines to perform high-order interpolation from an SEM mesh into any arbitrary query point. A crucial functionality when performing post-processing.
+* **Mesh connectivity and partitioning**: Objects to determine the connectivity based on the geometry and mesh repartitioning tools.
+* **Calculus**:  Objects to calculate the derivation and integration matrices based on the geometry, which allows to perform calculus operations on the spectral element mesh.
+* **Reduced-order modeling**: Objects to perform parallel and streaming proper orthogonal decomposition (POD).
+
+We note that all of these functionalities are supported by examples in the software repository.
+
+
 # Acknowledgements
 
 This work is partially funded by the “Adaptive multi-tier intelligent data manager for Exascale (ADMIRE)” project, which is funded by the European Union's Horizon 2020 JTI-EuroHPC research and innovation program under grant Agreement number: 956748. Computations for testing were enabled by resources provided by the Swedish National Infrastructure for Computing (SNIC), partially funded by the Swedish Research Council through grant agreement no. 2018-05973.
