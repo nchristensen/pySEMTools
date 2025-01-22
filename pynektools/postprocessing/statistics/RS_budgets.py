@@ -1,3 +1,10 @@
+###########################################################################################
+###########################################################################################
+###########################################################################################
+###########################################################################################
+## Preliminary functions to make life easier.
+###########################################################################################
+###########################################################################################
 #%% generic function to compute the gradient of a scalar field
 def compute_scalar_first_derivative(comm, msh, coef, scalar, scalar_deriv):
     if msh.gdim == 3:
@@ -10,17 +17,7 @@ def compute_scalar_first_derivative(comm, msh, coef, scalar, scalar_deriv):
         scalar_deriv.c3 = 0.0 * scalar_deriv.c2
     else:
         import sys
-
         sys.exit("supports either 2D or 3D data")
-###########################################################################################
-###########################################################################################
-
-
-#%% do dssum on a vector with components c1, c2, c3
-def do_dssum_on_3comp_vector(dU_dxi, coef, msh):
-    coef.dssum(dU_dxi.c1, msh)
-    coef.dssum(dU_dxi.c2, msh)
-    coef.dssum(dU_dxi.c3, msh)
 ###########################################################################################
 ###########################################################################################
 
@@ -37,7 +34,6 @@ def compute_scalar_second_derivative(comm, msh, coef, scalar_deriv, scalar_deriv
         scalar_deriv2.c3 = 0.0 * scalar_deriv2.c3
     else:
         import sys
-
         sys.exit("supports either 2D or 3D data")
 ###########################################################################################
 ###########################################################################################
@@ -156,6 +152,18 @@ def return_list_of_vars_from_filename(fname):
 ###########################################################################################
 ###########################################################################################
 
+#%% do dssum on a vector with components c1, c2, c3
+def do_dssum_on_3comp_vector(dU_dxi, msh_conn, msh):
+    msh_conn.dssum(field=dU_dxi.c1, msh=msh, average="multiplicity")
+    msh_conn.dssum(field=dU_dxi.c2, msh=msh, average="multiplicity")
+    msh_conn.dssum(field=dU_dxi.c3, msh=msh, average="multiplicity")
+# def do_dssum_on_3comp_vector(dU_dxi, coef, msh):
+#     coef.dssum(dU_dxi.c1, msh)
+#     coef.dssum(dU_dxi.c2, msh)
+#     coef.dssum(dU_dxi.c3, msh)
+###########################################################################################
+###########################################################################################
+
 
 
 ###########################################################################################
@@ -203,16 +211,19 @@ def compute_and_write_additional_pstat_fields(
     from pynektools.datatypes.coef import Coef
     from pynektools.io.ppymech.neksuite import pynekread
 
+    if if_do_dssum_on_derivatives:
+        from pynektools.datatypes.msh_connectivity import MeshConnectivity
+
     ###########################################################################################
     # Get mpi info
     comm = MPI.COMM_WORLD
 
     ###########################################################################################
     # intialize the mesh and some fields
-    if if_do_dssum_on_derivatives:
-        msh = Mesh(comm, create_connectivity=True)
-    else:
-        msh = Mesh(comm, create_connectivity=False)
+    msh = Mesh(comm, create_connectivity=False)
+    # print('mesh dimension: ', msh.gdim )
+    # else:
+    #     msh = Mesh(comm, create_connectivity=False)
 
     mean_fields = FieldRegistry(comm)
     stat_fields = FieldRegistry(comm)
@@ -222,7 +233,7 @@ def compute_and_write_additional_pstat_fields(
     dW_dxi = FieldRegistry(comm)
 
     # pressure gradient and scond derivative
-    dP_dxi = FieldRegistry(comm)
+    dP_dxi   = FieldRegistry(comm)
     d2P_dxi2 = FieldRegistry(comm)
 
     # pressure tranposrt
@@ -231,7 +242,7 @@ def compute_and_write_additional_pstat_fields(
     dPW_dxi = FieldRegistry(comm)
 
     # generic quantity
-    dQ_dxi = FieldRegistry(comm)
+    dQ_dxi   = FieldRegistry(comm)
     d2Q_dxi2 = FieldRegistry(comm)
 
     ###########################################################################################
@@ -254,6 +265,8 @@ def compute_and_write_additional_pstat_fields(
     ###########################################################################################
     # read mesh and compute coefs
     pynekread(full_fname_mesh, comm, msh=msh, data_dtype=np.single)
+    if if_do_dssum_on_derivatives:
+        msh_conn = MeshConnectivity(comm, msh, rel_tol=1e-5)
 
     if msh.gdim < 3:
         sys.exit("only 3D data is supported at the moment")
@@ -389,9 +402,9 @@ def compute_and_write_additional_pstat_fields(
             warnings.warn(
                 "you are doing dssum on a derivative that you are differentiating again. maybe change this."
             )
-        do_dssum_on_3comp_vector(dU_dxi, coef, msh)
-        do_dssum_on_3comp_vector(dV_dxi, coef, msh)
-        do_dssum_on_3comp_vector(dW_dxi, coef, msh)
+        do_dssum_on_3comp_vector(dU_dxi, msh_conn, msh)
+        do_dssum_on_3comp_vector(dV_dxi, msh_conn, msh)
+        do_dssum_on_3comp_vector(dW_dxi, msh_conn, msh)
 
     write_file_9c(
         comm, msh, dU_dxi, dV_dxi, dW_dxi, fname_gradU, if_write_mesh=if_write_mesh
@@ -401,9 +414,9 @@ def compute_and_write_additional_pstat_fields(
     compute_scalar_second_derivative(comm, msh, coef, dV_dxi, dV_dxi)
     compute_scalar_second_derivative(comm, msh, coef, dW_dxi, dW_dxi)
     if if_do_dssum_on_derivatives:
-        do_dssum_on_3comp_vector(dU_dxi, coef, msh)
-        do_dssum_on_3comp_vector(dV_dxi, coef, msh)
-        do_dssum_on_3comp_vector(dW_dxi, coef, msh)
+        do_dssum_on_3comp_vector(dU_dxi, msh_conn, msh)
+        do_dssum_on_3comp_vector(dV_dxi, msh_conn, msh)
+        do_dssum_on_3comp_vector(dW_dxi, msh_conn, msh)
     write_file_9c(
         comm, msh, dU_dxi, dV_dxi, dW_dxi, fname_hessU, if_write_mesh=if_write_mesh
     )
@@ -422,8 +435,8 @@ def compute_and_write_additional_pstat_fields(
     compute_scalar_first_derivative(comm, msh, coef, mean_fields.registry["P"], dP_dxi)
     compute_scalar_second_derivative(comm, msh, coef, dP_dxi, d2P_dxi2)
     if if_do_dssum_on_derivatives:
-        do_dssum_on_3comp_vector(dP_dxi, coef, msh)
-        do_dssum_on_3comp_vector(d2P_dxi2, coef, msh)
+        do_dssum_on_3comp_vector(dP_dxi, msh_conn, msh)
+        do_dssum_on_3comp_vector(d2P_dxi2, msh_conn, msh)
     write_file_6c(
         comm, msh, dP_dxi, d2P_dxi2, fname_derivP, if_write_mesh=if_write_mesh
     )
@@ -483,9 +496,9 @@ def compute_and_write_additional_pstat_fields(
         comm, msh, coef, stat_fields.registry["PW"], dPW_dxi
     )
     if if_do_dssum_on_derivatives:
-        do_dssum_on_3comp_vector(dPU_dxi, coef, msh)
-        do_dssum_on_3comp_vector(dPV_dxi, coef, msh)
-        do_dssum_on_3comp_vector(dPW_dxi, coef, msh)
+        do_dssum_on_3comp_vector(dPU_dxi, msh_conn, msh)
+        do_dssum_on_3comp_vector(dPV_dxi, msh_conn, msh)
+        do_dssum_on_3comp_vector(dPW_dxi, msh_conn, msh)
     write_file_9c(
         comm, msh, dPU_dxi, dPV_dxi, dPW_dxi, fname_gradPU, if_write_mesh=if_write_mesh
     )
@@ -530,8 +543,8 @@ def compute_and_write_additional_pstat_fields(
         compute_scalar_second_derivative(comm, msh, coef, dQ_dxi, d2Q_dxi2)
 
         if if_do_dssum_on_derivatives:
-            do_dssum_on_3comp_vector(dQ_dxi, coef, msh)
-            do_dssum_on_3comp_vector(d2Q_dxi2, coef, msh)
+            do_dssum_on_3comp_vector(dQ_dxi, msh_conn, msh)
+            do_dssum_on_3comp_vector(d2Q_dxi2, msh_conn, msh)
 
         this_file_name = (
             which_dir + "/dn" + actual_field_names[icomp] + "dxn" + this_ext
@@ -591,7 +604,7 @@ def compute_and_write_additional_pstat_fields(
         )
 
         if if_do_dssum_on_derivatives:
-            do_dssum_on_3comp_vector(dQ_dxi, coef, msh)
+            do_dssum_on_3comp_vector(dQ_dxi, msh_conn, msh)
 
         ###############################
         stat_fields.clear()  # no longer needed
@@ -631,7 +644,8 @@ def interpolate_all_stat_and_pstat_fields_onto_points(
     nek5000_stat_type="s",
     if_do_dssum_before_interp=True,
     if_create_boundingBox_for_interp=False,
-    if_pass_points_to_rank0_only=True
+    if_pass_points_to_rank0_only=True,
+    interpolation_output_fname="interpolated_fields.hdf5"
 ):
 
     from mpi4py import MPI  # equivalent to the use of MPI_init() in C
@@ -643,6 +657,9 @@ def interpolate_all_stat_and_pstat_fields_onto_points(
     from pynektools.datatypes.coef import Coef
     from pynektools.io.ppymech.neksuite import pynekread
     from pynektools.interpolation.probes import Probes
+
+    if if_do_dssum_before_interp:
+        from pynektools.datatypes.msh_connectivity import MeshConnectivity
 
     if if_create_boundingBox_for_interp:
         from pynektools.datatypes.msh_partitioning import MeshPartitioner
@@ -670,10 +687,14 @@ def interpolate_all_stat_and_pstat_fields_onto_points(
 
     ###########################################################################################
     # intialize the mesh and some fields
-    if if_create_boundingBox_for_interp:
-        msh = Mesh(comm, create_connectivity=False)
-    else:
-        msh = Mesh(comm, create_connectivity=True)
+    msh = Mesh(comm, create_connectivity=False)
+    # print('mesh dimension: ', msh.gdim )
+    # if if_do_dssum_before_interp:
+    #     msh_conn = MeshConnectivity(comm, msh, rel_tol=1e-5)
+    # if if_create_boundingBox_for_interp:
+    #     msh = Mesh(comm, create_connectivity=False)
+    # else:
+    #     msh = Mesh(comm, create_connectivity=True)
     mean_fields = FieldRegistry(comm)
 
     ###########################################################################################
@@ -687,8 +708,8 @@ def interpolate_all_stat_and_pstat_fields_onto_points(
             "File index of fname_stat and fname_mean differ! Hope you know what you are doing!"
         )
 
-    fname_gradU = which_dir + "/dUdx" + this_ext
-    fname_hessU = which_dir + "/d2Udx2" + this_ext
+    fname_gradU  = which_dir + "/dUdx" + this_ext
+    fname_hessU  = which_dir + "/d2Udx2" + this_ext
     fname_derivP = which_dir + "/dnPdxn" + this_ext
     fname_gradPU = which_dir + "/dPUdx" + this_ext
     # full_fname_mean = which_dir+"/"+fname_mean
@@ -777,6 +798,9 @@ def interpolate_all_stat_and_pstat_fields_onto_points(
     if msh.gdim < 3:
         sys.exit("only 3D data is supported at the moment")
 
+    if if_do_dssum_before_interp:
+        msh_conn = MeshConnectivity(comm, msh, rel_tol=1e-5)
+
     if if_create_boundingBox_for_interp:
         xyz_max = np.max(xyz, axis=0)
         xyz_min = np.min(xyz, axis=0)
@@ -816,6 +840,7 @@ def interpolate_all_stat_and_pstat_fields_onto_points(
             msh=msh,
             point_interpolator_type="multiple_point_legendre_numpy",
             max_pts=128,
+            output_fname = interpolation_output_fname
         )
     else:
         if comm.Get_rank() == 0:
@@ -825,6 +850,7 @@ def interpolate_all_stat_and_pstat_fields_onto_points(
                 msh=msh,
                 point_interpolator_type="multiple_point_legendre_numpy",
                 max_pts=128,
+                output_fname = interpolation_output_fname
             )
         else:
             probes = Probes(
@@ -833,6 +859,7 @@ def interpolate_all_stat_and_pstat_fields_onto_points(
                 msh=msh,
                 point_interpolator_type="multiple_point_legendre_numpy",
                 max_pts=128,
+                output_fname = interpolation_output_fname
             )
 
     ###########################################################################################
@@ -870,7 +897,8 @@ def interpolate_all_stat_and_pstat_fields_onto_points(
 
             # do dssum to make it continuous
             if if_do_dssum_before_interp:
-                coef.dssum(mean_fields.registry["tmpF"], msh)
+                msh_conn.dssum(field=mean_fields.registry["tmpF"], msh=msh, average="multiplicity")
+                # coef.dssum(mean_fields.registry["tmpF"], msh)
 
             # interpolate the fields
             probes.interpolate_from_field_list(
