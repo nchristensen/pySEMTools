@@ -261,7 +261,7 @@ def preadnek(filename, comm, data_dtype=np.double):
 
     # Read the indices?
     mpi_offset += mpi_real_size
-    idx = np.zeros(ioh.nelv, dtype=np.int64)
+    idx = np.zeros(ioh.nelv, dtype=np.int32)
     byte_offset = mpi_offset + ioh.offset_el * mpi_int_size
     fh.Read_at_all(byte_offset, idx, status=None)
     data.elmap = idx
@@ -440,7 +440,7 @@ def pynekread(filename, comm, data_dtype=np.double, msh=None, fld=None):
 
     # Read the indices?
     mpi_offset += mpi_real_size
-    idx = np.zeros(ioh.nelv, dtype=np.int64)
+    idx = np.zeros(ioh.nelv, dtype=np.int32)
     byte_offset = mpi_offset + ioh.offset_el * mpi_int_size
     fh.Read_at_all(byte_offset, idx, status=None)
     # data.elmap = idx
@@ -625,7 +625,7 @@ def pynekread_field(filename, comm, data_dtype=np.double, key=""):
 
     # Read the indices?
     mpi_offset += mpi_real_size
-    idx = np.zeros(ioh.nelv, dtype=np.int64)
+    idx = np.zeros(ioh.nelv, dtype=np.int32)
     byte_offset = mpi_offset + ioh.offset_el * mpi_int_size
     fh.Read_at_all(byte_offset, idx, status=None)
     # data.elmap = idx
@@ -821,7 +821,7 @@ def pwritenek(filename, data, comm):
     mpi_offset += mpi_real_size
 
     # write element mapping
-    idx = np.zeros(ioh.nelv, dtype=np.int64)
+    idx = np.zeros(ioh.nelv, dtype=np.int32)
     for i in range(0, data.nel):
         idx[i] = data.elmap[i]
     byte_offset = mpi_offset + ioh.offset_el * mpi_int_size
@@ -1113,7 +1113,7 @@ def pynekwrite(filename, comm, msh=None, fld=None, wdsz=4, istep=0, write_mesh=T
     mpi_offset += mpi_real_size
 
     # write element mapping
-    idx = np.zeros(ioh.nelv, dtype=np.int64)
+    idx = np.zeros(ioh.nelv, dtype=np.int32)
     for i in range(0, ioh.nelv):
         idx[i] = i + ioh.offset_el
     byte_offset = mpi_offset + ioh.offset_el * mpi_int_size
