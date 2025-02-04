@@ -50,7 +50,7 @@ The motivation behind using the solvers themselves with the data in its raw form
 
 # Features 
 
-`PyNekTools` relies heavily on MPI for Python by @mpi4py, given that it has been designed from the beginning to work on distributed settings. For computations, we rely on NumPy [@numpy]. It has been extensively tested on data produced by Nek5000 and Neko but, as mentioned before, the implemented and routines are consistent with any SEM-like data structure with hexahedral elements. Among its most relevant features are the following:
+`PyNekTools` relies heavily on MPI for Python by @mpi4py, given that it has been designed from the beginning to work on distributed settings. For computations, we rely on NumPy [@numpy]. It has been extensively tested on data produced by Nek5000 and Neko but, as mentioned before, the implemented methods and routines are consistent with any SEM-like data structure with hexahedral elements. Among its most relevant features are the following:
 
 * **Parallel IO**: A set of routines to perform distributed IO on Nek5000/Neko field files and directly keep the data in memory on NumPy arrays or PyMech data objects.
 * **Parallel data interfaces**: A set of objects that aim to facilitate the transfer of messages among processors. Done to ease the use of MPI functions for more inexperienced users.
