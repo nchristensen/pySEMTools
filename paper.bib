@@ -110,3 +110,72 @@ abstract = {MPI for Python provides bindings of the Message Passing Interface (M
  publisher     = {Springer Science and Business Media {LLC}},
  url           = {https://doi.org/10.1038/s41586-020-2649-2}
 }
+
+@incollection{fischer2006,
+title = { - Parallel Simulation of High Reynolds Number Vascular Flows},
+editor = {Anil Deane and Akin Ecer and James McDonough and Nobuyuki Satofuka and Gunther Brenner and David R. Emerson and Jacques Periaux and Damien Tromeur-Dervout},
+booktitle = {Parallel Computational Fluid Dynamics 2005},
+publisher = {Elsevier},
+address = {Amsterdam},
+pages = {219-226},
+year = {2006},
+isbn = {978-0-444-52206-1},
+doi = {https://doi.org/10.1016/B978-044452206-1/50026-4},
+url = {https://www.sciencedirect.com/science/article/pii/B9780444522061500264},
+author = {Paul Fischer and Francis Loth and Sang-Wook Lee and David Smith and Henry Tufo and Hisham Bassiouny},
+abstract = {Publisher Summary
+The chapter provides an overview of the governing equations, time advancement scheme, and spectral element method. The chapter describes boundary condition treatment for simulating transition in bifurcation geometries. The chapter also presents parallel considerations and performance results, and provides results for transitional flow in an arteriovenous graft model. The simulation of turbulent vascular flows presents significant numerical challenges. Because such flows are weakly turbulent, they lack an inertial subrange that is amenable to subgrid-scale (SGS) modeling required for large-eddy or Reynolds-averaged Navier–Stokes simulations. The only reliable approach at present is to directly resolve all scales of motion. While the Reynolds number is not high, the physical dissipation is small. Weakly turbulent blood flow—such as the one that occurs in post-stenotic regions or subsequent to graft implantation—exhibits a much broader range of scales than does its laminar counterpart, and thus requires an order of magnitude increase in spatial and temporal resolution, making fast iterative solvers and parallel computing necessities.}
+}
+
+@Article{elkhoury2013,
+author={El Khoury, George K.
+and Schlatter, Philipp
+and Noorani, Azad
+and Fischer, Paul F.
+and Brethouwer, Geert
+and Johansson, Arne V.},
+title={Direct Numerical Simulation of Turbulent Pipe Flow at Moderately High Reynolds Numbers},
+journal={Flow, Turbulence and Combustion},
+year={2013},
+month={Oct},
+day={01},
+volume={91},
+number={3},
+pages={475-495},
+abstract={Fully resolved direct numerical simulations (DNSs) have been performed with a high-order spectral element method to study the flow of an incompressible viscous fluid in a smooth circular pipe of radius R and axial length 25R in the turbulent flow regime at four different friction Reynolds numbers Re$\tau${\thinspace}={\thinspace}180, 360, 550 and {\$}1{\backslash}text{\{},{\}}000{\$}. The new set of data is put into perspective with other simulation data sets, obtained in pipe, channel and boundary layer geometry. In particular, differences between different pipe DNS are highlighted. It turns out that the pressure is the variable which differs the most between pipes, channels and boundary layers, leading to significantly different mean and pressure fluctuations, potentially linked to a stronger wake region. In the buffer layer, the variation with Reynolds number of the inner peak of axial velocity fluctuation intensity is similar between channel and boundary layer flows, but lower for the pipe, while the inner peak of the pressure fluctuations show negligible differences between pipe and channel flows but is clearly lower than that for the boundary layer, which is the same behaviour as for the fluctuating wall shear stress. Finally, turbulent kinetic energy budgets are almost indistinguishable between the canonical flows close to the wall (up to y{\thinspace}+{\thinspace}{\thinspace}≈{\thinspace}100), while substantial differences are observed in production and dissipation in the outer layer. A clear Reynolds number dependency is documented for the three flow configurations.},
+issn={1573-1987},
+doi={10.1007/s10494-013-9482-8},
+url={https://doi.org/10.1007/s10494-013-9482-8}
+}
+
+@article{mallor2024,
+title = {High-fidelity simulations of the flow around a NACA 4412 wing section at high angles of attack},
+journal = {International Journal of Heat and Fluid Flow},
+volume = {110},
+pages = {109590},
+year = {2024},
+issn = {0142-727X},
+doi = {https://doi.org/10.1016/j.ijheatfluidflow.2024.109590},
+url = {https://www.sciencedirect.com/science/article/pii/S0142727X24003151},
+author = {Fermin Mallor and Ricardo Vinuesa and Ramis Örlü and Philipp Schlatter},
+keywords = {Large-eddy simulation, Turbulent boundary layers, Wings, Adverse-pressure gradient, Flow separation},
+abstract = {This study uses high-resolution large-eddy simulations (LES) to investigate the turbulent flow around a NACA 4412 wing profile at multiple Reynolds numbers based on chord length and free-stream velocity (Rec=2×105, 4×105 and 106) and angles of attack (AoA=5∘, 8°, 11° and 14°). The introduction of adaptive mesh refinement (AMR) and non-conformal meshing into the spectral-element-method code Nek5000 enabled the simulations at higher AoAs exhibiting flow separation by enabling the use of wider domains, allowing to capture the largest turbulent scales associated with flow separation. The results provide a detailed database – including integral quantities, velocity statistics and spectra – which may be used for the evaluation of lower-fidelity turbulence models. Furthermore, closer inspection of specific turbulent-boundary-layer (TBL) profiles allows us to discern between pressure-gradient (PG) and Reynolds-numbers effects on TBLs, showing that Re balances the PG, by reducing the impact of PG on the flow. Lastly, we assess the influence of flow history on TBLs, showing that a consistent flow history over an extended length is needed for TBLs to exhibit comparable profiles and characteristics.}
+}
+
+@article{merzari2020,
+author = {Elia Merzari, Paul Fischer, Misun Min, Stefan Kerkemeier, Aleksandr Obabko, Dillon Shaver, Haomin Yuan, Yiqi Yu, Javier Martinez, Landon Brockmeyer, Lambert Fick, Giacomo Busco, Alper Yildiz and Yassin Hassan},
+title = {Toward Exascale: Overview of Large Eddy Simulations and Direct Numerical Simulations of Nuclear Reactor Flows with the Spectral Element Method in Nek5000},
+journal = {Nuclear Technology},
+volume = {206},
+number = {9},
+pages = {1308--1324},
+year = {2020},
+publisher = {Taylor \& Francis},
+doi = {10.1080/00295450.2020.1748557},
+URL = { 
+        https://doi.org/10.1080/00295450.2020.1748557
+},
+eprint = { 
+        https://doi.org/10.1080/00295450.2020.1748557
+}
+}
