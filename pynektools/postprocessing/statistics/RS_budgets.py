@@ -132,6 +132,14 @@ def return_list_of_vars_from_filename(fname):
     pres_fields = vars_[2]
     temp_fields = vars_[3]
     scal_fields = vars_[4]
+    if scal_fields>39:
+        import warnings
+        print("Number of scalar fields: "+(f'{(scal_fields):.0f}'))
+        warnings.warn("The number of scalar fields above 39 is not supported. "+
+                      "This was done to make converted 2D statistics files consistent! "+
+                      "Limiting the number to 39...")
+        scal_fields = 39
+        
 
     field_names = []
     for i in range(vel_fields):
@@ -163,6 +171,50 @@ def do_dssum_on_3comp_vector(dU_dxi, msh_conn, msh):
 #     coef.dssum(dU_dxi.c3, msh)
 ###########################################################################################
 ###########################################################################################
+
+#%% convert 2D statistics to 3D
+def convert_2Dstats_to_3D(stats2D_filename,stats3D_filename,datatype='single'):
+    from mpi4py import MPI 
+    import numpy as np
+    import warnings
+    from pynektools.io.ppymech.neksuite import pynekread,pynekwrite
+    from pynektools.datatypes.msh import Mesh
+    from pynektools.datatypes.field import FieldRegistry
+    from pynektools.datatypes.utils import extrude_2d_sem_mesh
+
+    # Get mpi info
+    comm = MPI.COMM_WORLD
+
+    # initialize fields
+    msh = Mesh(comm, create_connectivity=False)
+    fld = FieldRegistry(comm)
+
+    if datatype=='single':
+        data_type = np.single
+        wdsz = 4
+    else:
+        data_type = np.double
+        wdsz = 8
+
+    # read mesh and fields
+    pynekread(stats2D_filename, comm, data_dtype=data_type, msh=msh, fld=fld)
+
+    # get the 
+    field_names = return_list_of_vars_from_filename(stats2D_filename)
+    print('fields in the give file: ', field_names )
+
+    # extruding mesh and fields
+    msh3d, fld3d = extrude_2d_sem_mesh(comm, lz = msh.lx, msh = msh, fld = fld)
+
+    # filling in the missing z velocity
+    z_vel = fld3d.registry['s39']
+    fld3d.add_field(comm, field_name="w", field=z_vel, dtype=np.single)
+    warnings.warn('The s39 field (z-velocity) was not removed from the file. '+ 
+                  'Be careful with potential inconsistencies!')
+    
+    # writing the extruded stats file
+    pynekwrite(stats3D_filename, comm, msh=msh3d, fld=fld3d, write_mesh=True, wdsz=wdsz)
+
 
 
 
@@ -269,7 +321,8 @@ def compute_and_write_additional_pstat_fields(
         msh_conn = MeshConnectivity(comm, msh, rel_tol=1e-5)
 
     if msh.gdim < 3:
-        sys.exit("only 3D data is supported at the moment")
+        sys.exit("only 3D data is supported at the moment! "+
+                 "You can, however, use 'convert_2Dstats_to_3D' to extrude the file to 3D!")
 
     coef = Coef(msh, comm, get_area=False)
 
@@ -688,13 +741,6 @@ def interpolate_all_stat_and_pstat_fields_onto_points(
     ###########################################################################################
     # intialize the mesh and some fields
     msh = Mesh(comm, create_connectivity=False)
-    # print('mesh dimension: ', msh.gdim )
-    # if if_do_dssum_before_interp:
-    #     msh_conn = MeshConnectivity(comm, msh, rel_tol=1e-5)
-    # if if_create_boundingBox_for_interp:
-    #     msh = Mesh(comm, create_connectivity=False)
-    # else:
-    #     msh = Mesh(comm, create_connectivity=True)
     mean_fields = FieldRegistry(comm)
 
     ###########################################################################################
@@ -796,7 +842,8 @@ def interpolate_all_stat_and_pstat_fields_onto_points(
     pynekread(full_fname_mesh, comm, msh=msh, data_dtype=np.single)
 
     if msh.gdim < 3:
-        sys.exit("only 3D data is supported at the moment")
+        sys.exit("only 3D data is supported!" , 
+                 "you can convert your data to 3D using 'convert_2Dstats_to_3D'!")
 
     if if_do_dssum_before_interp:
         msh_conn = MeshConnectivity(comm, msh, rel_tol=1e-5)
