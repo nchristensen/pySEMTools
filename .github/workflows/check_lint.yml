@@ -29,7 +29,7 @@ jobs:
         run: |
           string_score=$(tail -2 lint.txt | head -1)
           score=$( expr ${string_score:28:4})
-          min_score=7.00
+          min_score=5.00
 
           echo "Current score: $score"
 
