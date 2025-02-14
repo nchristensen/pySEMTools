@@ -133,9 +133,7 @@ class Logger:
                 self.log.warning(message)
 
         if level == "error":
-            if rank == 0:
                 self.log.error(message)
 
         if level == "critical":
-            if rank == 0:
                 self.log.critical(message)
