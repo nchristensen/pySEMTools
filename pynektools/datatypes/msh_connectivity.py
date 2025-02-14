@@ -388,9 +388,21 @@ class MeshConnectivity:
 
         # If running in parallel, compute the global ds sum
         if self.rt.comm.Get_size() > 1:
-            dssum_field = self.dssum_global(
-                local_dssum_field=dssum_field, field=field, msh=msh
-            )
+            iferror = False
+            try:
+                dssum_field = self.dssum_global(
+                    local_dssum_field=dssum_field, field=field, msh=msh
+                )
+            
+            except KeyError as e:
+                iferror = True
+                self.log.write("error", f"Error in rank {self.rt.comm.Get_rank()} - Key: {e} does not exist in global connectivity dictionaries - dssum not completed succesfully")
+                self.log.write("error", f"This error happens when using unstructured meshes. Input the max number of elements that can share a vertex, edge or face when initializing the mesh conectivity object and try again.")
+            
+            self.rt.comm.Barrier()
+
+            if iferror:
+                sys.exit(1)
 
         if average == "multiplicity":
             self.log.write("info", "Averaging using the multiplicity")
