@@ -35,9 +35,23 @@ class MeshConnectivity:
         The mesh object
     rel_tol : float
         The relative tolerance to use when comparing the coordinates of the facets/edges
+    use_hashtable : bool
+        Whether to use a hashtable to define connectivity. This is faster but uses more memory
+    max_simultaneous_sends : int
+        The maximum number of simultaneous sends to use when sending data to other ranks. A lower number 
+        saves memory for buffers but is slower.
+    max_elem_per_vertex : int
+        The maximum number of elements that share a vertex. The default values are 4 for 2D and 8 for 3D (Works for a structured mesh)
+        The default value is selected if this input is left as None
+    max_elem_per_edge : int
+        The maximum number of elements that share an edge. The default values are 2 for 2D and 4 for 3D (Works for a structured mesh)
+        The default value is selected if this input is left as None
+    max_elem_per_face : int
+        The maximum number of elements that share a face. The default values are 2 for 3D (Works for a structured mesh)
+        The default value is selected if this input is left as None
     """
 
-    def __init__(self, comm, msh: Mesh = None, rel_tol=1e-5, use_hashtable=False, max_simultaneous_sends=1):
+    def __init__(self, comm, msh: Mesh = None, rel_tol=1e-5, use_hashtable=False, max_simultaneous_sends=1, max_elem_per_vertex: int = None, max_elem_per_edge: int = None, max_elem_per_face: int = None):
 
         self.log = Logger(comm=comm, module_name="MeshConnectivity")
         self.log.write("info", "Initializing MeshConnectivity")
@@ -46,6 +60,9 @@ class MeshConnectivity:
         self.rtol = rel_tol
         self.use_hashtable = use_hashtable
         self.max_simultaneous_sends = max_simultaneous_sends
+        self.max_elem_per_vertex = max_elem_per_vertex
+        self.max_elem_per_edge = max_elem_per_edge
+        self.max_elem_per_face = max_elem_per_face
 
         if isinstance(msh, Mesh):
             # Create local connecitivy
@@ -98,10 +115,13 @@ class MeshConnectivity:
 
             self.log.write("debug", "Computing local connectivity: Using vertices")
 
-            if msh.gdim == 2:
-                min_vertex = 4  # Anything less than 4 means that a vertex might be in another rank
+            if self.max_elem_per_vertex is None:
+                if msh.gdim == 2:
+                    min_vertex = 4  # Anything less than 4 means that a vertex might be in another rank
+                else:
+                    min_vertex = 8  # Anything less than 8 means that a vertex might be in another rank
             else:
-                min_vertex = 8  # Anything less than 8 means that a vertex might be in another rank
+                min_vertex = self.max_elem_per_vertex
 
             (
                 self.local_shared_evp_to_elem_map,
@@ -118,10 +138,14 @@ class MeshConnectivity:
         if msh.gdim >= 2:
 
             self.log.write("debug", "Computing local connectivity: Using edge centers")
-            if msh.gdim == 2:
-                min_edges = 2
+
+            if self.max_elem_per_edge is None:
+                if msh.gdim == 2:
+                    min_edges = 2
+                else:
+                    min_edges = 4
             else:
-                min_edges = 4
+                min_edges = self.max_elem_per_edge
 
             (
                 self.local_shared_eep_to_elem_map,
@@ -139,7 +163,10 @@ class MeshConnectivity:
 
             self.log.write("debug", "Computing local connectivity: Using facet centers")
 
-            min_facets = 2
+            if self.max_elem_per_face is None:
+                min_facets = 2
+            else:
+                min_facets = self.max_elem_per_face
 
             (
                 self.local_shared_efp_to_elem_map,
@@ -361,9 +388,21 @@ class MeshConnectivity:
 
         # If running in parallel, compute the global ds sum
         if self.rt.comm.Get_size() > 1:
-            dssum_field = self.dssum_global(
-                local_dssum_field=dssum_field, field=field, msh=msh
-            )
+            iferror = False
+            try:
+                dssum_field = self.dssum_global(
+                    local_dssum_field=dssum_field, field=field, msh=msh
+                )
+            
+            except KeyError as e:
+                iferror = True
+                self.log.write("error", f"Error in rank {self.rt.comm.Get_rank()} - Key: {e} does not exist in global connectivity dictionaries - dssum not completed succesfully")
+                self.log.write("error", f"This error happens when using unstructured meshes. Input the max number of elements that can share a vertex, edge or face when initializing the mesh conectivity object and try again.")
+            
+            self.rt.comm.Barrier()
+
+            if iferror:
+                sys.exit(1)
 
         if average == "multiplicity":
             self.log.write("info", "Averaging using the multiplicity")
