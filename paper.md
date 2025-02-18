@@ -13,6 +13,9 @@ authors:
   - name: Siavash Toosi
     orcid: 0000-0001-6733-9744
     affiliation: 2
+  - name: Tim Felle Olsen
+    orcid: 0000-0002-4531-7226
+    affiliation: 4
   - name: Stefano Markidis
     orcid: 0000-0003-0639-0639
     affiliation: 3
@@ -27,7 +30,9 @@ affiliations:
    index: 2
  - name: CST, KTH Royal Institute of Technology
    index: 3
-date: 03 January 2018
+ - name: Technical University of Denmark
+   index: 4
+date: 18 February 2025
 bibliography: paper.bib
 
 ---
