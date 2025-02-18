@@ -15,3 +15,4 @@ dependencies = [
 
 [project.scripts]
 pynektools_index-files = "pynektools.cli.index_files:main"
+pynektools_visnek = "pynektools.cli.visnek:main"

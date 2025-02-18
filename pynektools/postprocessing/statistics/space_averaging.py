@@ -13,6 +13,7 @@ from ...interpolation.point_interpolator.single_point_helper_functions import GL
 
 def space_average_field_files(
     comm,
+    file_sequence = "",
     field_index_name="",
     output_folder="./",
     mesh_index="",
@@ -33,6 +34,8 @@ def space_average_field_files(
     comm : MPI.COMM
         MPI communicator.
 
+    file_sequence : list
+        List of file names to be averaged in the homogeneous direction.
     field_index_name : str
         Index file that contains the information of the field files to be averaged.
         Relative or absule path to the file should be provided.
@@ -44,6 +47,7 @@ def space_average_field_files(
         Index of the mesh file in the field_index_name.
         If not provided, the mesh index will be assumed to be 0.
         In other words, we assume that the first file in the index contain the mesh information.
+        If one does not use a field_index but instead a file sequence, then the mesh should be in the first file.
     dtype : np.dtype
         Precision of the data once is read in memory. Precision in file does not matter.
         default is np.single.
@@ -79,36 +83,55 @@ def space_average_field_files(
     rt = Router(comm)
     logger = Logger(comm=comm, module_name="space_average_field_files")
 
-    logger.write("info", f"Averaging field files in index: {field_index_name}")
+    if field_index_name != "":
+        logger.write("info", f"Averaging field files in index: {field_index_name}")
+
+        # Read the mesh
+        if mesh_index == "":
+            logger.write("warning", "Mesh index not provided")
+            logger.write(
+                "warning",
+                "Provide the mesh_index keyword with an index to a file that contiains the mesh",
+            )
+
+            for i, key in enumerate(file_index.keys()):
+                try:
+                    int_key = int(key)
+                except ValueError:
+                    continue
+                mesh_index = key
+                logger.write(
+                    "warning", f"we assume that the mesh index correspond to {mesh_index}"
+                )
+                break
+    
+        # Read the json index file
+        with open(field_index_name, "r") as f:
+            file_index = json.load(f)
+
+        logger.write("info", f"Reading mesh from file {mesh_index} in {field_index_name}")
+        logger.write("info", f"Reading mesh in precision:  {dtype}")
+    
+        msh_fname = file_index[str(mesh_index)]["path"]
+
+        file_list = list(file_index.keys())
+
+    elif file_sequence != "":
+        logger.write("info", f"Averaging field files in sequence: {file_sequence}")
+        logger.write("info", f"Reading the mesh from the first file in the sequence")
+
+        msh_fname = file_sequence[0]
+
+        file_list = file_sequence
+
+    else:
+        logger.write("error", "No field files provided")
+        logger.write("error", "Please provide either a field index or a file sequence")
+        return 
+    
+    
     logger.write("info", f"Output files will be saved in: {output_folder}")
 
-    # Read the json index file
-    with open(field_index_name, "r") as f:
-        file_index = json.load(f)
-
-    # Read the mesh
-    if mesh_index == "":
-        logger.write("warning", "Mesh index not provided")
-        logger.write(
-            "warning",
-            "Provide the mesh_index keyword with an index to a file that contiains the mesh",
-        )
-
-        for i, key in enumerate(file_index.keys()):
-            try:
-                int_key = int(key)
-            except ValueError:
-                continue
-            mesh_index = key
-            logger.write(
-                "warning", f"we assume that the mesh index correspond to {mesh_index}"
-            )
-            break
-
-    logger.write("info", f"Reading mesh from file {mesh_index} in {field_index_name}")
-    logger.write("info", f"Reading mesh in precision:  {dtype}")
-
-    msh_fname = file_index[str(mesh_index)]["path"]
     msh = Mesh(comm, create_connectivity=False)
     pynekread(msh_fname, comm, data_dtype=dtype, msh=msh)
 
@@ -307,23 +330,42 @@ def space_average_field_files(
     )
     logger.tic()
     write_coords = True
-    for i, file in enumerate(file_index.keys()):
+    for i, file in enumerate(file_list):
 
-        try:
-            int_key = int(file)
-        except ValueError:
-            continue
+        # Mark if the z velocity is in the file 
+        z_velocity_last = False
 
-        out_fname = (
-            file_index[file]["fname"].split(".")[0][:-1]
-            + "0.f"
-            + file_index[file]["fname"].split(".")[1][1:]
-        )
-        out_fname = f"{homogeneous_dir}_avg_{out_fname}"
+        if field_index_name != "":
+            try:
+                int_key = int(file)
+            except ValueError:
+                continue
 
-        # read the file
-        logger.write("info", f"Reading file {file_index[file]['path']}")
-        pynekread(file_index[file]["path"], comm, data_dtype=dtype, fld=fld)
+            out_fname = (
+                file_index[file]["fname"].split(".")[0][:-1]
+                + "0.f"
+                + file_index[file]["fname"].split(".")[1][1:]
+            )
+            out_fname = f"{homogeneous_dir}_avg_{out_fname}"
+
+            # read the file
+            logger.write("info", f"Reading file {file_index[file]['path']}")
+            pynekread(file_index[file]["path"], comm, data_dtype=dtype, fld=fld)
+        elif file_sequence != "":
+            
+            in_fname = os.path.basename(file)
+            out_fname = (
+                in_fname.split(".")[0][:-1] + "0.f" + in_fname.split(".")[1][1:]
+            )
+            out_fname = f"{homogeneous_dir}_avg_{out_fname}"
+
+            # read the file
+            logger.write("info", f"Reading file {file}")
+            pynekread(file, comm, data_dtype=dtype, fld=fld)
+        else:
+            logger.write("error", "No field files provided")
+            logger.write("error", "Please provide either a field index or a file sequence")
+            return
 
         logger.write("info", f"Averaging the fields in the specified direction")
         for field_key in fld.registry.keys():
@@ -352,12 +394,30 @@ def space_average_field_files(
 
                     add_field = np.tile(add_field, (1, nn, 1, 1))
 
+                if (field_key == "w") and not output_in_3d  :
+                    z_velocity_name = f"z_velocity"
+                    z_velocity_field = add_field.copy()
+                    z_velocity_last = True
+                    logger.write("info", f"z velocity field found in the file and output in 3D is not requested. Saving z velocity as the last scalar")
+                    continue
+                else:
+                    add_field_name = f"{field_key}"
+                
                 fld_2d.add_field(
                     comm_2d,
-                    field_name=f"{homogeneous_dir}_avgd_{field_key}",
+                    field_name=add_field_name,
                     field=add_field.copy(),
                     dtype=dtype,
                 )
+
+        # Add the z velocity as the last scalar
+        if z_velocity_last:
+            fld_2d.add_field(
+                comm_2d,
+                field_name=z_velocity_name,
+                field=z_velocity_field,
+                dtype=dtype,
+            )
 
         logger.write(
             "info", f"Averaging finished, writing to file {output_folder}{out_fname}"
