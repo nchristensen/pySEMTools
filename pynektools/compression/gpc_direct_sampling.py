@@ -55,7 +55,7 @@ class DirectSampler:
         if compression_method == "fixed_bitrate":
             self.settings["compression"] =  {"method": compression_method,
                                              "bitrate": bitrate,
-                                             "n_samples" : int(np.ceil(self.lx*self.ly*self.lz * bitrate))}
+                                             "n_samples" : int(self.lx*self.ly*self.lz * bitrate)}
             
             self.log.write("info", f"Sampling the field using the fixed bitrate method. using settings: {self.settings['compression']}")
             field_sampled = self._sample_fixed_bitrate(field, field_name, self.settings)
@@ -144,8 +144,7 @@ class DirectSampler:
             y_11 = y[avg_idx, elem_idx, ind_train[:,:,:freq+1],:]
  
             V_11 = V[ind_train[:,:,:freq+1], :]
-            V_22 = V.reshape(1,1,V.shape[0],V.shape[1])
-            
+            V_22 = V.reshape(1,1,V.shape[0],V.shape[1]) 
             ## Get covariance matrices
             ## This approach was faster than using einsum. Potentially due to the size of the matrices
             ### Covariance of the sampled entries
@@ -193,7 +192,7 @@ class DirectSampler:
         for e in range(0,self.nelv):
 
             kw = self.kw[int(np.floor(e/self.elements_to_average))]
-            x = self.transformed_index[e].reshape(-1,1)
+            x = field_sampled[e].reshape(-1,1)
             y = field_sampled[e].reshape(-1,1)
 
             y_lcl_rct,y_std_lcl_rct = lcl_predict(kw,self.v,self.n_samples,x,y,sampling_type)
@@ -291,7 +290,8 @@ class DirectSampler:
         for e in range(0,self.nelv):
 
             kw = self.kw[int(np.floor(e/self.elements_to_average))]
-            x = self.transformed_index[e].reshape(-1,1)
+            #x = self.transformed_index[e].reshape(-1,1)
+            x = self.field[e].reshape(-1,1)
             y = self.field[e].reshape(-1,1)
 
             # The result is a column vector
