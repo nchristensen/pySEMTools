@@ -14,100 +14,122 @@ class DirectSampler:
     Class to perform direct sampling on a field in the SEM format
     """
 
-    def __init__(self, comm: MPI.Comm = None, msh: Mesh = None, coef: Coef = None, field: np.ndarray = None):
+    def __init__(self, comm: MPI.Comm = None, dtype: np.dtype = np.double,  msh: Mesh = None, ):
         
         self.log = Logger(comm=comm, module_name="DirectSampler")
 
+        # Geometrical parameters for this mesh
         self.nelv = msh.nelv
         self.lz = msh.lz
         self.ly = msh.ly
         self.lx = msh.lx
 
+        # Some settings
+        self.dtype = dtype
+
+        # Get transformation matrices for this mesh
         self.v, self.vinv, self.w3, self.x, self.w = get_transform_matrix(
-            msh.lx, msh.gdim, apply_1d_operators=False, dtype=field.dtype
+            msh.lx, msh.gdim, apply_1d_operators=False, dtype=dtype
         )
 
-        self.log.write("info", "Transforming the field into to legendre space")
-        self.field_hat = self.transform_field(field, to="legendre")
-        self.field = field
+        # Dictionary to store the settings as they are added
+        self.settings = {}
 
-        self.log.write("info", "Filling array with linear coordinate per point in the elements")
-        self.transformed_index  = np.zeros((field.shape[0], field.shape[1]*field.shape[2]*field.shape[3]), dtype=field.dtype)
-        self.transformed_index[:] = np.linspace(1, field.shape[1]*field.shape[2]*field.shape[3], field.shape[1]*field.shape[2]*field.shape[3]) / (field.shape[1]*field.shape[2]*field.shape[3])
-        self.transformed_index.shape = field.shape 
+        # Create a dictionary that will have the data that needs to be compressed later
+        self.data_to_compress = {}
 
-    def estimate_covariance(self, method="average", elements_to_average: int = 1, keep_modes: int = 1):
-        """
-        """
+    def sample_clear(self):
 
-        if method == "average":
-            self.covariance_method = "average"
-            self.elements_to_average = elements_to_average
-            self.averages=int(np.ceil(self.nelv/elements_to_average))
-
-            self.log.write("info", f"Estimating the covariance matrix using the averaging method method. Averaging over {elements_to_average} elements at a time")
-            self.kw = self._estimate_covariance_average(self.field_hat, elements_to_average)
-        else:
-            raise ValueError("Invalid method to estimate the covariance matrix")
-
-    def sample(self , method: str = "fixed_bitrate", n_samples: int = 8): 
+        # Clear the data that has been sampled. This is necesary to avoid mixing things up when sampling new fields.
+        self.settings = {}
+        self.data_to_compress = {}
     
-        if method == "fixed_bitrate":
-            self.sampling_method = "fixed_bitrate"
-            self.n_samples = n_samples
-            self.log.write("info", f"Sampling the field using the fixed bitrate method. Sampling {n_samples} modes")
-            self._sample_fixed_bitrate(n_samples)
+    def sample_field(self, field: np.ndarray = None, field_name: str = "field", covariance_method: str = "average", covariance_elements_to_average: int = 1, covariance_keep_modes: int=1,
+                    compression_method: str = "fixed_bitrate", bitrate: float = 1/2):
+        
+        self.log.write("info", "Sampling the field with options: covariance_method: {covariance_method}, compression_method: {compression_method}")
+
+        self.log.write("info", "Estimating the covariance matrix")
+        self._estimate_field_covariance(field=field, field_name=field_name, method=covariance_method, elements_to_average=covariance_elements_to_average, keep_modes=covariance_keep_modes)
+
+        if compression_method == "fixed_bitrate":
+            self.settings["compression"] =  {"method": compression_method,
+                                             "bitrate": bitrate,
+                                             "n_samples" : int(np.ceil(self.lx*self.ly*self.lz * bitrate))}
+            
+            self.log.write("info", f"Sampling the field using the fixed bitrate method. using settings: {self.settings['compression']}")
+            field_sampled = self._sample_fixed_bitrate(field, field_name, self.settings)
+
+            self.data_to_compress[f"{field_name}"]["field"] = field_sampled
+            self.log.write("info", f"Sampled_field saved in field data_to_compress[\"{field_name}\"][\"field\"]")
+
         else:
             raise ValueError("Invalid method to sample the field")
 
-#### ============================ START Rewrite from here
-
-    def obs_sample_fixed_bitrate(self, n_samples: int):
+    def _estimate_field_covariance(self, field: np.ndarray = None, field_name: str = "field", method="average", elements_to_average: int = 1, keep_modes: int = 1):
         """
         """
 
-        field_sampled = np.zeros_like(self.field_hat, dtype=self.field_hat.dtype)
-        sampling_type = "max_ent"
+        # Create a dictionary to store the data that will be compressed
+        self.data_to_compress[f"{field_name}"] = {}
 
-        for e in range(0,self.nelv):
+        self.log.write("info", "Transforming the field into to legendre space")
+        field_hat = self.transform_field(field, to="legendre")
+        # Temporary:
+        self.field_hat = field_hat
 
-            kw = self.kw[int(np.floor(e/self.elements_to_average))]
-            x = self.transformed_index[e].reshape(-1,1)
-            y = self.field[e].reshape(-1,1)
+        if method == "average":
+            self.settings["covariance"] = {"method": "average",
+                                           "elements_to_average": elements_to_average,
+                                           "averages": int(np.ceil(self.nelv/elements_to_average))}
 
-            # The result is a column vector
-            y_lcl_trunc = self.lcl_sample(kw,self.v,n_samples,x,y,sampling_type)
+            self.log.write("info", f"Estimating the covariance matrix using the averaging method method. Averaging over {elements_to_average} elements at a time")
+            kw = self._estimate_covariance_average(field_hat, self.settings["covariance"])
 
-            field_sampled[e] = y_lcl_trunc.reshape(field_sampled[e].shape)
+            # Store the covariances in the data to be compressed:
+            self.data_to_compress[f"{field_name}"]["kw"] = kw
+            self.log.write("info", f"Covariance saved in field data_to_compress[\"{field_name}\"][\"kw\"]")
 
-        self.field_sampled = field_sampled
+        else:
+            raise ValueError("Invalid method to estimate the covariance matrix")
     
-    def _sample_fixed_bitrate(self, n_samples: int):
+    def _sample_fixed_bitrate(self, field: np.ndarray, field_name: str, settings: dict):
         """
         """
 
+        # Retrieve appropiate covariance:
+        if settings["covariance"]["method"] == "average":
+            kw = self.data_to_compress[f"{field_name}"]["kw"]
+        else:
+            raise ValueError("Invalid method to estimate the covariance matrix")
+
+        # Set the reshaping parameters
+        averages = settings["covariance"]["averages"]
+        elements_to_average = settings["covariance"]["elements_to_average"]
+
+        # Retrieve the number of samples
+        n_samples = settings["compression"]["n_samples"]
+        
         # Reshape the fields into the KW supported shapes
         # Make kw a diagonal matrix, not only the arrays
-        kw = np.einsum('...i,ij->...ij', self.kw, np.eye(self.kw.shape[-1])).reshape(self.averages, 1 ,  self.kw.shape[-1], self.kw.shape[-1])
-        x = self.transformed_index.reshape(self.averages, self.elements_to_average, self.field.shape[1], self.field.shape[2], self.field.shape[3])
-        y = self.field.reshape(self.averages, self.elements_to_average, self.field.shape[1], self.field.shape[2], self.field.shape[3])
+        kw = np.einsum('...i,ij->...ij', kw, np.eye(kw.shape[-1])).reshape(averages, 1 ,  kw.shape[-1], kw.shape[-1])
+        y = field.reshape(averages, elements_to_average, field.shape[1], field.shape[2], field.shape[3])
         V = self.v
         numfreq = n_samples
 
         # Now reshape the x, y elements into column vectors
-        x = self.transformed_index.reshape(self.averages, self.elements_to_average, self.field.shape[1] * self.field.shape[2] * self.field.shape[3], 1)
-        y = self.field.reshape(self.averages, self.elements_to_average, self.field.shape[1] * self.field.shape[2] * self.field.shape[3], 1)
+        y = field.reshape(averages, elements_to_average, field.shape[1] * field.shape[2] * field.shape[3], 1)
 
         #allocation the truncated field
         y_truncated = np.ones_like(y) * -50
 
         # Create an array that contains the indices of the elements that have been sampled
-        ind_train = np.zeros((self.averages, self.elements_to_average, n_samples), dtype=int)
-        imax = np.zeros((self.averages, self.elements_to_average), dtype=int)
+        ind_train = np.zeros((averages, elements_to_average, n_samples), dtype=int)
+        imax = np.zeros((averages, elements_to_average), dtype=int)
 
         # Set up some help for the selections
-        avg_idx = np.arange(self.averages)[:, np.newaxis, np.newaxis]        # shape: (averages, 1, 1)
-        elem_idx = np.arange(self.elements_to_average)[np.newaxis, :, np.newaxis]  # shape: (1, elements_to_average, 1)
+        avg_idx = np.arange(averages)[:, np.newaxis, np.newaxis]        # shape: (averages, 1, 1)
+        elem_idx = np.arange(elements_to_average)[np.newaxis, :, np.newaxis]  # shape: (1, elements_to_average, 1)
 
         for freq in range(0,numfreq):
 
@@ -138,14 +160,6 @@ class DirectSampler:
             temp = np.matmul(V_22, kw)  # shape: (averages, elements_to_average, n, n)
             k22 = np.matmul(temp, np.swapaxes(V_22, -1, -2))  # results in shape: (averages, elements_to_average, n, n)
 
-            # Get covariance matrices using einsum (Seems slower than what is above)
-            ## Covariance of the sampled entries
-            ##k11 = np.einsum('...ij,...jk,...kl->...il', V_11, kw, V_11.transpose(0,1,3,2), optimize=True)
-            ##k12 = np.einsum('...ij,...jk,...kl->...il', V_11, kw, V_22.transpose(0,1,3,2), optimize=True)
-            ##k21 = k12.transpose(0, 1, 3, 2)
-            ## Covariance of the predictions
-            ##k22 = np.einsum('...ij,...jk,...kl->...il', V_22, kw, V_22.transpose(0,1,3,2), optimize=True)
-
             # Make predictions to sample
             ## Create some matrices to stabilize the inversions
             eps = 1e-10*np.eye(k11.shape[-1]).reshape(1,1,k11.shape[-1],k11.shape[-1])
@@ -167,7 +181,7 @@ class DirectSampler:
         y_truncated[avg_idx, elem_idx, ind_train,:] = y_11
 
         # Reshape the field back to its original shape
-        self.field_sampled = y_truncated.reshape(self.field.shape)
+        return y_truncated.reshape(field.shape)
  
     def predict(self, field_sampled: np.ndarray = None):
 
@@ -228,19 +242,11 @@ class DirectSampler:
 
         return y_lcl_trunc
 
+    def _estimate_covariance_average(self, field_hat : np.ndarray, settings: dict):
 
-
-
-#### ============================ STOP Rewrite from here
-
-
-    def _estimate_covariance_average(self, field_hat, elements_to_average):
-
-        # Determine the number of averages to be performed
-        averages=self.averages
-
-        # Create buffer to store the data
-        kw_v=np.zeros((averages, self.field_hat.shape[-1]), dtype=self.field_hat.dtype)
+        # Retrieve the settings
+        averages=settings["averages"]
+        elements_to_average=settings["elements_to_average"]
 
         # Create an average of field_hat over the elements
         temp = field_hat.reshape(averages, elements_to_average, field_hat.shape[1], field_hat.shape[2], field_hat.shape[3])
@@ -254,7 +260,7 @@ class DirectSampler:
 
         return kw
 
-    
+ 
     def transform_field(self, field: np.ndarray = None, to: str = "legendre") -> np.ndarray:
         """
         Transform the field to the desired space
@@ -273,6 +279,28 @@ class DirectSampler:
             return apply_operator(self.v, field)
         else:
             raise ValueError("Invalid space to transform the field to")
+
+
+    def obs_sample_fixed_bitrate(self, n_samples: int):
+        """
+        """
+
+        field_sampled = np.zeros_like(self.field_hat, dtype=self.field_hat.dtype)
+        sampling_type = "max_ent"
+
+        for e in range(0,self.nelv):
+
+            kw = self.kw[int(np.floor(e/self.elements_to_average))]
+            x = self.transformed_index[e].reshape(-1,1)
+            y = self.field[e].reshape(-1,1)
+
+            # The result is a column vector
+            y_lcl_trunc = self.lcl_sample(kw,self.v,n_samples,x,y,sampling_type)
+
+            field_sampled[e] = y_lcl_trunc.reshape(field_sampled[e].shape)
+
+        self.field_sampled = field_sampled
+
 
     
 
