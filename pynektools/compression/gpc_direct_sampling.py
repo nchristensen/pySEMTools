@@ -124,60 +124,84 @@ class DirectSampler:
         y_truncated = np.ones_like(y) * -50
 
         # Create an array that contains the indices of the elements that have been sampled
+        # The first indext to store is always index 0
         ind_train = np.zeros((averages, elements_to_average, n_samples), dtype=int)
-        imax = np.zeros((averages, elements_to_average), dtype=int)
 
         # Set up some help for the selections
         avg_idx = np.arange(averages)[:, np.newaxis, np.newaxis]        # shape: (averages, 1, 1)
         elem_idx = np.arange(elements_to_average)[np.newaxis, :, np.newaxis]  # shape: (1, elements_to_average, 1)
 
-        for freq in range(0,numfreq):
+        chunk_size = 256
+        n_chunks = int(np.ceil(elements_to_average / chunk_size))
 
-            # Assign the index to be added
-            ind_train[:,:,freq] = imax
+        for chunk_id in range(n_chunks):
+            start = chunk_id * chunk_size
+            end = (chunk_id + 1) * chunk_size
+            if end > elements_to_average:
+                end = elements_to_average
 
-            # Sort the indices for each average and element
-            ind_train[:, :, :freq+1] = np.sort(ind_train[:, :, :freq+1], axis=2)
+            elem_idx = np.arange(start, end)[np.newaxis, :, np.newaxis]  # shape: (1, elements_to_average, 1)
 
-            # Select the current samples            
-            #x_11 = x[avg_idx, elem_idx, ind_train[:,:,:freq+1],:]
-            y_11 = y[avg_idx, elem_idx, ind_train[:,:,:freq+1],:]
- 
-            V_11 = V[ind_train[:,:,:freq+1], :]
-            V_22 = V.reshape(1,1,V.shape[0],V.shape[1]) 
-            ## Get covariance matrices
-            ## This approach was faster than using einsum. Potentially due to the size of the matrices
-            ### Covariance of the sampled entries
-            temp = np.matmul(V_11, kw)  # shape: (averages, elements_to_average, freq+1, n)
-            k11 = np.matmul(temp, np.swapaxes(V_11, -1, -2))  # results in shape: (averages, elements_to_average, freq+1, freq+1)
+            print(elem_idx.flatten())
+            print(f"Proccesing up to {averages * (elem_idx.flatten()[-1]+1)}/{self.nelv} elements")
 
-            ### Covariance of the predictions
-            temp = np.matmul(V_11, kw)  # shape: (averages, elements_to_average, freq+1, n)
-            k12 = np.matmul(temp, np.swapaxes(V_22, -1, -2))  # if V_22 is shaped appropriately
-            k21 = k12.transpose(0, 1, 3, 2)
+            avg_idx2 = avg_idx.reshape(avg_idx.shape[0], 1)
+            elem_idx2 = elem_idx.reshape(1, elem_idx.shape[1])
 
-            temp = np.matmul(V_22, kw)  # shape: (averages, elements_to_average, n, n)
-            k22 = np.matmul(temp, np.swapaxes(V_22, -1, -2))  # results in shape: (averages, elements_to_average, n, n)
+            # Set the initial index to be added
+            imax = np.zeros((avg_idx.shape[0], elem_idx.shape[1]), dtype=int)
 
-            # Make predictions to sample
-            ## Create some matrices to stabilize the inversions
-            eps = 1e-10*np.eye(k11.shape[-1]).reshape(1,1,k11.shape[-1],k11.shape[-1])
-            ## Predict the mean and covariance matrix of all entires (data set 2) given the known samples (data set 1)
-            ## Actually do not predict the mean at this stage, only the covariance to save some time
-            #y_21= k21@np.linalg.inv(k11+eps)@(y_11)
-            sigma21 = k22 - (k21@np.linalg.inv(k11+eps)@k12)           
-            ## Predict the standard deviation of all entires (data set 2) given the known samples (data set 1)
-            y_21_std = np.sqrt(np.abs(np.einsum("...ii->...i", sigma21)))
+            for freq in range(0,numfreq):
+
+                print((freq*(chunk_id+1))/(numfreq*n_chunks))
+
+                # Sort the indices for each average and element
+                ind_train[avg_idx2, elem_idx2, :freq+1] = np.sort(ind_train[avg_idx2, elem_idx2, :freq+1], axis=2)
+
+                # Select the current samples            
+                #x_11 = x[avg_idx, elem_idx, ind_train[:,:,:freq+1],:]
+                y_11 = y[avg_idx, elem_idx, ind_train[avg_idx2,elem_idx2,:freq+1],:]
+    
+                V_11 = V[ind_train[avg_idx2,elem_idx2,:freq+1], :]
+                V_22 = V.reshape(1,1,V.shape[0],V.shape[1]) 
+                ## Get covariance matrices
+                ## This approach was faster than using einsum. Potentially due to the size of the matrices
+                ### Covariance of the sampled entries
+                temp = np.matmul(V_11, kw)  # shape: (averages, elements_to_average, freq+1, n)
+                k11 = np.matmul(temp, np.swapaxes(V_11, -1, -2))  # results in shape: (averages, elements_to_average, freq+1, freq+1)
+
+                ### Covariance of the predictions
+                temp = np.matmul(V_11, kw)  # shape: (averages, elements_to_average, freq+1, n)
+                k12 = np.matmul(temp, np.swapaxes(V_22, -1, -2))  # if V_22 is shaped appropriately
+                k21 = k12.transpose(0, 1, 3, 2)
+
+                temp = np.matmul(V_22, kw)  # shape: (averages, elements_to_average, n, n)
+                k22 = np.matmul(temp, np.swapaxes(V_22, -1, -2))  # results in shape: (averages, elements_to_average, n, n)
+
+                # Make predictions to sample
+                ## Create some matrices to stabilize the inversions
+                eps = 1e-10*np.eye(k11.shape[-1]).reshape(1,1,k11.shape[-1],k11.shape[-1])
+                ## Predict the mean and covariance matrix of all entires (data set 2) given the known samples (data set 1)
+                ## Actually do not predict the mean at this stage, only the covariance to save some time
+                #y_21= k21@np.linalg.inv(k11+eps)@(y_11)
+                sigma21 = k22 - (k21@np.linalg.inv(k11+eps)@k12)           
+                ## Predict the standard deviation of all entires (data set 2) given the known samples (data set 1)
+                y_21_std = np.sqrt(np.abs(np.einsum("...ii->...i", sigma21)))
 
 
-            # Set the variance as zero for the samples that have already been selected
-            y_21_std[avg_idx, elem_idx, ind_train[:,:,:freq+1]] = 0
+                # Set the variance as zero for the samples that have already been selected
+                #print(y_21_std.shape)
+                #y_21_std[:, :, ind_train[avg_idx2,elem_idx2,:freq+1]] = 0
 
-            # Get the index of the sample with the highest standardd deviation
-            imax = np.argmax(y_21_std, axis=2)
+                # Get the index of the sample with the highest standardd deviation
+                imax = np.argmax(y_21_std, axis=2)
+                
+                # Assign the index to be added
+                if freq < numfreq-1:
+                    ind_train[avg_idx2, elem_idx2,freq+1] = imax
 
-        # This is still with column vectors at the end. We need to reshape it.
-        y_truncated[avg_idx, elem_idx, ind_train,:] = y_11
+            # This is still with column vectors at the end. We need to reshape it.
+            y_truncated[avg_idx, elem_idx, ind_train[avg_idx2, elem_idx2, :],:] = y_11
 
         # Reshape the field back to its original shape
         return y_truncated.reshape(field.shape)
