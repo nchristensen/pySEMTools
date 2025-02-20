@@ -113,12 +113,12 @@ class DirectSampler:
             kw, U, s, Vt = self._estimate_covariance_svd(field_hat, self.settings["covariance"])
 
             # Store the covariances in the data to be compressed:
-            self.data_to_compress[f"{field_name}"]["kw"] = kw
+            #self.data_to_compress[f"{field_name}"]["kw"] = kw
             self.data_to_compress[f"{field_name}"]["U"] = U
             self.data_to_compress[f"{field_name}"]["s"] = s
             self.data_to_compress[f"{field_name}"]["Vt"] = Vt
 
-            self.log.write("info", f"Covariance saved in field data_to_compress[\"{field_name}\"][\"kw\"]")
+            #self.log.write("info", f"Covariance saved in field data_to_compress[\"{field_name}\"][\"kw\"]")
             self.log.write("info", f"U saved in field data_to_compress[\"{field_name}\"][\"U\"]")
             self.log.write("info", f"s saved in field data_to_compress[\"{field_name}\"][\"s\"]")
             self.log.write("info", f"Vt saved in field data_to_compress[\"{field_name}\"][\"Vt\"]")
