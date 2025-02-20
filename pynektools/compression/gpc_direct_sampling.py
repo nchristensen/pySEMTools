@@ -14,15 +14,21 @@ class DirectSampler:
     Class to perform direct sampling on a field in the SEM format
     """
 
-    def __init__(self, comm: MPI.Comm = None, dtype: np.dtype = np.double,  msh: Mesh = None, ):
+    def __init__(self, comm: MPI.Comm = None, dtype: np.dtype = np.double,  msh: Mesh = None, coef: Coef = None, max_elements_to_process: int = 256):
         
         self.log = Logger(comm=comm, module_name="DirectSampler")
+
+        # Set a default parameter
+        self.max_elements_to_process = max_elements_to_process
 
         # Geometrical parameters for this mesh
         self.nelv = msh.nelv
         self.lz = msh.lz
         self.ly = msh.ly
         self.lx = msh.lx
+
+        # Save the mass matrix
+        self.B = coef.B 
 
         # Some settings
         self.dtype = dtype
@@ -83,8 +89,28 @@ class DirectSampler:
                                            "elements_to_average": elements_to_average,
                                            "averages": int(np.ceil(self.nelv/elements_to_average))}
 
+
+            # In this case, the kw should be taken as already the diagonal form
+            self.kw_diag = True
+
             self.log.write("info", f"Estimating the covariance matrix using the averaging method method. Averaging over {elements_to_average} elements at a time")
             kw = self._estimate_covariance_average(field_hat, self.settings["covariance"])
+
+            # Store the covariances in the data to be compressed:
+            self.data_to_compress[f"{field_name}"]["kw"] = kw
+            self.log.write("info", f"Covariance saved in field data_to_compress[\"{field_name}\"][\"kw\"]")
+        
+        elif method == "svd":
+            self.settings["covariance"] = {"method": "svd",
+                                           "averages" : self.nelv,
+                                           "elements_to_average": int(1),
+                                           "keep_modes": keep_modes}
+            
+            # In this case, the kw will not be only the diagonal of the stored data but an approximation of the actual covariance
+            self.kw_diag = True
+
+            self.log.write("info", f"Estimating the covariance matrix using the SVD method. Keeping {keep_modes} modes")
+            kw = self._estimate_covariance_svd(field_hat, self.settings["covariance"])
 
             # Store the covariances in the data to be compressed:
             self.data_to_compress[f"{field_name}"]["kw"] = kw
@@ -96,23 +122,61 @@ class DirectSampler:
     def _sample_fixed_bitrate(self, field: np.ndarray, field_name: str, settings: dict):
         """
         """
-
-        # Retrieve appropiate covariance:
-        if settings["covariance"]["method"] == "average":
-            kw = self.data_to_compress[f"{field_name}"]["kw"]
-        else:
-            raise ValueError("Invalid method to estimate the covariance matrix")
-
+        
         # Set the reshaping parameters
         averages = settings["covariance"]["averages"]
         elements_to_average = settings["covariance"]["elements_to_average"]
 
         # Retrieve the number of samples
         n_samples = settings["compression"]["n_samples"]
+
+        # Retrieve appropiate covariance outside the loop if needed:
+        if settings["covariance"]["method"] == "average":
+            if self.kw_diag == True:        
+                # Retrieve the diagonal of the covariance matrix
+                kw = self.data_to_compress[f"{field_name}"]["kw"]
         
+                # Transform it into an actual matrix, not simply a vector
+                # Aditionally, add one axis to make it consistent with the rest of the arrays and enable broadcasting
+                kw = np.einsum('...i,ij->...ij', kw, np.eye(kw.shape[-1])).reshape(averages, 1 ,  kw.shape[-1], kw.shape[-1])
+            else:
+                # Retrieve the averaged hat fields
+                f_hat = self.data_to_compress[f"{field_name}"]["kw"]
+                # Calculate the covariance matrix with f_hat@f_hat^T
+                kw = np.einsum("eik,ekj->eij", f_hat, f_hat.transpose(0,2,1))
+                # Add an axis to make it consistent with the rest of the arrays and enable broadcasting
+                kw = kw.reshape(kw.shape[0], 1, kw.shape[1], kw.shape[2])
+        
+        
+        elif settings["covariance"]["method"] == "svd":
+            
+            print("SVD MODE ON")
+            if self.kw_diag == True:        
+
+                # Retrieve the diagonal of the covariance matrix
+                kw_ = self.data_to_compress[f"{field_name}"]["kw"]
+
+                # Transform it into an actual matrix, not simply a vector
+                # Aditionally, add one axis to make it consistent with the rest of the arrays and enable broadcasting
+                kw_ = np.copy(np.einsum('...i,ij->...ij', kw_, np.eye(kw_.shape[-1])))            
+
+                #Make the shape consistent
+                kw_ = kw_.reshape(averages, elements_to_average ,  kw_.shape[-1], kw_.shape[-1])
+                print(kw_.shape)
+
+            else:
+                # Retrieve the averaged hat fields
+                f_hat = self.data_to_compress[f"{field_name}"]["kw"]
+                # Calculate the covariance matrix with f_hat@f_hat^T
+                kw_ = np.einsum("eik,ekj->eij", f_hat, f_hat.transpose(0,2,1))
+                # Add an axis to make it consistent with the rest of the arrays and enable broadcasting
+                kw_ = kw_.reshape(averages, elements_to_average, kw_.shape[1], kw_.shape[2])
+                print(kw_.shape)
+
+        else:
+            raise ValueError("Invalid method to estimate the covariance matrix")
+
         # Reshape the fields into the KW supported shapes
-        # Make kw a diagonal matrix, not only the arrays
-        kw = np.einsum('...i,ij->...ij', kw, np.eye(kw.shape[-1])).reshape(averages, 1 ,  kw.shape[-1], kw.shape[-1])
         y = field.reshape(averages, elements_to_average, field.shape[1], field.shape[2], field.shape[3])
         V = self.v
         numfreq = n_samples
@@ -131,7 +195,7 @@ class DirectSampler:
         avg_idx = np.arange(averages)[:, np.newaxis, np.newaxis]        # shape: (averages, 1, 1)
         elem_idx = np.arange(elements_to_average)[np.newaxis, :, np.newaxis]  # shape: (1, elements_to_average, 1)
 
-        chunk_size = 256
+        chunk_size = self.max_elements_to_process
         n_chunks = int(np.ceil(elements_to_average / chunk_size))
 
         for chunk_id in range(n_chunks):
@@ -163,20 +227,37 @@ class DirectSampler:
                 y_11 = y[avg_idx, elem_idx, ind_train[avg_idx2,elem_idx2,:freq+1],:]
     
                 V_11 = V[ind_train[avg_idx2,elem_idx2,:freq+1], :]
-                V_22 = V.reshape(1,1,V.shape[0],V.shape[1]) 
+                V_22 = V.reshape(1,1,V.shape[0],V.shape[1])
+
+                # Retrieve also kw if the method requires it
+                if settings["covariance"]["method"] == "svd":
+                    kw = np.copy(kw_[avg_idx2, elem_idx2, :, :])
+
+                print("start:procedures")
+                print(V_11.shape)
+                print(V_22.shape)
+                print(kw.shape)
+                 
                 ## Get covariance matrices
                 ## This approach was faster than using einsum. Potentially due to the size of the matrices
                 ### Covariance of the sampled entries
                 temp = np.matmul(V_11, kw)  # shape: (averages, elements_to_average, freq+1, n)
                 k11 = np.matmul(temp, np.swapaxes(V_11, -1, -2))  # results in shape: (averages, elements_to_average, freq+1, freq+1)
-
+                print(temp.shape)
+                print(k11.shape)
                 ### Covariance of the predictions
                 temp = np.matmul(V_11, kw)  # shape: (averages, elements_to_average, freq+1, n)
                 k12 = np.matmul(temp, np.swapaxes(V_22, -1, -2))  # if V_22 is shaped appropriately
                 k21 = k12.transpose(0, 1, 3, 2)
 
+                print(temp.shape)
+                print(k12.shape)
+                print(k21.shape)
                 temp = np.matmul(V_22, kw)  # shape: (averages, elements_to_average, n, n)
                 k22 = np.matmul(temp, np.swapaxes(V_22, -1, -2))  # results in shape: (averages, elements_to_average, n, n)
+
+                print(temp.shape)
+                print(k22.shape)
 
                 # Make predictions to sample
                 ## Create some matrices to stabilize the inversions
@@ -188,9 +269,12 @@ class DirectSampler:
                 ## Predict the standard deviation of all entires (data set 2) given the known samples (data set 1)
                 y_21_std = np.sqrt(np.abs(np.einsum("...ii->...i", sigma21)))
 
+                print(sigma21.shape)
+                print(y_21_std.shape)
+
+                print("procedure ends")
 
                 # Set the variance as zero for the samples that have already been selected
-                #print(y_21_std.shape)
                 #y_21_std[:, :, ind_train[avg_idx2,elem_idx2,:freq+1]] = 0
 
                 # Get the index of the sample with the highest standardd deviation
@@ -215,11 +299,13 @@ class DirectSampler:
 
         for e in range(0,self.nelv):
 
+            print(f"1: {self.kw.shape}")
             kw = self.kw[int(np.floor(e/self.elements_to_average))]
+            print(f"2: {kw.shape}")
             x = field_sampled[e].reshape(-1,1)
             y = field_sampled[e].reshape(-1,1)
 
-            y_lcl_rct,y_std_lcl_rct = lcl_predict(kw,self.v,self.n_samples,x,y,sampling_type)
+            y_lcl_rct,y_std_lcl_rct = lcl_predict(kw,self.v,self.n_samples,x,y,sampling_type, self.kw_diag)
 
             field_rct[e] = y_lcl_rct.reshape(field_rct[e].shape)
     
@@ -272,14 +358,60 @@ class DirectSampler:
         elements_to_average=settings["elements_to_average"]
 
         # Create an average of field_hat over the elements
-        temp = field_hat.reshape(averages, elements_to_average, field_hat.shape[1], field_hat.shape[2], field_hat.shape[3])
-        field_hat_mean = np.mean(temp, axis=1)        
+        temp_field = field_hat.reshape(averages, elements_to_average, field_hat.shape[1], field_hat.shape[2], field_hat.shape[3])
+        field_hat_mean = np.mean(temp_field, axis=1)        
+        
+        ### This block was to average with weights, but the coefficients do not really have that sort of mass matrix.
+        ##temp_mass = self.B.reshape(averages, elements_to_average, self.B.shape[1], self.B.shape[2], self.B.shape[3])
+        #
+        ## Perform a weighted average with the mass matrix
+        ##field_hat_mean = np.sum(temp_field * temp_mass, axis=1) / np.sum(temp_mass, axis=1)
+        ###
 
-        # Get the covariances
-        kw = np.einsum("eik,ekj->eij", field_hat_mean.reshape(averages,-1,1), field_hat_mean.reshape(averages,-1,1).transpose(0,2,1))
+        # This is the way in which I calculate the covariance here and then get the diagonals
+        if self.kw_diag == True:
+            # Get the covariances
+            kw = np.einsum("eik,ekj->eij", field_hat_mean.reshape(averages,-1,1), field_hat_mean.reshape(averages,-1,1).transpose(0,2,1))
 
-        # Extract only the diagonals
-        kw = np.einsum("...ii->...i", kw)
+            # Extract only the diagonals
+            kw = np.einsum("...ii->...i", kw)
+        else:
+            # But I can leave the calculation of the covariance itself for later and store here the average of field_hat
+            kw = field_hat_mean.reshape(averages,-1,1)
+
+        return kw
+    
+    def _estimate_covariance_svd(self, field_hat : np.ndarray, settings: dict):
+
+        # Retrieve the settings
+        averages=settings["averages"] # In the case of SVD, this is 1
+        elements_to_average=settings["elements_to_average"] # In the case of SVD, this is the number of elements in the rank.
+
+        # Create a sort of snapshot matrix S = (Data in the element, element)
+        S = np.copy(field_hat.reshape( averages * elements_to_average , field_hat.shape[1] * field_hat.shape[2] * field_hat.shape[3]))
+
+        # Perform the SVD # It is likely that this should be done streaming / parallel
+        U, s, Vt = np.linalg.svd(S, full_matrices=False)
+
+        # Keep only the first keep_modes
+        U = U[:, :settings["keep_modes"]]
+        s = s[:settings["keep_modes"]]
+        Vt = Vt[:settings["keep_modes"], :]
+
+        # Do this here temporarly to test
+        # Construct the f_hat
+        f_hat = np.einsum("ik,k,kj->ij", U, s, Vt)
+
+        # This is the way in which I calculate the covariance here and then get the diagonals
+        if self.kw_diag == True:
+            # Get the covariances
+            kw = np.einsum("eik,ekj->eij", f_hat.reshape(averages*elements_to_average,-1,1), f_hat.reshape(averages*elements_to_average,-1,1).transpose(0,2,1))
+            # Extract only the diagonals
+            kw = np.einsum("...ii->...i", kw)
+            
+        else:
+            # But I can leave the calculation of the covariance itself for later and store here the average of field_hat
+            kw = f_hat.reshape(averages*elements_to_average,-1,1)
 
         return kw
 
@@ -418,7 +550,7 @@ def get_prediction_and_maxentropyindex(x_11,y_11,k00,k11,k22,k02,k20,k12,k21,ind
 
     return y_21,y_21_std,imax
 
-def lcl_predict(kw,V,numfreq,x,y,sampling_type):
+def lcl_predict(kw,V,numfreq,x,y,sampling_type, kw_diag=True):
 ##################### local subroutine ##################################
     #local inputs
 
@@ -428,8 +560,14 @@ def lcl_predict(kw,V,numfreq,x,y,sampling_type):
     #allocation
     y_lcl_rct = np.zeros(y.shape)
 
+    if kw_diag == True:
+        #Make Kw a matrix
+        kw=np.diag(kw)
+    else:
+        print(kw.shape)
+        kw = kw@kw.T
     #Make Kw a matrix
-    kw=np.diag(kw)
+    #kw=np.diag(kw)
 
     ind_train=np.where(y!=-50)[0]
 
