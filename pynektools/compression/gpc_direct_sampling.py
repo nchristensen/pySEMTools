@@ -209,6 +209,15 @@ class DirectSampler:
                 s = self.data_to_compress[f"{field_name}"]["s"]
                 Vt = self.data_to_compress[f"{field_name}"]["Vt"]
 
+                # Select only the relevant entries of U
+                ## Reshape to allow the indices to be broadcasted
+                U = U.reshape(averages, elements_to_average, 1, -1) # Here I need to have ALL!
+                ## Select the relevant entries
+                U = U[avg_idx2, elem_idx2, :, :]
+                print(U.shape)
+                #Reshape to original shape
+                U = U.reshape(averages*elements_to_average, -1) # Here use the size of avrg_index and elem_index instead, since it is reduced.
+
                 # Construct the f_hat
                 f_hat = np.einsum("ik,k,kj->ij", U, s, Vt)
 
