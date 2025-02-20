@@ -110,11 +110,18 @@ class DirectSampler:
             self.kw_diag = True
 
             self.log.write("info", f"Estimating the covariance matrix using the SVD method. Keeping {keep_modes} modes")
-            kw = self._estimate_covariance_svd(field_hat, self.settings["covariance"])
+            kw, U, s, Vt = self._estimate_covariance_svd(field_hat, self.settings["covariance"])
 
             # Store the covariances in the data to be compressed:
             self.data_to_compress[f"{field_name}"]["kw"] = kw
+            self.data_to_compress[f"{field_name}"]["U"] = U
+            self.data_to_compress[f"{field_name}"]["s"] = s
+            self.data_to_compress[f"{field_name}"]["Vt"] = Vt
+
             self.log.write("info", f"Covariance saved in field data_to_compress[\"{field_name}\"][\"kw\"]")
+            self.log.write("info", f"U saved in field data_to_compress[\"{field_name}\"][\"U\"]")
+            self.log.write("info", f"s saved in field data_to_compress[\"{field_name}\"][\"s\"]")
+            self.log.write("info", f"Vt saved in field data_to_compress[\"{field_name}\"][\"Vt\"]")
 
         else:
             raise ValueError("Invalid method to estimate the covariance matrix")
@@ -197,10 +204,30 @@ class DirectSampler:
             if settings["covariance"]["method"] == "svd":
                 print("SVD MODE ON")
 
+                # Retrieve the SVD components
+                U = self.data_to_compress[f"{field_name}"]["U"]
+                s = self.data_to_compress[f"{field_name}"]["s"]
+                Vt = self.data_to_compress[f"{field_name}"]["Vt"]
+
+                # Construct the f_hat
+                f_hat = np.einsum("ik,k,kj->ij", U, s, Vt)
+
+                # This is the way in which I calculate the covariance here and then get the diagonals
+                if self.kw_diag == True:
+                    # Get the covariances
+                    kw_ = np.einsum("eik,ekj->eij", f_hat.reshape(averages*elements_to_average,-1,1), f_hat.reshape(averages*elements_to_average,-1,1).transpose(0,2,1))
+                    # Extract only the diagonals
+                    kw_ = np.einsum("...ii->...i", kw_)
+                    
+                else:
+                    # But I can leave the calculation of the covariance itself for later and store here the average of field_hat
+                    f_hat = f_hat.reshape(averages*elements_to_average,-1,1)
+
+
                 if self.kw_diag == True:        
 
                     # Retrieve the diagonal of the covariance matrix
-                    kw_ = self.data_to_compress[f"{field_name}"]["kw"]
+                    #kw_ = self.data_to_compress[f"{field_name}"]["kw"] ---- this one is retrieved on thelines on top
 
                     # Transform it into an actual matrix, not simply a vector
                     # Aditionally, add one axis to make it consistent with the rest of the arrays and enable broadcasting
@@ -211,7 +238,7 @@ class DirectSampler:
 
                 else:
                     # Retrieve the averaged hat fields
-                    f_hat = self.data_to_compress[f"{field_name}"]["kw"]
+                    #f_hat = self.data_to_compress[f"{field_name}"]["kw"] ---- this one is retrieved on thelines on top
                     # Calculate the covariance matrix with f_hat@f_hat^T
                     kw_ = np.einsum("eik,ekj->eij", f_hat, f_hat.transpose(0,2,1))
                     # Add an axis to make it consistent with the rest of the arrays and enable broadcasting
@@ -396,7 +423,7 @@ class DirectSampler:
             # But I can leave the calculation of the covariance itself for later and store here the average of field_hat
             kw = f_hat.reshape(averages*elements_to_average,-1,1)
 
-        return kw
+        return kw, U, s, Vt
 
  
     def transform_field(self, field: np.ndarray = None, to: str = "legendre") -> np.ndarray:
