@@ -196,13 +196,14 @@ class DirectSampler:
 
             avg_idx2 = avg_idx.reshape(avg_idx.shape[0], 1)
             elem_idx2 = elem_idx.reshape(1, elem_idx.shape[1])
+            averages2 = avg_idx2.shape[0]
+            elements_to_average2 = elem_idx2.shape[1]
 
             # Set the initial index to be added
             imax = np.zeros((avg_idx.shape[0], elem_idx.shape[1]), dtype=int)
 
             # Retrieve also kw if the method requires it
             if settings["covariance"]["method"] == "svd":
-                print("SVD MODE ON")
 
                 # Retrieve the SVD components
                 U = self.data_to_compress[f"{field_name}"]["U"]
@@ -214,9 +215,8 @@ class DirectSampler:
                 U = U.reshape(averages, elements_to_average, 1, -1) # Here I need to have ALL!
                 ## Select the relevant entries
                 U = U[avg_idx2, elem_idx2, :, :]
-                print(U.shape)
                 #Reshape to original shape
-                U = U.reshape(averages*elements_to_average, -1) # Here use the size of avrg_index and elem_index instead, since it is reduced.
+                U = U.reshape(averages2*elements_to_average2, -1) # Here use the size of avrg_index and elem_index instead, since it is reduced.
 
                 # Construct the f_hat
                 f_hat = np.einsum("ik,k,kj->ij", U, s, Vt)
@@ -224,13 +224,13 @@ class DirectSampler:
                 # This is the way in which I calculate the covariance here and then get the diagonals
                 if self.kw_diag == True:
                     # Get the covariances
-                    kw_ = np.einsum("eik,ekj->eij", f_hat.reshape(averages*elements_to_average,-1,1), f_hat.reshape(averages*elements_to_average,-1,1).transpose(0,2,1))
+                    kw_ = np.einsum("eik,ekj->eij", f_hat.reshape(averages2*elements_to_average2,-1,1), f_hat.reshape(averages2*elements_to_average2,-1,1).transpose(0,2,1))
                     # Extract only the diagonals
                     kw_ = np.einsum("...ii->...i", kw_)
                     
                 else:
                     # But I can leave the calculation of the covariance itself for later and store here the average of field_hat
-                    f_hat = f_hat.reshape(averages*elements_to_average,-1,1)
+                    f_hat = f_hat.reshape(averages2*elements_to_average2,-1,1)
 
 
                 if self.kw_diag == True:        
@@ -243,7 +243,7 @@ class DirectSampler:
                     kw_ = np.copy(np.einsum('...i,ij->...ij', kw_, np.eye(kw_.shape[-1])))            
 
                     #Make the shape consistent
-                    kw_ = kw_.reshape(averages, elements_to_average ,  kw_.shape[-1], kw_.shape[-1])
+                    kw_ = kw_.reshape(averages2, elements_to_average2 ,  kw_.shape[-1], kw_.shape[-1])
 
                 else:
                     # Retrieve the averaged hat fields
@@ -251,7 +251,7 @@ class DirectSampler:
                     # Calculate the covariance matrix with f_hat@f_hat^T
                     kw_ = np.einsum("eik,ekj->eij", f_hat, f_hat.transpose(0,2,1))
                     # Add an axis to make it consistent with the rest of the arrays and enable broadcasting
-                    kw_ = kw_.reshape(averages, elements_to_average, kw_.shape[1], kw_.shape[2])
+                    kw_ = kw_.reshape(averages2, elements_to_average2, kw_.shape[1], kw_.shape[2])
                 
                 # Get the covariance matrix for the current chunk
                 kw = np.copy(kw_[avg_idx2, elem_idx2, :, :])
