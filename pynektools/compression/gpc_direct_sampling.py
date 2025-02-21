@@ -177,124 +177,133 @@ class DirectSampler:
         avg_idx = np.arange(averages)[:, np.newaxis, np.newaxis]        # shape: (averages, 1, 1)
         elem_idx = np.arange(elements_to_average)[np.newaxis, :, np.newaxis]  # shape: (1, elements_to_average, 1)
 
-        chunk_size = self.max_elements_to_process
-        n_chunks = int(np.ceil(elements_to_average / chunk_size))
+        chunk_size_e = self.max_elements_to_process
+        n_chunks_e = int(np.ceil(elements_to_average / chunk_size_e))
+        chunk_size_a = self.max_elements_to_process
+        n_chunks_a = int(np.ceil(averages / chunk_size_a))
 
-        for chunk_id in range(n_chunks):
-            start = chunk_id * chunk_size
-            end = (chunk_id + 1) * chunk_size
-            if end > elements_to_average:
-                end = elements_to_average
+        for chunk_id_a in range(n_chunks_a):
+            start_a = chunk_id_a * chunk_size_a
+            end_a = (chunk_id_a + 1) * chunk_size_a
+            if end_a > averages:
+                end_a = averages
 
-            elem_idx = np.arange(start, end)[np.newaxis, :, np.newaxis]  # shape: (1, elements_to_average, 1)
+            for chunk_id_e in range(n_chunks_e):
+                start_e = chunk_id_e * chunk_size_e
+                end_e = (chunk_id_e + 1) * chunk_size_e
+                if end_e > elements_to_average:
+                    end_e = elements_to_average
 
-            print(elem_idx.flatten())
-            print(f"Proccesing up to {averages * (elem_idx.flatten()[-1]+1)}/{self.nelv} elements")
+                avg_idx = np.arange(start_a, end_a)[:, np.newaxis, np.newaxis]        # shape: (averages, 1, 1)
+                elem_idx = np.arange(start_e, end_e)[np.newaxis, :, np.newaxis]  # shape: (1, elements_to_average, 1)
 
-            avg_idx2 = avg_idx.reshape(avg_idx.shape[0], 1)
-            elem_idx2 = elem_idx.reshape(1, elem_idx.shape[1])
-            averages2 = avg_idx2.shape[0]
-            elements_to_average2 = elem_idx2.shape[1]
+                print(elem_idx.flatten())
+                print(f"Proccesing up to {(avg_idx.flatten()[-1] + 1) * (elem_idx.flatten()[-1]+1)}/{self.nelv} elements")
 
-            # Set the initial index to be added
-            imax = np.zeros((avg_idx.shape[0], elem_idx.shape[1]), dtype=int)
+                avg_idx2 = avg_idx.reshape(avg_idx.shape[0], 1)
+                elem_idx2 = elem_idx.reshape(1, elem_idx.shape[1])
+                averages2 = avg_idx2.shape[0]
+                elements_to_average2 = elem_idx2.shape[1]
 
-            # Retrieve also kw if the method requires it
-            if settings["covariance"]["method"] == "svd":
+                # Set the initial index to be added
+                imax = np.zeros((avg_idx.shape[0], elem_idx.shape[1]), dtype=int)
 
-                # Retrieve the SVD components
-                U = self.data_to_compress[f"{field_name}"]["U"]
-                s = self.data_to_compress[f"{field_name}"]["s"]
-                Vt = self.data_to_compress[f"{field_name}"]["Vt"]
+                # Retrieve also kw if the method requires it
+                if settings["covariance"]["method"] == "svd":
 
-                # Select only the relevant entries of U
-                ## Reshape to allow the indices to be broadcasted
-                U = U.reshape(averages, elements_to_average, 1, -1) # Here I need to have ALL!
-                ## Select the relevant entries
-                U = U[avg_idx2, elem_idx2, :, :]
-                #Reshape to original shape
-                U = U.reshape(averages2*elements_to_average2, -1) # Here use the size of avrg_index and elem_index instead, since it is reduced.
+                    # Retrieve the SVD components
+                    U = self.data_to_compress[f"{field_name}"]["U"]
+                    s = self.data_to_compress[f"{field_name}"]["s"]
+                    Vt = self.data_to_compress[f"{field_name}"]["Vt"]
 
-                # Construct the f_hat
-                f_hat = np.einsum("ik,k,kj->ij", U, s, Vt)
+                    # Select only the relevant entries of U
+                    ## Reshape to allow the indices to be broadcasted
+                    U = U.reshape(averages, elements_to_average, 1, -1) # Here I need to have ALL!
+                    ## Select the relevant entries
+                    U = U[avg_idx2, elem_idx2, :, :]
+                    #Reshape to original shape
+                    U = U.reshape(averages2*elements_to_average2, -1) # Here use the size of avrg_index and elem_index instead, since it is reduced.
 
-                # This is the way in which I calculate the covariance here and then get the diagonals
-                if self.kw_diag == True:
-                    # Get the covariances
-                    kw_ = np.einsum("eik,ekj->eij", f_hat.reshape(averages2*elements_to_average2,-1,1), f_hat.reshape(averages2*elements_to_average2,-1,1).transpose(0,2,1))
-                    
-                    # Extract only the diagonals
-                    kw_ = np.einsum("...ii->...i", kw_)
-                    
-                    # Transform it into an actual matrix, not simply a vector
-                    # Aditionally, add one axis to make it consistent with the rest of the arrays and enable broadcasting
-                    kw_ = np.copy(np.einsum('...i,ij->...ij', kw_, np.eye(kw_.shape[-1])))            
+                    # Construct the f_hat
+                    f_hat = np.einsum("ik,k,kj->ij", U, s, Vt)
 
-                    #Make the shape consistent
-                    kw_ = kw_.reshape(averages2, elements_to_average2 ,  kw_.shape[-1], kw_.shape[-1])
-                    
-                else:
-                    # Reshape
-                    f_hat = f_hat.reshape(averages2*elements_to_average2,-1,1)
-             
-                    # Calculate the covariance matrix with f_hat@f_hat^T
-                    kw_ = np.einsum("eik,ekj->eij", f_hat, f_hat.transpose(0,2,1))
-            
-                    # Add an axis to make it consistent with the rest of the arrays and enable broadcasting
-                    kw_ = kw_.reshape(averages2, elements_to_average2, kw_.shape[1], kw_.shape[2])
-                 
-                # Get the covariance matrix for the current chunk
-                kw = np.copy(kw_[avg_idx2, elem_idx2, :, :])
+                    # This is the way in which I calculate the covariance here and then get the diagonals
+                    if self.kw_diag == True:
+                        # Get the covariances
+                        kw_ = np.einsum("eik,ekj->eij", f_hat.reshape(averages2*elements_to_average2,-1,1), f_hat.reshape(averages2*elements_to_average2,-1,1).transpose(0,2,1))
+                        
+                        # Extract only the diagonals
+                        kw_ = np.einsum("...ii->...i", kw_)
+                        
+                        # Transform it into an actual matrix, not simply a vector
+                        # Aditionally, add one axis to make it consistent with the rest of the arrays and enable broadcasting
+                        kw_ = np.copy(np.einsum('...i,ij->...ij', kw_, np.eye(kw_.shape[-1])))            
 
-            for freq in range(0,numfreq):
-
-                print((freq*(chunk_id+1))/(numfreq*n_chunks))
-
-                # Sort the indices for each average and element
-                ind_train[avg_idx2, elem_idx2, :freq+1] = np.sort(ind_train[avg_idx2, elem_idx2, :freq+1], axis=2)
-
-                # Select the current samples            
-                #x_11 = x[avg_idx, elem_idx, ind_train[:,:,:freq+1],:]
-                y_11 = y[avg_idx, elem_idx, ind_train[avg_idx2,elem_idx2,:freq+1],:]
-    
-                V_11 = V[ind_train[avg_idx2,elem_idx2,:freq+1], :]
-                V_22 = V.reshape(1,1,V.shape[0],V.shape[1])
- 
-                ## Get covariance matrices
-                ## This approach was faster than using einsum. Potentially due to the size of the matrices
-                ### Covariance of the sampled entries
-                temp = np.matmul(V_11, kw)  # shape: (averages, elements_to_average, freq+1, n)
-                k11 = np.matmul(temp, np.swapaxes(V_11, -1, -2))  # results in shape: (averages, elements_to_average, freq+1, freq+1)
-                ### Covariance of the predictions
-                temp = np.matmul(V_11, kw)  # shape: (averages, elements_to_average, freq+1, n)
-                k12 = np.matmul(temp, np.swapaxes(V_22, -1, -2))  # if V_22 is shaped appropriately
-                k21 = k12.transpose(0, 1, 3, 2)
-
-                temp = np.matmul(V_22, kw)  # shape: (averages, elements_to_average, n, n)
-                k22 = np.matmul(temp, np.swapaxes(V_22, -1, -2))  # results in shape: (averages, elements_to_average, n, n)
-
-                # Make predictions to sample
-                ## Create some matrices to stabilize the inversions
-                eps = 1e-10*np.eye(k11.shape[-1]).reshape(1,1,k11.shape[-1],k11.shape[-1])
-                ## Predict the mean and covariance matrix of all entires (data set 2) given the known samples (data set 1)
-                ## Actually do not predict the mean at this stage, only the covariance to save some time
-                #y_21= k21@np.linalg.inv(k11+eps)@(y_11)
-                sigma21 = k22 - (k21@np.linalg.inv(k11+eps)@k12)           
-                ## Predict the standard deviation of all entires (data set 2) given the known samples (data set 1)
-                y_21_std = np.sqrt(np.abs(np.einsum("...ii->...i", sigma21)))
-
-                # Set the variance as zero for the samples that have already been selected
-                #y_21_std[:, :, ind_train[avg_idx2,elem_idx2,:freq+1]] = 0
-
-                # Get the index of the sample with the highest standardd deviation
-                imax = np.argmax(y_21_std, axis=2)
+                        #Make the shape consistent
+                        kw_ = kw_.reshape(averages2, elements_to_average2 ,  kw_.shape[-1], kw_.shape[-1])
+                        
+                    else:
+                        # Reshape
+                        f_hat = f_hat.reshape(averages2*elements_to_average2,-1,1)
                 
-                # Assign the index to be added
-                if freq < numfreq-1:
-                    ind_train[avg_idx2, elem_idx2,freq+1] = imax
+                        # Calculate the covariance matrix with f_hat@f_hat^T
+                        kw_ = np.einsum("eik,ekj->eij", f_hat, f_hat.transpose(0,2,1))
+                
+                        # Add an axis to make it consistent with the rest of the arrays and enable broadcasting
+                        kw_ = kw_.reshape(averages2, elements_to_average2, kw_.shape[1], kw_.shape[2])
+                    
+                    # Get the covariance matrix for the current chunk
+                    kw = np.copy(kw_)
 
-            # This is still with column vectors at the end. We need to reshape it.
-            y_truncated[avg_idx, elem_idx, ind_train[avg_idx2, elem_idx2, :],:] = y_11
+                for freq in range(0,numfreq):
+
+                    print((freq*(chunk_id_e+1))/(numfreq*n_chunks_e))
+
+                    # Sort the indices for each average and element
+                    ind_train[avg_idx2, elem_idx2, :freq+1] = np.sort(ind_train[avg_idx2, elem_idx2, :freq+1], axis=2)
+
+                    # Select the current samples            
+                    #x_11 = x[avg_idx, elem_idx, ind_train[:,:,:freq+1],:]
+                    y_11 = y[avg_idx, elem_idx, ind_train[avg_idx2,elem_idx2,:freq+1],:]
+        
+                    V_11 = V[ind_train[avg_idx2,elem_idx2,:freq+1], :]
+                    V_22 = V.reshape(1,1,V.shape[0],V.shape[1])
+    
+                    ## Get covariance matrices
+                    ## This approach was faster than using einsum. Potentially due to the size of the matrices
+                    ### Covariance of the sampled entries
+                    temp = np.matmul(V_11, kw)  # shape: (averages, elements_to_average, freq+1, n)
+                    k11 = np.matmul(temp, np.swapaxes(V_11, -1, -2))  # results in shape: (averages, elements_to_average, freq+1, freq+1)
+                    ### Covariance of the predictions
+                    temp = np.matmul(V_11, kw)  # shape: (averages, elements_to_average, freq+1, n)
+                    k12 = np.matmul(temp, np.swapaxes(V_22, -1, -2))  # if V_22 is shaped appropriately
+                    k21 = k12.transpose(0, 1, 3, 2)
+
+                    temp = np.matmul(V_22, kw)  # shape: (averages, elements_to_average, n, n)
+                    k22 = np.matmul(temp, np.swapaxes(V_22, -1, -2))  # results in shape: (averages, elements_to_average, n, n)
+
+                    # Make predictions to sample
+                    ## Create some matrices to stabilize the inversions
+                    eps = 1e-10*np.eye(k11.shape[-1]).reshape(1,1,k11.shape[-1],k11.shape[-1])
+                    ## Predict the mean and covariance matrix of all entires (data set 2) given the known samples (data set 1)
+                    ## Actually do not predict the mean at this stage, only the covariance to save some time
+                    #y_21= k21@np.linalg.inv(k11+eps)@(y_11)
+                    sigma21 = k22 - (k21@np.linalg.inv(k11+eps)@k12)           
+                    ## Predict the standard deviation of all entires (data set 2) given the known samples (data set 1)
+                    y_21_std = np.sqrt(np.abs(np.einsum("...ii->...i", sigma21)))
+
+                    # Set the variance as zero for the samples that have already been selected
+                    #y_21_std[:, :, ind_train[avg_idx2,elem_idx2,:freq+1]] = 0
+
+                    # Get the index of the sample with the highest standardd deviation
+                    imax = np.argmax(y_21_std, axis=2)
+                    
+                    # Assign the index to be added
+                    if freq < numfreq-1:
+                        ind_train[avg_idx2, elem_idx2,freq+1] = imax
+
+                # This is still with column vectors at the end. We need to reshape it.
+                y_truncated[avg_idx, elem_idx, ind_train[avg_idx2, elem_idx2, :],:] = y_11
 
         # Reshape the field back to its original shape
         return y_truncated.reshape(field.shape)
