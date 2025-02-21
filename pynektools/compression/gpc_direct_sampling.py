@@ -197,8 +197,7 @@ class DirectSampler:
                 avg_idx = np.arange(start_a, end_a)[:, np.newaxis, np.newaxis]        # shape: (averages, 1, 1)
                 elem_idx = np.arange(start_e, end_e)[np.newaxis, :, np.newaxis]  # shape: (1, elements_to_average, 1)
 
-                print(elem_idx.flatten())
-                print(f"Proccesing up to {(avg_idx.flatten()[-1] + 1) * (elem_idx.flatten()[-1]+1)}/{self.nelv} elements")
+                self.log.write("info",f"Proccesing up to {(avg_idx.flatten()[-1] + 1) * (elem_idx.flatten()[-1]+1)}/{self.nelv} element")
 
                 avg_idx2 = avg_idx.reshape(avg_idx.shape[0], 1)
                 elem_idx2 = elem_idx.reshape(1, elem_idx.shape[1])
@@ -210,6 +209,8 @@ class DirectSampler:
 
                 # Retrieve also kw if the method requires it
                 if settings["covariance"]["method"] == "svd":
+
+                    self.log.write("info", f"Obtaining the covariance matrix for the current chunk")
 
                     # Retrieve the SVD components
                     U = self.data_to_compress[f"{field_name}"]["U"]
@@ -257,7 +258,7 @@ class DirectSampler:
 
                 for freq in range(0,numfreq):
 
-                    print((freq*(chunk_id_e+1))/(numfreq*n_chunks_e))
+                    self.log.write("info", f"Obtaining sample {freq+1}/{numfreq}")
 
                     # Sort the indices for each average and element
                     ind_train[avg_idx2, elem_idx2, :freq+1] = np.sort(ind_train[avg_idx2, elem_idx2, :freq+1], axis=2)
