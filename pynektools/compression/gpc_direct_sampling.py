@@ -110,15 +110,13 @@ class DirectSampler:
             self.kw_diag = True
 
             self.log.write("info", f"Estimating the covariance matrix using the SVD method. Keeping {keep_modes} modes")
-            kw, U, s, Vt = self._estimate_covariance_svd(field_hat, self.settings["covariance"])
+            U, s, Vt = self._estimate_covariance_svd(field_hat, self.settings["covariance"])
 
             # Store the covariances in the data to be compressed:
-            #self.data_to_compress[f"{field_name}"]["kw"] = kw
             self.data_to_compress[f"{field_name}"]["U"] = U
             self.data_to_compress[f"{field_name}"]["s"] = s
             self.data_to_compress[f"{field_name}"]["Vt"] = Vt
 
-            #self.log.write("info", f"Covariance saved in field data_to_compress[\"{field_name}\"][\"kw\"]")
             self.log.write("info", f"U saved in field data_to_compress[\"{field_name}\"][\"U\"]")
             self.log.write("info", f"s saved in field data_to_compress[\"{field_name}\"][\"s\"]")
             self.log.write("info", f"Vt saved in field data_to_compress[\"{field_name}\"][\"Vt\"]")
@@ -417,22 +415,7 @@ class DirectSampler:
         s = s[:settings["keep_modes"]]
         Vt = Vt[:settings["keep_modes"], :]
 
-        # Do this here temporarly to test
-        # Construct the f_hat
-        f_hat = np.einsum("ik,k,kj->ij", U, s, Vt)
-
-        # This is the way in which I calculate the covariance here and then get the diagonals
-        if self.kw_diag == True:
-            # Get the covariances
-            kw = np.einsum("eik,ekj->eij", f_hat.reshape(averages*elements_to_average,-1,1), f_hat.reshape(averages*elements_to_average,-1,1).transpose(0,2,1))
-            # Extract only the diagonals
-            kw = np.einsum("...ii->...i", kw)
-            
-        else:
-            # But I can leave the calculation of the covariance itself for later and store here the average of field_hat
-            kw = f_hat.reshape(averages*elements_to_average,-1,1)
-
-        return kw, U, s, Vt
+        return U, s, Vt
 
  
     def transform_field(self, field: np.ndarray = None, to: str = "legendre") -> np.ndarray:
