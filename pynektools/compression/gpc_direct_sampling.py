@@ -6,7 +6,10 @@ from ..datatypes.msh import Mesh
 from ..datatypes.coef import Coef
 from ..datatypes.coef import get_transform_matrix
 import numpy as np
+import bz2
 import sys
+import h5py
+import os
 
 class DirectSampler:
 
@@ -40,11 +43,15 @@ class DirectSampler:
 
         # Dictionary to store the settings as they are added
         self.settings = {}
+        self.settings["mesh_information"] = {"lx": self.lx, "ly": self.ly, "lz": self.lz, "nelv": self.nelv}
 
         # Create a dictionary that will have the data that needs to be compressed later
         self.data_to_compress = {}
 
-    def sample_clear(self):
+        # Create a dictionary that will hold the data after compressed
+        self.compressed_data = {}
+
+    def clear(self):
 
         # Clear the data that has been sampled. This is necesary to avoid mixing things up when sampling new fields.
         self.settings = {}
@@ -71,6 +78,87 @@ class DirectSampler:
 
         else:
             raise ValueError("Invalid method to sample the field")
+        
+    def compress_samples(self, lossless_compressor: str = "bzip2"):
+        """
+        """
+
+        self.log.write("info", f"Compressing the data using the lossless compressor: {lossless_compressor}")
+        self.log.write("info", "Compressing data in data_to_compress")
+        for field in self.data_to_compress.keys():
+            self.log.write("info", f"Compressing data for field [\"{field}\"]:")
+            self.compressed_data[field] = {}
+            for data in self.data_to_compress[field].keys():
+                self.log.write("info", f"Compressing [\"{data}\"] for field [\"{field}\"]")
+                self.compressed_data[field][data] = bz2.compress(self.data_to_compress[field][data].tobytes())
+
+
+    def write_compressed_samples(self, comm = None,  filename="compressed_samples.h5"):
+        """
+        Writes compressed data to an HDF5 file in a hierarchical format, with separate
+        groups for each MPI rank. If parallel HDF5 is supported, all ranks write to a single file
+        using the 'mpio' driver. Otherwise, a folder is created to hold separate files for each rank,
+        and a log message is generated to indicate this behavior.
+        
+        Parameters:
+            compressed_data (dict): A dictionary structured as { field: { data_key: compressed_bytes } }
+            filename (str): Base filename for the HDF5 file.
+        """
+        comm = MPI.COMM_WORLD
+        rank = comm.Get_rank()
+
+        try:
+            # Check if h5py was built with MPI support.
+            if h5py.get_config().mpi:
+                # Open a single file for parallel writing.
+                f = h5py.File(filename, "w", driver="mpio", comm=comm)
+            else:
+                raise RuntimeError("Parallel HDF5 not supported in this h5py build.")
+        except Exception:
+            # Log that parallel HDF5 is not available and a folder will be created.
+            self.log.write("info", "Parallel HDF5 not available; creating folder to store rank files.")
+            base_name, _ = os.path.splitext(filename)
+            folder_name = f"{base_name}_comp"
+            if rank == 0:
+                os.makedirs(folder_name, exist_ok=True)
+            # Ensure all ranks wait until the folder has been created.
+            comm.Barrier()
+            file_path = os.path.join(folder_name, f"{base_name}_rank_{rank}.h5")
+            f = h5py.File(file_path, "w")
+
+        # Indicate that the data are bytes
+        binary_dtype = h5py.vlen_dtype(np.uint8)
+
+        with f:
+
+            # If settings exist, add them as metadata in a top-level group.
+            if hasattr(self, "settings") and self.settings is not None:
+                # In parallel mode, have rank 0 create the settings group.
+                if comm.Get_rank == 0:
+                    settings_group = f.create_group("settings")
+                    add_settings_to_hdf5(settings_group, {"covariance": self.settings["covariance"],
+                                                      "compression": self.settings["compression"]})
+
+            # Ensure all ranks wait until settings are written.
+            comm.Barrier()
+
+            # Create a top-level group for this rank.
+            rank_group = f.create_group(f"rank_{rank}")
+
+            # Add the mesh information of the rank
+            add_settings_to_hdf5(rank_group, self.settings["mesh_information"])
+
+            for field, data_dict in self.compressed_data.items():
+                # Create a subgroup for each field.
+                field_group = rank_group.create_group(field)
+                for data_key, compressed_bytes in data_dict.items():
+
+                    # This step is necessary to convert the bytes to a numpy array. to store in HDF5 ...
+                    # ... It produced problems until I did that.                    
+                    data_array = np.frombuffer(compressed_bytes, dtype=np.uint8)
+                    dset = field_group.create_dataset(data_key, (1,), dtype=binary_dtype)
+                    dset[0] = data_array
+
 
     def _estimate_field_covariance(self, field: np.ndarray = None, field_name: str = "field", method="average", elements_to_average: int = 1, keep_modes: int = 1):
         """
@@ -85,13 +173,14 @@ class DirectSampler:
         self.field_hat = field_hat
 
         if method == "average":
-            self.settings["covariance"] = {"method": "average",
-                                           "elements_to_average": elements_to_average,
-                                           "averages": int(np.ceil(self.nelv/elements_to_average))}
-
 
             # In this case, the kw should be taken as already the diagonal form
             self.kw_diag = True
+
+            self.settings["covariance"] = {"method": "average",
+                                           "elements_to_average": elements_to_average,
+                                           "averages": int(np.ceil(self.nelv/elements_to_average)),
+                                           "kw_diag": self.kw_diag}
 
             self.log.write("info", f"Estimating the covariance matrix using the averaging method method. Averaging over {elements_to_average} elements at a time")
             kw = self._estimate_covariance_average(field_hat, self.settings["covariance"])
@@ -101,14 +190,15 @@ class DirectSampler:
             self.log.write("info", f"Covariance saved in field data_to_compress[\"{field_name}\"][\"kw\"]")
         
         elif method == "svd":
+            # In this case, the kw will not be only the diagonal of the stored data but an approximation of the actual covariance
+            self.kw_diag = True
+            
             self.settings["covariance"] = {"method": "svd",
                                            "averages" : self.nelv,
                                            "elements_to_average": int(1),
-                                           "keep_modes": keep_modes}
+                                           "keep_modes": keep_modes,
+                                           "kw_diag": self.kw_diag}
             
-            # In this case, the kw will not be only the diagonal of the stored data but an approximation of the actual covariance
-            self.kw_diag = True
-
             self.log.write("info", f"Estimating the covariance matrix using the SVD method. Keeping {keep_modes} modes")
             U, s, Vt = self._estimate_covariance_svd(field_hat, self.settings["covariance"])
 
@@ -588,3 +678,16 @@ def lcl_predict(kw,V,numfreq,x,y,sampling_type, kw_diag=True):
     y_lcl_rct[ind_train]=y_11
 
     return y_lcl_rct,y_std_lcl_rct
+
+def add_settings_to_hdf5(h5group, settings_dict):
+    """
+    Recursively adds the key/value pairs from a settings dictionary to an HDF5 group.
+    Dictionary values that are themselves dictionaries are added as subgroups;
+    other values are stored as attributes.
+    """
+    for key, value in settings_dict.items():
+        if isinstance(value, dict):
+            subgroup = h5group.create_group(key)
+            add_settings_to_hdf5(subgroup, value)
+        else:
+            h5group.attrs[key] = value
