@@ -276,8 +276,6 @@ class DirectSampler:
                     ## Get covariance matrices
                     ## This approach was faster than using einsum. Potentially due to the size of the matrices
                     ### Covariance of the sampled entries
-                    print(V_11.shape)
-                    print(kw.shape)
                     temp = np.matmul(V_11, kw)  # shape: (averages, elements_to_average, freq+1, n)
                     k11 = np.matmul(temp, np.swapaxes(V_11, -1, -2))  # results in shape: (averages, elements_to_average, freq+1, freq+1)
                     ### Covariance of the predictions
@@ -323,9 +321,7 @@ class DirectSampler:
 
         for e in range(0,self.nelv):
 
-            print(f"1: {self.kw.shape}")
             kw = self.kw[int(np.floor(e/self.elements_to_average))]
-            print(f"2: {kw.shape}")
             x = field_sampled[e].reshape(-1,1)
             y = field_sampled[e].reshape(-1,1)
 
@@ -573,7 +569,6 @@ def lcl_predict(kw,V,numfreq,x,y,sampling_type, kw_diag=True):
         #Make Kw a matrix
         kw=np.diag(kw)
     else:
-        print(kw.shape)
         kw = kw@kw.T
     #Make Kw a matrix
     #kw=np.diag(kw)
