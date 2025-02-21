@@ -143,14 +143,14 @@ class DirectSampler:
         
                 # Transform it into an actual matrix, not simply a vector
                 # Aditionally, add one axis to make it consistent with the rest of the arrays and enable broadcasting
-                kw = np.einsum('...i,ij->...ij', kw, np.eye(kw.shape[-1])).reshape(averages, 1 ,  kw.shape[-1], kw.shape[-1])
+                kw_ = np.einsum('...i,ij->...ij', kw, np.eye(kw.shape[-1])).reshape(averages, 1 ,  kw.shape[-1], kw.shape[-1])
             else:
                 # Retrieve the averaged hat fields
                 f_hat = self.data_to_compress[f"{field_name}"]["kw"]
                 # Calculate the covariance matrix with f_hat@f_hat^T
                 kw = np.einsum("eik,ekj->eij", f_hat, f_hat.transpose(0,2,1))
                 # Add an axis to make it consistent with the rest of the arrays and enable broadcasting
-                kw = kw.reshape(kw.shape[0], 1, kw.shape[1], kw.shape[2])
+                kw_ = kw.reshape(kw.shape[0], 1, kw.shape[1], kw.shape[2])
            
         elif settings["covariance"]["method"] == "svd":
             pass
@@ -208,7 +208,10 @@ class DirectSampler:
                 imax = np.zeros((avg_idx.shape[0], elem_idx.shape[1]), dtype=int)
 
                 # Retrieve also kw if the method requires it
-                if settings["covariance"]["method"] == "svd":
+                if settings["covariance"]["method"] == "average":
+                    kw = kw_[avg_idx2[:,0]]
+
+                elif settings["covariance"]["method"] == "svd":
 
                     self.log.write("info", f"Obtaining the covariance matrix for the current chunk")
 
@@ -273,6 +276,8 @@ class DirectSampler:
                     ## Get covariance matrices
                     ## This approach was faster than using einsum. Potentially due to the size of the matrices
                     ### Covariance of the sampled entries
+                    print(V_11.shape)
+                    print(kw.shape)
                     temp = np.matmul(V_11, kw)  # shape: (averages, elements_to_average, freq+1, n)
                     k11 = np.matmul(temp, np.swapaxes(V_11, -1, -2))  # results in shape: (averages, elements_to_average, freq+1, freq+1)
                     ### Covariance of the predictions
