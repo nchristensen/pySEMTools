@@ -134,7 +134,7 @@ class DirectSampler:
             # If settings exist, add them as metadata in a top-level group.
             if hasattr(self, "settings") and self.settings is not None:
                 # In parallel mode, have rank 0 create the settings group.
-                if comm.Get_rank == 0:
+                if comm.Get_rank() == 0:
                     settings_group = f.create_group("settings")
                     add_settings_to_hdf5(settings_group, {"covariance": self.settings["covariance"],
                                                       "compression": self.settings["compression"]})
@@ -146,7 +146,8 @@ class DirectSampler:
             rank_group = f.create_group(f"rank_{rank}")
 
             # Add the mesh information of the rank
-            add_settings_to_hdf5(rank_group, self.settings["mesh_information"])
+            mesh_info_group = rank_group.create_group("mesh_information")
+            add_settings_to_hdf5(mesh_info_group, {"mesh_information" : self.settings["mesh_information"]})
 
             for field, data_dict in self.compressed_data.items():
                 # Create a subgroup for each field.
@@ -158,6 +159,73 @@ class DirectSampler:
                     data_array = np.frombuffer(compressed_bytes, dtype=np.uint8)
                     dset = field_group.create_dataset(data_key, (1,), dtype=binary_dtype)
                     dset[0] = data_array
+
+    def read_compressed_samples(self, comm=None, filename="compressed_samples.h5"):
+        """
+        Reads an HDF5 file (or folder of files if non-parallel mode was used) created by write_compressed_samples.
+        Assumes that the same number of ranks is used for reading as for writing and that each rank reads only its own data.
+        
+        Returns a tuple:
+            (global_settings, local_data)
+        where:
+            - global_settings is a dictionary from the top-level "settings" group (e.g., with keys "covariance" and "compression")
+            and augmented with the rank-specific "mesh_information".
+            - local_data is a dictionary structured as { "compressed_data": { field: { data_key: compressed_bytes } } }
+        """
+        
+        rank = comm.Get_rank()
+
+        # Open the file in parallel mode if available; otherwise open the per-rank file.
+        try:
+            if h5py.get_config().mpi:
+                f = h5py.File(filename, "r", driver="mpio", comm=comm)
+                mode = "parallel"
+            else:
+                raise RuntimeError("Parallel HDF5 not supported")
+        except Exception:
+            base_name, _ = os.path.splitext(filename)
+            folder_name = f"{base_name}_comp"
+            file_path = os.path.join(folder_name, f"{base_name}_rank_{rank}.h5")
+            f = h5py.File(file_path, "r")
+            mode = "non_parallel"
+
+        # Read global settings (from the top-level "settings" group, written by rank 0).
+        global_settings = {}
+        print("reading")
+        if "settings" in f:
+            if rank == 0:
+                global_settings = load_hdf5_settings(f["settings"])
+            global_settings = comm.bcast(global_settings, root=0)
+
+        # Read rank-specific data from the "rank_{rank}" group.
+        rank_group = f[f"rank_{rank}"]
+
+        # Read the rank-specific mesh information from the "mesh_information" subgroup.
+        mesh_information = {}
+        if "mesh_information" in rank_group:
+            mesh_information = load_hdf5_settings(rank_group["mesh_information"])
+
+        # Add mesh_information to global_settings.
+        global_settings["mesh_information"] = mesh_information
+
+        # Read compressed data from the remaining groups (fields).
+        compressed_data = {}
+        for field_key in rank_group:
+            # Skip the mesh_information subgroup.
+            if field_key == "mesh_information":
+                continue
+            field_group = rank_group[field_key]
+            field_dict = {}
+            for data_key in field_group:
+                dset = field_group[data_key]
+                # Each dataset is stored as an array of shape (1,) containing a variable-length uint8 array.
+                field_dict[data_key] = dset[0].tobytes()
+            compressed_data[field_key] = field_dict
+
+        f.close()
+
+        return global_settings, compressed_data
+
 
 
     def _estimate_field_covariance(self, field: np.ndarray = None, field_name: str = "field", method="average", elements_to_average: int = 1, keep_modes: int = 1):
@@ -691,3 +759,18 @@ def add_settings_to_hdf5(h5group, settings_dict):
             add_settings_to_hdf5(subgroup, value)
         else:
             h5group.attrs[key] = value
+
+def load_hdf5_settings(group):
+    """
+    Recursively loads an HDF5 group into a dictionary.
+    Attributes become key/value pairs and subgroups are loaded recursively.
+    """
+    settings = {}
+    # Load attributes
+    for key, value in group.attrs.items():
+        settings[key] = value
+    # Recursively load subgroups
+    for key, item in group.items():
+        if isinstance(item, h5py.Group):
+            settings[key] = load_hdf5_settings(item)
+    return settings
