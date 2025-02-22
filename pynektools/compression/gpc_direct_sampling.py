@@ -43,6 +43,10 @@ class DirectSampler:
 
         # Dictionary to store the settings as they are added
         self.settings = {}
+        if self.dtype == np.float32:
+            self.settings["dtype"] = "single"
+        elif self.dtype == np.float64:
+            self.settings["dtype"] = "double"
         self.settings["mesh_information"] = {"lx": self.lx, "ly": self.ly, "lz": self.lz, "nelv": self.nelv}
 
         # Create a dictionary that will have the data that needs to be compressed later
@@ -136,8 +140,9 @@ class DirectSampler:
                 # In parallel mode, have rank 0 create the settings group.
                 if comm.Get_rank() == 0:
                     settings_group = f.create_group("settings")
-                    add_settings_to_hdf5(settings_group, {"covariance": self.settings["covariance"],
-                                                      "compression": self.settings["compression"]})
+                    settings_dict = {key: self.settings[key] for key in self.settings.keys() if key != "mesh_information"}
+                    add_settings_to_hdf5(settings_group, settings_dict)
+                                         
 
             # Ensure all ranks wait until settings are written.
             comm.Barrier()
@@ -147,7 +152,7 @@ class DirectSampler:
 
             # Add the mesh information of the rank
             mesh_info_group = rank_group.create_group("mesh_information")
-            add_settings_to_hdf5(mesh_info_group, {"mesh_information" : self.settings["mesh_information"]})
+            add_settings_to_hdf5(mesh_info_group, self.settings["mesh_information"])
 
             for field, data_dict in self.compressed_data.items():
                 # Create a subgroup for each field.
@@ -225,6 +230,49 @@ class DirectSampler:
         f.close()
 
         return global_settings, compressed_data
+    
+    def decompress_samples(self, settings, compressed_data=None):
+        """
+        Decompresses the compressed data in the compressed_data dictionary.
+        """
+
+        data_to_compress = {}
+        for field, data_dict in compressed_data.items():
+            data_to_compress[field] = {}
+            for data_key, compressed_bytes in data_dict.items():
+
+                dtype = settings["dtype"]
+
+                # Select the shape based on the name of the data
+                nelv = settings["mesh_information"]["nelv"]
+                lz = settings["mesh_information"]["lz"]
+                ly = settings["mesh_information"]["ly"]
+                lx = settings["mesh_information"]["lx"]
+                average = settings["covariance"]["averages"]
+                elements_to_average = settings["covariance"]["elements_to_average"]
+                keep_modes = settings["covariance"].get("keep_modes", 1)
+
+                if data_key == "field":    
+                    shape = (nelv, lz, ly, lx)
+                elif data_key == "kw":
+                    shape = (average, lx*ly*lz)
+                elif data_key == "U":
+                    shape = (average*elements_to_average, keep_modes)
+                elif data_key == "s":
+                    shape = (keep_modes)
+                elif data_key == "Vt":
+                    shape = (keep_modes, lx*ly*lz)
+                else:
+                    raise ValueError("Invalid data key")
+
+                if dtype == "single":
+                    temp = np.frombuffer(bz2.decompress(compressed_bytes), dtype=np.float32)
+                elif dtype == "double":
+                    temp = np.frombuffer(bz2.decompress(compressed_bytes), dtype=np.float64)
+
+                data_to_compress[field][data_key] = temp.reshape(shape)
+
+        return data_to_compress
 
 
 
