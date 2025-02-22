@@ -17,49 +17,89 @@ class DirectSampler:
     Class to perform direct sampling on a field in the SEM format
     """
 
-    def __init__(self, comm: MPI.Comm = None, dtype: np.dtype = np.double,  msh: Mesh = None, coef: Coef = None, max_elements_to_process: int = 256):
+    def __init__(self, comm: MPI.Comm = None, dtype: np.dtype = np.double,  msh: Mesh = None, filename: str = None, max_elements_to_process: int = 256):
         
         self.log = Logger(comm=comm, module_name="DirectSampler")
+        
+        if msh is not None:
+            self.init_from_msh(msh, dtype=dtype, max_elements_to_process=max_elements_to_process)
+        elif filename is not None:
+            self.init_from_file(comm, filename, max_elements_to_process=max_elements_to_process)
+        else:
+            self.log.write("info", "No mesh provided. Please provide a mesh to initialize the DirectSampler")
 
-        # Set a default parameter
-        self.max_elements_to_process = max_elements_to_process
+    def init_from_file(self, comm: MPI.Comm, filename: str, max_elements_to_process: int = 256):
+        """
+        """
 
+        self.log.write("info", f"Initializing the DirectSampler from file: {filename}")
+
+        self.settings, self.compressed_data = self.read_compressed_samples(comm = comm, filename=filename)
+
+        self.init_common(max_elements_to_process)
+
+        self.uncompressed_data = self.decompress_samples(self.settings, self.compressed_data)
+
+        self.kw_diag = self.settings["covariance"]["kw_diag"]
+
+
+    def init_from_msh(self, msh: Mesh, dtype: np.dtype = np.double, max_elements_to_process: int = 256):
+
+        self.log.write("info", "Initializing the DirectSampler from a Mesh object")
+        
         # Geometrical parameters for this mesh
-        self.nelv = msh.nelv
-        self.lz = msh.lz
-        self.ly = msh.ly
-        self.lx = msh.lx
-
-        # Save the mass matrix
-        self.B = coef.B 
-
-        # Some settings
-        self.dtype = dtype
-
-        # Get transformation matrices for this mesh
-        self.v, self.vinv, self.w3, self.x, self.w = get_transform_matrix(
-            msh.lx, msh.gdim, apply_1d_operators=False, dtype=dtype
-        )
-
+        nelv = msh.nelv
+        lz = msh.lz
+        ly = msh.ly
+        lx = msh.lx
+        gdim = msh.gdim
+        
         # Dictionary to store the settings as they are added
         self.settings = {}
-        if self.dtype == np.float32:
+        if dtype == np.float32:
             self.settings["dtype"] = "single"
-        elif self.dtype == np.float64:
+        elif dtype == np.float64:
             self.settings["dtype"] = "double"
-        self.settings["mesh_information"] = {"lx": self.lx, "ly": self.ly, "lz": self.lz, "nelv": self.nelv}
+        self.settings["mesh_information"] = {"lx": lx, "ly": ly, "lz": lz, "nelv": nelv, "gdim": gdim}
 
         # Create a dictionary that will have the data that needs to be compressed later
-        self.data_to_compress = {}
+        self.uncompressed_data = {}
 
         # Create a dictionary that will hold the data after compressed
         self.compressed_data = {}
+
+        # Initialize the common parameters
+        self.init_common(max_elements_to_process)
+
+    def init_common(self, max_elements_to_process: int = 256):
+
+        self.max_elements_to_process = max_elements_to_process
+
+        # Mesh information
+        self.lx = self.settings["mesh_information"]["lx"]
+        self.ly = self.settings["mesh_information"]["ly"]
+        self.lz = self.settings["mesh_information"]["lz"]
+        self.gdim = self.settings["mesh_information"]["gdim"]
+        self.nelv = self.settings["mesh_information"]["nelv"]
+
+        # dtype
+        if self.settings["dtype"] == "single":
+            self.dtype = np.float32
+        elif self.settings["dtype"] == "double":
+            self.dtype = np.float64
+        
+        # Get transformation matrices for this mesh
+        self.v, self.vinv, self.w3, self.x, self.w = get_transform_matrix(
+            self.lx, self.gdim, apply_1d_operators=False, dtype=self.dtype
+        )
+
 
     def clear(self):
 
         # Clear the data that has been sampled. This is necesary to avoid mixing things up when sampling new fields.
         self.settings = {}
-        self.data_to_compress = {}
+        self.uncompressed_data = {}
+        self.compressed_data = {}
     
     def sample_field(self, field: np.ndarray = None, field_name: str = "field", covariance_method: str = "average", covariance_elements_to_average: int = 1, covariance_keep_modes: int=1,
                     compression_method: str = "fixed_bitrate", bitrate: float = 1/2):
@@ -77,7 +117,7 @@ class DirectSampler:
             self.log.write("info", f"Sampling the field using the fixed bitrate method. using settings: {self.settings['compression']}")
             field_sampled = self._sample_fixed_bitrate(field, field_name, self.settings)
 
-            self.data_to_compress[f"{field_name}"]["field"] = field_sampled
+            self.uncompressed_data[f"{field_name}"]["field"] = field_sampled
             self.log.write("info", f"Sampled_field saved in field data_to_compress[\"{field_name}\"][\"field\"]")
 
         else:
@@ -89,12 +129,12 @@ class DirectSampler:
 
         self.log.write("info", f"Compressing the data using the lossless compressor: {lossless_compressor}")
         self.log.write("info", "Compressing data in data_to_compress")
-        for field in self.data_to_compress.keys():
+        for field in self.uncompressed_data.keys():
             self.log.write("info", f"Compressing data for field [\"{field}\"]:")
             self.compressed_data[field] = {}
-            for data in self.data_to_compress[field].keys():
+            for data in self.uncompressed_data[field].keys():
                 self.log.write("info", f"Compressing [\"{data}\"] for field [\"{field}\"]")
-                self.compressed_data[field][data] = bz2.compress(self.data_to_compress[field][data].tobytes())
+                self.compressed_data[field][data] = bz2.compress(self.uncompressed_data[field][data].tobytes())
 
 
     def write_compressed_samples(self, comm = None,  filename="compressed_samples.h5"):
@@ -281,7 +321,7 @@ class DirectSampler:
         """
 
         # Create a dictionary to store the data that will be compressed
-        self.data_to_compress[f"{field_name}"] = {}
+        self.uncompressed_data[f"{field_name}"] = {}
 
         self.log.write("info", "Transforming the field into to legendre space")
         field_hat = self.transform_field(field, to="legendre")
@@ -302,7 +342,7 @@ class DirectSampler:
             kw = self._estimate_covariance_average(field_hat, self.settings["covariance"])
 
             # Store the covariances in the data to be compressed:
-            self.data_to_compress[f"{field_name}"]["kw"] = kw
+            self.uncompressed_data[f"{field_name}"]["kw"] = kw
             self.log.write("info", f"Covariance saved in field data_to_compress[\"{field_name}\"][\"kw\"]")
         
         elif method == "svd":
@@ -319,9 +359,9 @@ class DirectSampler:
             U, s, Vt = self._estimate_covariance_svd(field_hat, self.settings["covariance"])
 
             # Store the covariances in the data to be compressed:
-            self.data_to_compress[f"{field_name}"]["U"] = U
-            self.data_to_compress[f"{field_name}"]["s"] = s
-            self.data_to_compress[f"{field_name}"]["Vt"] = Vt
+            self.uncompressed_data[f"{field_name}"]["U"] = U
+            self.uncompressed_data[f"{field_name}"]["s"] = s
+            self.uncompressed_data[f"{field_name}"]["Vt"] = Vt
 
             self.log.write("info", f"U saved in field data_to_compress[\"{field_name}\"][\"U\"]")
             self.log.write("info", f"s saved in field data_to_compress[\"{field_name}\"][\"s\"]")
@@ -345,14 +385,14 @@ class DirectSampler:
         if settings["covariance"]["method"] == "average":
             if self.kw_diag == True:        
                 # Retrieve the diagonal of the covariance matrix
-                kw = self.data_to_compress[f"{field_name}"]["kw"]
+                kw = self.uncompressed_data[f"{field_name}"]["kw"]
         
                 # Transform it into an actual matrix, not simply a vector
                 # Aditionally, add one axis to make it consistent with the rest of the arrays and enable broadcasting
                 kw_ = np.einsum('...i,ij->...ij', kw, np.eye(kw.shape[-1])).reshape(averages, 1 ,  kw.shape[-1], kw.shape[-1])
             else:
                 # Retrieve the averaged hat fields
-                f_hat = self.data_to_compress[f"{field_name}"]["kw"]
+                f_hat = self.uncompressed_data[f"{field_name}"]["kw"]
                 # Calculate the covariance matrix with f_hat@f_hat^T
                 kw = np.einsum("eik,ekj->eij", f_hat, f_hat.transpose(0,2,1))
                 # Add an axis to make it consistent with the rest of the arrays and enable broadcasting
@@ -422,9 +462,9 @@ class DirectSampler:
                     self.log.write("info", f"Obtaining the covariance matrix for the current chunk")
 
                     # Retrieve the SVD components
-                    U = self.data_to_compress[f"{field_name}"]["U"]
-                    s = self.data_to_compress[f"{field_name}"]["s"]
-                    Vt = self.data_to_compress[f"{field_name}"]["Vt"]
+                    U = self.uncompressed_data[f"{field_name}"]["U"]
+                    s = self.uncompressed_data[f"{field_name}"]["s"]
+                    Vt = self.uncompressed_data[f"{field_name}"]["Vt"]
 
                     # Select only the relevant entries of U
                     ## Reshape to allow the indices to be broadcasted
