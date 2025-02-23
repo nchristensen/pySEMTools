@@ -381,29 +381,6 @@ class DirectSampler:
         # Retrieve the number of samples
         n_samples = settings["compression"]["n_samples"]
 
-        # Retrieve appropiate covariance outside the loop if needed:
-        if settings["covariance"]["method"] == "average":
-            if self.kw_diag == True:        
-                # Retrieve the diagonal of the covariance matrix
-                kw = self.uncompressed_data[f"{field_name}"]["kw"]
-        
-                # Transform it into an actual matrix, not simply a vector
-                # Aditionally, add one axis to make it consistent with the rest of the arrays and enable broadcasting
-                kw_ = np.einsum('...i,ij->...ij', kw, np.eye(kw.shape[-1])).reshape(averages, 1 ,  kw.shape[-1], kw.shape[-1])
-            else:
-                # Retrieve the averaged hat fields
-                f_hat = self.uncompressed_data[f"{field_name}"]["kw"]
-                # Calculate the covariance matrix with f_hat@f_hat^T
-                kw = np.einsum("eik,ekj->eij", f_hat, f_hat.transpose(0,2,1))
-                # Add an axis to make it consistent with the rest of the arrays and enable broadcasting
-                kw_ = kw.reshape(kw.shape[0], 1, kw.shape[1], kw.shape[2])
-           
-        elif settings["covariance"]["method"] == "svd":
-            pass
-
-        else:
-            raise ValueError("Invalid method to estimate the covariance matrix")
-
         # Reshape the fields into the KW supported shapes
         y = field.reshape(averages, elements_to_average, field.shape[1], field.shape[2], field.shape[3])
         V = self.v
@@ -447,63 +424,12 @@ class DirectSampler:
 
                 avg_idx2 = avg_idx.reshape(avg_idx.shape[0], 1)
                 elem_idx2 = elem_idx.reshape(1, elem_idx.shape[1])
-                averages2 = avg_idx2.shape[0]
-                elements_to_average2 = elem_idx2.shape[1]
-
+                
                 # Set the initial index to be added
                 imax = np.zeros((avg_idx.shape[0], elem_idx.shape[1]), dtype=int)
 
-                # Retrieve also kw if the method requires it
-                if settings["covariance"]["method"] == "average":
-                    kw = kw_[avg_idx2[:,0]]
-
-                elif settings["covariance"]["method"] == "svd":
-
-                    self.log.write("info", f"Obtaining the covariance matrix for the current chunk")
-
-                    # Retrieve the SVD components
-                    U = self.uncompressed_data[f"{field_name}"]["U"]
-                    s = self.uncompressed_data[f"{field_name}"]["s"]
-                    Vt = self.uncompressed_data[f"{field_name}"]["Vt"]
-
-                    # Select only the relevant entries of U
-                    ## Reshape to allow the indices to be broadcasted
-                    U = U.reshape(averages, elements_to_average, 1, -1) # Here I need to have ALL!
-                    ## Select the relevant entries
-                    U = U[avg_idx2, elem_idx2, :, :]
-                    #Reshape to original shape
-                    U = U.reshape(averages2*elements_to_average2, -1) # Here use the size of avrg_index and elem_index instead, since it is reduced.
-
-                    # Construct the f_hat
-                    f_hat = np.einsum("ik,k,kj->ij", U, s, Vt)
-
-                    # This is the way in which I calculate the covariance here and then get the diagonals
-                    if self.kw_diag == True:
-                        # Get the covariances
-                        kw_ = np.einsum("eik,ekj->eij", f_hat.reshape(averages2*elements_to_average2,-1,1), f_hat.reshape(averages2*elements_to_average2,-1,1).transpose(0,2,1))
-                        
-                        # Extract only the diagonals
-                        kw_ = np.einsum("...ii->...i", kw_)
-                        
-                        # Transform it into an actual matrix, not simply a vector
-                        # Aditionally, add one axis to make it consistent with the rest of the arrays and enable broadcasting
-                        kw_ = np.copy(np.einsum('...i,ij->...ij', kw_, np.eye(kw_.shape[-1])))            
-
-                        #Make the shape consistent
-                        kw_ = kw_.reshape(averages2, elements_to_average2 ,  kw_.shape[-1], kw_.shape[-1])
-                        
-                    else:
-                        # Reshape
-                        f_hat = f_hat.reshape(averages2*elements_to_average2,-1,1)
-                
-                        # Calculate the covariance matrix with f_hat@f_hat^T
-                        kw_ = np.einsum("eik,ekj->eij", f_hat, f_hat.transpose(0,2,1))
-                
-                        # Add an axis to make it consistent with the rest of the arrays and enable broadcasting
-                        kw_ = kw_.reshape(averages2, elements_to_average2, kw_.shape[1], kw_.shape[2])
-                    
-                    # Get the covariance matrix for the current chunk
-                    kw = np.copy(kw_)
+                # Get covariance matrix
+                kw = self._get_covariance_matrix(settings, field_name, avg_idx2, elem_idx2)
 
                 for freq in range(0,numfreq):
 
@@ -707,6 +633,84 @@ class DirectSampler:
             field_sampled[e] = y_lcl_trunc.reshape(field_sampled[e].shape)
 
         self.field_sampled = field_sampled
+
+
+    def _get_covariance_matrix(self, settings: dict, field_name: str, avg_idx2: np.ndarray, elem_idx2: np.ndarray):
+        """
+        """
+        averages2 = avg_idx2.shape[0]
+        elements_to_average2 = elem_idx2.shape[1]
+        
+        if settings["covariance"]["method"] == "average":
+            if self.kw_diag == True:        
+                # Retrieve the diagonal of the covariance matrix
+                kw = self.uncompressed_data[f"{field_name}"]["kw"][avg_idx2[:,0]]
+        
+                # Transform it into an actual matrix, not simply a vector
+                # Aditionally, add one axis to make it consistent with the rest of the arrays and enable broadcasting
+                kw_ = np.einsum('...i,ij->...ij', kw, np.eye(kw.shape[-1])).reshape(averages2, 1 ,  kw.shape[-1], kw.shape[-1])
+            else:
+                # Retrieve the averaged hat fields
+                f_hat = self.uncompressed_data[f"{field_name}"]["kw"][avg_idx2[:,0]]
+                # Calculate the covariance matrix with f_hat@f_hat^T
+                kw = np.einsum("eik,ekj->eij", f_hat, f_hat.transpose(0,2,1))
+                # Add an axis to make it consistent with the rest of the arrays and enable broadcasting
+                kw_ = kw.reshape(kw.shape[0], 1, kw.shape[1], kw.shape[2])
+            
+            kw = kw_
+        
+        elif settings["covariance"]["method"] == "svd":
+
+            self.log.write("info", f"Obtaining the covariance matrix for the current chunk")
+
+            # Retrieve the SVD components
+            U = self.uncompressed_data[f"{field_name}"]["U"]
+            s = self.uncompressed_data[f"{field_name}"]["s"]
+            Vt = self.uncompressed_data[f"{field_name}"]["Vt"]
+
+            # Select only the relevant entries of U
+            ## Reshape to allow the indices to be broadcasted
+            averages = settings["covariance"]["averages"]
+            elements_to_average = settings["covariance"]["elements_to_average"]
+            U = U.reshape(averages, elements_to_average, 1, -1) # Here I need to have ALL!
+            ## Select the relevant entries
+            U = U[avg_idx2, elem_idx2, :, :]
+            #Reshape to original shape
+            U = U.reshape(averages2*elements_to_average2, -1) # Here use the size of avrg_index and elem_index instead, since it is reduced.
+
+            # Construct the f_hat
+            f_hat = np.einsum("ik,k,kj->ij", U, s, Vt)
+
+            # This is the way in which I calculate the covariance here and then get the diagonals
+            if self.kw_diag == True:
+                # Get the covariances
+                kw_ = np.einsum("eik,ekj->eij", f_hat.reshape(averages2*elements_to_average2,-1,1), f_hat.reshape(averages2*elements_to_average2,-1,1).transpose(0,2,1))
+                
+                # Extract only the diagonals
+                kw_ = np.einsum("...ii->...i", kw_)
+                
+                # Transform it into an actual matrix, not simply a vector
+                # Aditionally, add one axis to make it consistent with the rest of the arrays and enable broadcasting
+                kw_ = np.copy(np.einsum('...i,ij->...ij', kw_, np.eye(kw_.shape[-1])))            
+
+                #Make the shape consistent
+                kw_ = kw_.reshape(averages2, elements_to_average2 ,  kw_.shape[-1], kw_.shape[-1])
+                
+            else:
+                # Reshape
+                f_hat = f_hat.reshape(averages2*elements_to_average2,-1,1)
+        
+                # Calculate the covariance matrix with f_hat@f_hat^T
+                kw_ = np.einsum("eik,ekj->eij", f_hat, f_hat.transpose(0,2,1))
+        
+                # Add an axis to make it consistent with the rest of the arrays and enable broadcasting
+                kw_ = kw_.reshape(averages2, elements_to_average2, kw_.shape[1], kw_.shape[2])
+            
+            # Get the covariance matrix for the current chunk
+            kw = np.copy(kw_)
+
+        return kw
+
 
 
     
