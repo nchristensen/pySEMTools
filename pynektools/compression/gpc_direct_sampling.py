@@ -442,11 +442,18 @@ class DirectSampler:
                     y_21, y_21_std = self.gaussian_process_regression(y, V, kw, ind_train, avg_idx, elem_idx, avg_idx2, elem_idx2, freq, predict_mean=False, predict_std=True) 
 
                     # Set the variance as zero for the samples that have already been selected
-                    #y_21_std[:, :, ind_train[avg_idx2,elem_idx2,:freq+1]] = 0
+                    y_21_std[:, :, ind_train[avg_idx2,elem_idx2,:freq+1]] = 0
 
                     # Get the index of the sample with the highest standardd deviation
                     imax = np.argmax(y_21_std, axis=2)
-                    
+                    if np.any(imax == 0):
+                        # Replace 0 values in imax with random integers not in ind_train
+                        zero_indices = np.argwhere(imax == 0)
+                        for i, j in zero_indices:
+                            possible_indices = np.setdiff1d(np.arange(y.shape[2]), ind_train[avg_idx2[i, 0], elem_idx2[0, j], :freq+1])
+                            if len(possible_indices) > 0:
+                                imax[i, j] = np.random.choice(possible_indices)
+ 
                     # Assign the index to be added
                     if freq < numfreq-1:
                         ind_train[avg_idx2, elem_idx2,freq+1] = imax
@@ -456,6 +463,8 @@ class DirectSampler:
 
                 # This is still with column vectors at the end. We need to reshape it.
                 y_truncated[avg_idx, elem_idx, ind_train[avg_idx2, elem_idx2, :],:] = y_11
+
+                self.ind_train_sample = ind_train
 
         # Reshape the field back to its original shape
         return y_truncated.reshape(field.shape)
@@ -500,6 +509,7 @@ class DirectSampler:
                 temp = np.where(y[e,i] != -50)
                 ind_train[e,i, :len(temp[0])] = temp[0]
         ind_train = np.sort(ind_train, axis=2)
+        self.ind_train_rct = ind_train
 
         # Set up some help for the selections
         avg_idx = np.arange(averages)[:, np.newaxis, np.newaxis]        # shape: (averages, 1, 1)
@@ -541,10 +551,11 @@ class DirectSampler:
                 if get_mean:
                     y_reconstructed[avg_idx2, elem_idx2] = y_21
                 if get_std:
-                    y_reconstructed_std[avg_idx2, elem_idx2] = y_21_std
+                    y_reconstructed_std[avg_idx2, elem_idx2] = y_21_std.reshape(y_21_std.shape[0], y_21_std.shape[1], y_21_std.shape[2], 1)
 
         if get_mean:
             y_reconstructed = y_reconstructed.reshape(sampled_field.shape)
+            y_reconstructed[sampled_field != -50] = sampled_field[sampled_field != -50]
         if get_std:
             y_reconstructed_std = y_reconstructed_std.reshape(sampled_field.shape)
 
