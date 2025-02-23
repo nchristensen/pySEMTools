@@ -460,6 +460,98 @@ class DirectSampler:
         # Reshape the field back to its original shape
         return y_truncated.reshape(field.shape)
  
+    def reconstruct_field(self, field_name: str = None, get_mean: bool = True, get_std: bool = False):
+        """
+        """
+
+        # Retrieve the sampled field
+        sampled_field = self.uncompressed_data[field_name]["field"]
+        settings = self.settings
+
+        # Set the reshaping parameters
+        averages = settings["covariance"]["averages"]
+        elements_to_average = settings["covariance"]["elements_to_average"]
+
+        # Retrieve the number of samples
+        n_samples = settings["compression"]["n_samples"]
+
+        # Reshape the fields into the KW supported shapes
+        y = sampled_field.reshape(averages, elements_to_average, sampled_field.shape[1], sampled_field.shape[2], sampled_field.shape[3])
+        V = self.v
+        numfreq = n_samples
+
+        # Now reshape the x, y elements into column vectors
+        y = sampled_field.reshape(averages, elements_to_average, sampled_field.shape[1] * sampled_field.shape[2] * sampled_field.shape[3], 1)
+
+        #allocation the truncated field
+        y_reconstructed = None
+        y_reconstructed_std = None
+        if get_mean:
+            y_reconstructed = np.ones_like(y) * -50
+        if get_std:
+            y_reconstructed_std = np.ones_like(y) * -50
+
+        # Create an array that contains the indices of the elements that have been sampled
+        # The first indext to store is always index 0
+        ind_train = np.zeros((averages, elements_to_average, n_samples), dtype=int)
+        ## Get the ind train from the sampled field
+        for e in range(averages):
+            for i in range(elements_to_average):
+                temp = np.where(y[e,i] != -50)
+                ind_train[e,i, :len(temp[0])] = temp[0]
+        ind_train = np.sort(ind_train, axis=2)
+
+        # Set up some help for the selections
+        avg_idx = np.arange(averages)[:, np.newaxis, np.newaxis]        # shape: (averages, 1, 1)
+        elem_idx = np.arange(elements_to_average)[np.newaxis, :, np.newaxis]  # shape: (1, elements_to_average, 1)
+
+        chunk_size_e = self.max_elements_to_process
+        n_chunks_e = int(np.ceil(elements_to_average / chunk_size_e))
+        chunk_size_a = self.max_elements_to_process
+        n_chunks_a = int(np.ceil(averages / chunk_size_a))
+
+        for chunk_id_a in range(n_chunks_a):
+            start_a = chunk_id_a * chunk_size_a
+            end_a = (chunk_id_a + 1) * chunk_size_a
+            if end_a > averages:
+                end_a = averages
+
+            for chunk_id_e in range(n_chunks_e):
+                start_e = chunk_id_e * chunk_size_e
+                end_e = (chunk_id_e + 1) * chunk_size_e
+                if end_e > elements_to_average:
+                    end_e = elements_to_average
+
+                avg_idx = np.arange(start_a, end_a)[:, np.newaxis, np.newaxis]        # shape: (averages, 1, 1)
+                elem_idx = np.arange(start_e, end_e)[np.newaxis, :, np.newaxis]  # shape: (1, elements_to_average, 1)
+
+                self.log.write("info",f"Proccesing up to {(avg_idx.flatten()[-1] + 1) * (elem_idx.flatten()[-1]+1)}/{self.nelv} element")
+
+                avg_idx2 = avg_idx.reshape(avg_idx.shape[0], 1)
+                elem_idx2 = elem_idx.reshape(1, elem_idx.shape[1])
+                
+                # Get covariance matrix
+                kw = self._get_covariance_matrix(settings, field_name, avg_idx2, elem_idx2)
+
+
+                # Get the prediction and the standard deviation
+                y_21, y_21_std = self.gaussian_process_regression(y, V, kw, ind_train, avg_idx, elem_idx, avg_idx2, elem_idx2, predict_mean=get_mean, predict_std=get_std) 
+
+                # This is still with column vectors at the end. We need to reshape it.
+                if get_mean:
+                    y_reconstructed[avg_idx2, elem_idx2] = y_21
+                if get_std:
+                    y_reconstructed_std[avg_idx2, elem_idx2] = y_21_std
+
+        if get_mean:
+            y_reconstructed = y_reconstructed.reshape(sampled_field.shape)
+        if get_std:
+            y_reconstructed_std = y_reconstructed_std.reshape(sampled_field.shape)
+
+        # Reshape the field back to its original shape
+        return y_reconstructed, y_reconstructed_std
+ 
+ 
     def predict(self, field_sampled: np.ndarray = None):
 
         # Global allocation
