@@ -235,11 +235,9 @@ class DirectSampler:
             mode = "non_parallel"
 
         # Read global settings (from the top-level "settings" group, written by rank 0).
-        global_settings = {}
-        if "settings" in f:
-            if rank == 0:
-                global_settings = load_hdf5_settings(f["settings"])
-            global_settings = comm.bcast(global_settings, root=0)
+        if rank == 0:
+            global_settings = load_hdf5_settings(f["settings"])
+        global_settings = comm.bcast(global_settings, root=0)
 
         # Read rank-specific data from the "rank_{rank}" group.
         rank_group = f[f"rank_{rank}"]
