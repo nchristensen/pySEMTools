@@ -236,7 +236,6 @@ class DirectSampler:
 
         # Read global settings (from the top-level "settings" group, written by rank 0).
         global_settings = {}
-        print("reading")
         if "settings" in f:
             if rank == 0:
                 global_settings = load_hdf5_settings(f["settings"])
@@ -442,7 +441,8 @@ class DirectSampler:
                     y_21, y_21_std = self.gaussian_process_regression(y, V, kw, ind_train, avg_idx, elem_idx, avg_idx2, elem_idx2, freq, predict_mean=False, predict_std=True) 
 
                     # Set the variance as zero for the samples that have already been selected
-                    y_21_std[:, :, ind_train[avg_idx2,elem_idx2,:freq+1]] = 0
+                    I, J, _ = np.ix_(np.arange(y_21_std.shape[0]), np.arange(y_21_std.shape[1]), np.arange(y_21_std.shape[2]))
+                    y_21_std[I, J, ind_train[:,:,:freq+1]] = 0
 
                     # Get the index of the sample with the highest standardd deviation
                     imax = np.argmax(y_21_std, axis=2)
@@ -802,7 +802,6 @@ class DirectSampler:
 
         # Select the current samples            
         y_11 = y[avg_idx, elem_idx, ind_train[avg_idx2,elem_idx2,freq_idex],:]
-        print(y_11.shape)
 
         V_11 = V[ind_train[avg_idx2,elem_idx2,freq_idex], :]
         V_22 = V.reshape(1,1,V.shape[0],V.shape[1])
