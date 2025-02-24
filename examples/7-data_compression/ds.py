@@ -4,6 +4,9 @@ import matplotlib.pyplot as plt
 import numpy as np
 import cProfile
 
+import os
+os.environ["PYNEKTOOLS_DEBUG"] = 'true'
+
 # Get mpi info
 comm = MPI.COMM_WORLD
 
@@ -18,48 +21,67 @@ from pynektools.io.ppymech.neksuite import preadnek, pynekread
 # Writers
 from pynektools.io.ppymech.neksuite import pwritenek, pynekwrite
 
-fname = '/home/adperez/cpc_gaussian_process_compression/data/mixlay/mixlay0.f00001'
-#fname = '/home/adperez/Documents/gaussian_process/Gaussian Process_0823/data/turbPipe/turbPipe0.f00001'
-
-msh = Mesh(comm, create_connectivity=False)
-fld = FieldRegistry(comm)
-
-pynekread(fname, comm, data_dtype=np.double, msh = msh, fld = fld)
-
-for e in range(msh.nelv):
-    if (np.min(msh.x[e]), np.max(msh.x[e])) == (0, 0.25):
-        if (np.min(msh.y[e]), np.max(msh.y[e])) == (0, 1.1399999856948853):
-            print(e)
-    
-coef = Coef(msh=msh, comm=comm)
-
+# Sampler
 from pynektools.compression.gpc_direct_sampling import DirectSampler
 
-ds = DirectSampler(comm=comm, msh=msh)
+def main():
 
-ds.log.tic()
+    # Read the data
+    msh = Mesh(comm, create_connectivity=False)
+    fld = FieldRegistry(comm)
+    pynekread(fname, comm, data_dtype=np.double, msh = msh, fld = fld)
 
-# Select the options
-n_samples = 64
-bitrate = n_samples/(msh.lx*msh.ly*msh.lz)
+    # Initialize coef 
+    coef = Coef(msh=msh, comm=comm)
 
-prof = cProfile.Profile()
-prof.enable()
+    # Initialize the sampler
+    ds = DirectSampler(comm=comm, msh=msh, bckend="torch", max_elements_to_process=1000)
+    
+    # Calculate options    
+    bitrate = n_samples/(msh.lx*msh.ly*msh.lz)
 
-# Sample here
-#ds.sample_field(field=fld.registry["u"], field_name="u", covariance_method="svd", compression_method="fixed_bitrate", bitrate = bitrate, covariance_keep_modes=1)
-#ds.sample_field(field=fld.registry["u"], field_name="u", covariance_method="average", covariance_elements_to_average=int(msh.nelv/16), compression_method="fixed_bitrate", bitrate = bitrate)
-ds.sample_field(field=fld.registry["u"], field_name="u", covariance_method="average", covariance_elements_to_average=100, compression_method="fixed_bitrate", bitrate = bitrate)
+    # Compress
 
-prof.disable()
+    if profile:
+        prof = cProfile.Profile()
+        prof.enable()
 
-prof.dump_stats('./cpu_%d.prof' %comm.Get_rank())
+    ## Sample here
+    #ds.sample_field(field=fld.registry["u"], field_name="u", covariance_method="svd", compression_method="fixed_bitrate", bitrate = bitrate, covariance_keep_modes=1)
+    ds.sample_field(field=fld.registry["u"], field_name="u", covariance_method="average", covariance_elements_to_average=1, compression_method="fixed_bitrate", bitrate = bitrate)
 
+    ## Compress
+    ds.compress_samples(lossless_compressor="bzip2")
 
-ds.log.toc()
+    ## Write
+    ds.write_compressed_samples(comm=comm, filename="test")
+    
+    if profile:
+        prof.disable()
+        prof.dump_stats('./compression_cpu_%d.prof' %comm.Get_rank())
 
+    # Decompress
+    if profile:
+        prof = cProfile.Profile()
+        prof.enable()
+    
+    ## Read
+    ds_read = DirectSampler(comm=comm, filename="test", bckend="numpy", max_elements_to_process=256)
+    print(ds_read.uncompressed_data.keys())
+    #predict
+    rct, rct_std = ds_read.reconstruct_field(field_name="u", get_mean=True, get_std=True)
+    
+    if profile:
+        prof.disable()
+        prof.dump_stats('./decompression_cpu_%d.prof' %comm.Get_rank())
 
-ds.compress_samples(lossless_compressor="bzip2")
+    # Get the error
+    error = np.linalg.norm(rct - fld.registry["u"].data)/np.linalg.norm(fld.registry["u"].data)
+    print("Error: ", error)
 
-
-ds.write_compressed_samples(comm=comm, filename="test")
+#fname = '../data/mixlay0.f00001'
+fname = '../data/tc_channel0.f00001'
+#fname = '/home/adperez/Documents/gaussian_process/Gaussian Process_0823/data/turbPipe/turbPipe0.f00001'
+n_samples = 24
+profile = True
+main()
