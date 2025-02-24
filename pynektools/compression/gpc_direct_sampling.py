@@ -879,7 +879,7 @@ class DirectSampler:
                 # Solve for v in (k11 + eps) * v = k12:
                 self.log.write("info", f"solving L v = k12 with shape {L.shape} and {k12.shape}")
                 #v = np.linalg.solve(L, k12)  # v shape: (averages, elements_to_average, freq+1, n)
-                v = batched_triangular_solve(L, k12)  # v shape: (a, b, m, n)
+                v = np.linalg.solve(L, k12)  # v shape: (a, b, m, n)
  
                 self.log.write("debug", "v obtained")
                 # The term k21*(k11+eps)^{-1}*k12 equals v^T v.
