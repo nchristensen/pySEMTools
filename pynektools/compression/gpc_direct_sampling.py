@@ -118,7 +118,7 @@ class DirectSampler:
             field_sampled = self._sample_fixed_bitrate(field, field_name, self.settings)
 
             self.uncompressed_data[f"{field_name}"]["field"] = field_sampled
-            self.log.write("info", f"Sampled_field saved in field data_to_compress[\"{field_name}\"][\"field\"]")
+            self.log.write("info", f"Sampled_field saved in field uncompressed_data[\"{field_name}\"][\"field\"]")
 
         else:
             raise ValueError("Invalid method to sample the field")
@@ -128,7 +128,7 @@ class DirectSampler:
         """
 
         self.log.write("info", f"Compressing the data using the lossless compressor: {lossless_compressor}")
-        self.log.write("info", "Compressing data in data_to_compress")
+        self.log.write("info", "Compressing data in uncompressed_data")
         for field in self.uncompressed_data.keys():
             self.log.write("info", f"Compressing data for field [\"{field}\"]:")
             self.compressed_data[field] = {}
@@ -274,9 +274,9 @@ class DirectSampler:
         Decompresses the compressed data in the compressed_data dictionary.
         """
 
-        data_to_compress = {}
+        uncompressed_data = {}
         for field, data_dict in compressed_data.items():
-            data_to_compress[field] = {}
+            uncompressed_data[field] = {}
             for data_key, compressed_bytes in data_dict.items():
 
                 dtype = settings["dtype"]
@@ -308,9 +308,9 @@ class DirectSampler:
                 elif dtype == "double":
                     temp = np.frombuffer(bz2.decompress(compressed_bytes), dtype=np.float64)
 
-                data_to_compress[field][data_key] = temp.reshape(shape)
+                uncompressed_data[field][data_key] = temp.reshape(shape)
 
-        return data_to_compress
+        return uncompressed_data
 
 
 
@@ -341,7 +341,7 @@ class DirectSampler:
 
             # Store the covariances in the data to be compressed:
             self.uncompressed_data[f"{field_name}"]["kw"] = kw
-            self.log.write("info", f"Covariance saved in field data_to_compress[\"{field_name}\"][\"kw\"]")
+            self.log.write("info", f"Covariance saved in field uncompressed_data[\"{field_name}\"][\"kw\"]")
         
         elif method == "svd":
             # In this case, the kw will not be only the diagonal of the stored data but an approximation of the actual covariance
@@ -361,9 +361,9 @@ class DirectSampler:
             self.uncompressed_data[f"{field_name}"]["s"] = s
             self.uncompressed_data[f"{field_name}"]["Vt"] = Vt
 
-            self.log.write("info", f"U saved in field data_to_compress[\"{field_name}\"][\"U\"]")
-            self.log.write("info", f"s saved in field data_to_compress[\"{field_name}\"][\"s\"]")
-            self.log.write("info", f"Vt saved in field data_to_compress[\"{field_name}\"][\"Vt\"]")
+            self.log.write("info", f"U saved in field uncompressed_data[\"{field_name}\"][\"U\"]")
+            self.log.write("info", f"s saved in field uncompressed_data[\"{field_name}\"][\"s\"]")
+            self.log.write("info", f"Vt saved in field uncompressed_data[\"{field_name}\"][\"Vt\"]")
 
         else:
             raise ValueError("Invalid method to estimate the covariance matrix")
@@ -441,7 +441,8 @@ class DirectSampler:
 
                     # Set the variance as zero for the samples that have already been selected
                     I, J, _ = np.ix_(np.arange(y_21_std.shape[0]), np.arange(y_21_std.shape[1]), np.arange(y_21_std.shape[2]))
-                    y_21_std[I, J, ind_train[:,:,:freq+1]] = 0
+                    I2, J2, K2 = np.ix_(avg_idx2.flatten(), elem_idx2.flatten(), np.arange(freq+1))
+                    y_21_std[I, J, ind_train[I2,J2,K2]] = 0
 
                     # Get the index of the sample with the highest standardd deviation
                     imax = np.argmax(y_21_std, axis=2)
