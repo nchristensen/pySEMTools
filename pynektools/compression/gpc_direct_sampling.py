@@ -11,6 +11,7 @@ import sys
 import h5py
 import os
 import torch
+import math
 
 class DirectSampler:
 
@@ -18,7 +19,7 @@ class DirectSampler:
     Class to perform direct sampling on a field in the SEM format
     """
 
-    def __init__(self, comm: MPI.Comm = None, dtype: np.dtype = np.double,  msh: Mesh = None, filename: str = None, max_elements_to_process: int = 256):
+    def __init__(self, comm: MPI.Comm = None, dtype: np.dtype = np.double,  msh: Mesh = None, filename: str = None, max_elements_to_process: int = 256, bckend: str = "numpy"):
         
         self.log = Logger(comm=comm, module_name="DirectSampler")
         
@@ -28,6 +29,20 @@ class DirectSampler:
             self.init_from_file(comm, filename, max_elements_to_process=max_elements_to_process)
         else:
             self.log.write("info", "No mesh provided. Please provide a mesh to initialize the DirectSampler")
+
+        # Init bckend
+        self.bckend = bckend
+        if bckend == "torch": 
+            # Find the device
+            self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+            # Set the device dtype
+            if dtype == np.float32:
+                self.dtype_d = torch.float32
+            elif dtype == np.float64:
+                self.dtype_d = torch.float64
+            # Transfer needed data
+            self.v_d = torch.tensor(self.v, dtype=self.dtype_d, device = self.device, requires_grad=False)
+            self.vinv_d = torch.tensor(self.vinv, dtype=self.dtype_d, device = self.device, requires_grad=False)
 
     def init_from_file(self, comm: MPI.Comm, filename: str, max_elements_to_process: int = 256):
         """
@@ -107,6 +122,10 @@ class DirectSampler:
         
         self.log.write("info", "Sampling the field with options: covariance_method: {covariance_method}, compression_method: {compression_method}")
 
+        # Copy the field into device if needed
+        if self.bckend == "torch":
+            field = torch.tensor(field, dtype=self.dtype_d, device = self.device, requires_grad=False)
+
         self.log.write("info", "Estimating the covariance matrix")
         self._estimate_field_covariance(field=field, field_name=field_name, method=covariance_method, elements_to_average=covariance_elements_to_average, keep_modes=covariance_keep_modes)
 
@@ -115,8 +134,13 @@ class DirectSampler:
                                              "bitrate": bitrate,
                                              "n_samples" : int(self.lx*self.ly*self.lz * bitrate)}
             
-            self.log.write("info", f"Sampling the field using the fixed bitrate method. using settings: {self.settings['compression']}")
-            field_sampled = self._sample_fixed_bitrate(field, field_name, self.settings)
+            if self.bckend == "numpy":
+                self.log.write("info", f"Sampling the field using the fixed bitrate method. using settings: {self.settings['compression']}")
+                field_sampled = self._sample_fixed_bitrate(field, field_name, self.settings)
+            elif self.bckend == "torch":
+                self.log.write("info", f"Sampling the field using the fixed bitrate method. using settings: {self.settings['compression']}")
+                self.log.write("info", f"Using backend: {self.bckend} on device: {self.device}")
+                field_sampled = self._sample_fixed_bitrate_torch(field, field_name, self.settings)
 
             self.uncompressed_data[f"{field_name}"]["field"] = field_sampled
             self.log.write("info", f"Sampled_field saved in field uncompressed_data[\"{field_name}\"][\"field\"]")
@@ -135,7 +159,10 @@ class DirectSampler:
             self.compressed_data[field] = {}
             for data in self.uncompressed_data[field].keys():
                 self.log.write("info", f"Compressing [\"{data}\"] for field [\"{field}\"]")
-                self.compressed_data[field][data] = bz2.compress(self.uncompressed_data[field][data].tobytes())
+                if self.bckend == "numpy":
+                    self.compressed_data[field][data] = bz2.compress(self.uncompressed_data[field][data].tobytes())
+                elif self.bckend == "torch":
+                    self.compressed_data[field][data] = bz2.compress(self.uncompressed_data[field][data].cpu().numpy().tobytes())
 
 
     def write_compressed_samples(self, comm = None,  filename="compressed_samples.h5"):
@@ -343,7 +370,7 @@ class DirectSampler:
             # Store the covariances in the data to be compressed:
             self.uncompressed_data[f"{field_name}"]["kw"] = kw
             self.log.write("info", f"Covariance saved in field uncompressed_data[\"{field_name}\"][\"kw\"]")
-        
+
         elif method == "svd":
             # In this case, the kw will not be only the diagonal of the stored data but an approximation of the actual covariance
             self.kw_diag = True
@@ -468,6 +495,151 @@ class DirectSampler:
                 self.ind_train_sample = ind_train
 
         # Reshape the field back to its original shape
+        return y_truncated.reshape(field.shape)
+
+    def _sample_fixed_bitrate_torch(self, field: torch.Tensor, field_name: str, settings: dict):
+        """
+        """
+        # Set the reshaping parameters
+        averages = settings["covariance"]["averages"]
+        elements_to_average = settings["covariance"]["elements_to_average"]
+        n_samples = settings["compression"]["n_samples"]
+
+        # For KW routines, we first reshape into a five-dimensional tensor.
+        V = self.v_d
+        numfreq = n_samples
+
+        # Reshape the spatial dimensions into column vectors:
+        # New shape: (averages, elements_to_average, spatial_elements, 1)
+        y = field.reshape(averages, elements_to_average, field.shape[1] * field.shape[2] * field.shape[3], 1)
+
+        # Allocate the truncated field with the same type and device as y, filled with -50.
+        y_truncated = torch.ones_like(y) * -50
+
+        # Create an array to hold indices of the sampled elements.
+        ind_train = torch.zeros((averages, elements_to_average, n_samples), dtype=torch.int64, device=y.device)
+
+        # Define index helpers (for the full range, though we will use slicing for subchunks)
+        # (Not used in all places below since slicing simplifies contiguous chunks.)
+        full_avg_idx = torch.arange(averages, device=y.device).view(averages, 1, 1)
+        full_elem_idx = torch.arange(elements_to_average, device=y.device).view(1, elements_to_average, 1)
+
+        # Set up chunking parameters to avoid processing too many elements at once.
+        chunk_size_e = self.max_elements_to_process
+        n_chunks_e = math.ceil(elements_to_average / chunk_size_e)
+        chunk_size_a = self.max_elements_to_process
+        n_chunks_a = math.ceil(averages / chunk_size_a)
+
+        # Loop over chunks along the "averages" dimension.
+        for chunk_id_a in range(n_chunks_a):
+            start_a = chunk_id_a * chunk_size_a
+            end_a = min((chunk_id_a + 1) * chunk_size_a, averages)
+
+            # Loop over chunks along the "elements_to_average" dimension.
+            for chunk_id_e in range(n_chunks_e):
+                start_e = chunk_id_e * chunk_size_e
+                end_e = min((chunk_id_e + 1) * chunk_size_e, elements_to_average)
+
+                # Create chunk-specific index helpers.
+                # avg_idx: shape (chunk_a, 1, 1); elem_idx: shape (1, chunk_e, 1)
+                avg_idx = torch.arange(start_a, end_a, device=y.device).view(-1, 1, 1)
+                elem_idx = torch.arange(start_e, end_e, device=y.device).view(1, -1, 1)
+                # Also define flattened versions for later use.
+                avg_idx2 = avg_idx.reshape(avg_idx.shape[0], 1)  # shape: (chunk_a, 1)
+                elem_idx2 = elem_idx.reshape(1, elem_idx.shape[1])  # shape: (1, chunk_e)
+
+                # Log processing info.
+                last_avg = avg_idx.flatten()[-1].item() + 1
+                last_elem = elem_idx.flatten()[-1].item() + 1
+                self.log.write("info", f"Processing up to {last_avg * last_elem}/{self.nelv} element")
+
+                # Initialize imax (for the indices with maximum standard deviation)
+                imax = torch.zeros((avg_idx.shape[0], elem_idx.shape[1]), dtype=torch.int64, device=y.device)
+
+                # Get the covariance matrix for the current chunk.
+                print("Getting covariance matrix")
+                kw = self._get_covariance_matrix(settings, field_name, avg_idx2, elem_idx2)
+
+                # Loop over frequency/sample iterations.
+                for freq in range(numfreq):
+
+                    print('looping', freq, numfreq)
+                    self.log.write("log", f"Obtaining sample {freq+1}/{numfreq}")
+
+                    # For the current chunk, sort the sampled indices along the frequency axis.
+                    # Using slicing over the contiguous block.
+                    sub_ind_train = ind_train[start_a:end_a, start_e:end_e, :freq+1]
+                    sorted_sub_ind, _ = torch.sort(sub_ind_train, dim=2)
+                    ind_train[start_a:end_a, start_e:end_e, :freq+1] = sorted_sub_ind
+
+                    # Get prediction and standard deviation from your Gaussian process regression.
+                    # (Assumes that the called function accepts torch tensors and chunk indices.)
+                    y_21, y_21_std = self.gaussian_process_regression_torch(
+                        y, V, kw, ind_train,
+                        avg_idx, elem_idx, avg_idx2, elem_idx2,
+                        freq, predict_mean=False, predict_std=True
+                    )
+
+                    # Set the standard deviation to zero at indices that have already been sampled.
+                    # For each (i, j) in the chunk and each k in 0..freq, set:
+                    #    y_21_std[i, j, ind_train[i, j, k]] = 0
+                    sub_y_std = y_21_std  # shape: (chunk_a, chunk_e, some_dim)
+                    for k in range(freq + 1):
+                        # Extract the sample indices for this frequency.
+                        indices = ind_train[start_a:end_a, start_e:end_e, k]  # shape: (chunk_a, chunk_e)
+                        # Create meshgrid for the first two dimensions.
+                        a_idx, e_idx = torch.meshgrid(
+                            torch.arange(end_a - start_a, device=y.device),
+                            torch.arange(end_e - start_e, device=y.device),
+                            indexing='ij'
+                        )
+                        sub_y_std[a_idx, e_idx, indices] = 0
+
+                    # Get the index (along the third dimension) of the maximum standard deviation.
+                    imax = torch.argmax(sub_y_std, dim=2)
+
+                    # For any location where imax == 0, replace it with a random index not already sampled.
+                    if (imax == 0).any():
+                        zero_indices = (imax == 0).nonzero(as_tuple=False)
+                        for idx in zero_indices:
+                            i, j = idx[0].item(), idx[1].item()
+                            # Get already selected indices for this (i,j) in the current chunk.
+                            already_selected = ind_train[start_a:end_a, start_e:end_e, :freq+1][i, j].tolist()
+                            all_indices = set(range(y.shape[2]))
+                            possible_indices = list(all_indices - set(already_selected))
+                            if possible_indices:
+                                imax[i, j] = random.choice(possible_indices)
+
+                    # Save the newly selected indices if more samples are needed.
+                    if freq < numfreq - 1:
+                        ind_train[start_a:end_a, start_e:end_e, freq+1] = imax
+
+                # After finishing frequency iterations for this chunk, assign the final selected samples.
+                # For each frequency k, we extract the corresponding sample from y and place it into y_truncated.
+                # We work on the current chunk only.
+                chunk_a = end_a - start_a
+                chunk_e = end_e - start_e
+                # Obtain sub-tensors for convenience.
+                y_chunk = y[start_a:end_a, start_e:end_e, :, :]         # shape: (chunk_a, chunk_e, spatial_elements, 1)
+                y_trunc_chunk = y_truncated[start_a:end_a, start_e:end_e, :, :]  # same shape
+                # Create meshgrid for the two leading dimensions.
+                a_idx, e_idx = torch.meshgrid(
+                    torch.arange(chunk_a, device=y.device),
+                    torch.arange(chunk_e, device=y.device),
+                    indexing='ij'
+                )
+                for k in range(n_samples):
+                    # For each (i,j) in the chunk, get the index from ind_train and assign that column.
+                    indices = ind_train[start_a:end_a, start_e:end_e, k]  # shape: (chunk_a, chunk_e)
+                    # Use advanced indexing to assign the corresponding values.
+                    y_trunc_chunk[a_idx, e_idx, indices, :] = y_chunk[a_idx, e_idx, indices, :]
+                # Place the updated chunk back into y_truncated.
+                y_truncated[start_a:end_a, start_e:end_e, :, :] = y_trunc_chunk
+
+                # Save the sampled indices in an attribute (if needed elsewhere).
+                self.ind_train_sample = ind_train
+
+        # Reshape the truncated field back to the original shape of "field"
         return y_truncated.reshape(field.shape)
  
     def reconstruct_field(self, field_name: str = None, get_mean: bool = True, get_std: bool = False):
@@ -625,50 +797,98 @@ class DirectSampler:
 
     def _estimate_covariance_average(self, field_hat : np.ndarray, settings: dict):
 
-        # Retrieve the settings
-        averages=settings["averages"]
-        elements_to_average=settings["elements_to_average"]
+        if self.bckend == "numpy":
+            # Retrieve the settings
+            averages=settings["averages"]
+            elements_to_average=settings["elements_to_average"]
 
-        # Create an average of field_hat over the elements
-        temp_field = field_hat.reshape(averages, elements_to_average, field_hat.shape[1], field_hat.shape[2], field_hat.shape[3])
-        field_hat_mean = np.mean(temp_field, axis=1)        
-        
-        ### This block was to average with weights, but the coefficients do not really have that sort of mass matrix.
-        ##temp_mass = self.B.reshape(averages, elements_to_average, self.B.shape[1], self.B.shape[2], self.B.shape[3])
-        #
-        ## Perform a weighted average with the mass matrix
-        ##field_hat_mean = np.sum(temp_field * temp_mass, axis=1) / np.sum(temp_mass, axis=1)
-        ###
+            # Create an average of field_hat over the elements
+            temp_field = field_hat.reshape(averages, elements_to_average, field_hat.shape[1], field_hat.shape[2], field_hat.shape[3])
+            field_hat_mean = np.mean(temp_field, axis=1)        
+            
+            ### This block was to average with weights, but the coefficients do not really have that sort of mass matrix.
+            ##temp_mass = self.B.reshape(averages, elements_to_average, self.B.shape[1], self.B.shape[2], self.B.shape[3])
+            #
+            ## Perform a weighted average with the mass matrix
+            ##field_hat_mean = np.sum(temp_field * temp_mass, axis=1) / np.sum(temp_mass, axis=1)
+            ###
 
-        # This is the way in which I calculate the covariance here and then get the diagonals
-        if self.kw_diag == True:
-            # Get the covariances
-            kw = np.einsum("eik,ekj->eij", field_hat_mean.reshape(averages,-1,1), field_hat_mean.reshape(averages,-1,1).transpose(0,2,1))
+            # This is the way in which I calculate the covariance here and then get the diagonals
+            if self.kw_diag == True:
+                # Get the covariances
+                kw = np.einsum("eik,ekj->eij", field_hat_mean.reshape(averages,-1,1), field_hat_mean.reshape(averages,-1,1).transpose(0,2,1))
 
-            # Extract only the diagonals
-            kw = np.einsum("...ii->...i", kw)
-        else:
-            # But I can leave the calculation of the covariance itself for later and store here the average of field_hat
-            kw = field_hat_mean.reshape(averages,-1,1)
+                # Extract only the diagonals
+                kw = np.einsum("...ii->...i", kw)
+            else:
+                # But I can leave the calculation of the covariance itself for later and store here the average of field_hat
+                kw = field_hat_mean.reshape(averages,-1,1)
 
+        elif self.bckend == "torch":
+            # Retrieve the settings
+            averages=settings["averages"]
+            elements_to_average=settings["elements_to_average"]
+
+            # Create an average of field_hat over the elements
+            temp_field = field_hat.reshape(averages, elements_to_average, field_hat.shape[1], field_hat.shape[2], field_hat.shape[3])
+            field_hat_mean = torch.mean(temp_field, dim=1)        
+
+            ### This block was to average with weights, but the coefficients do not really have that sort of mass matrix.
+            ##temp_mass = self.B.reshape(averages, elements_to_average, self.B.shape[1], self.B.shape[2], self.B.shape[3])
+            #
+            ## Perform a weighted average with the mass matrix
+            ##field_hat_mean = np.sum(temp_field * temp_mass, axis=1) / np.sum(temp_mass, axis=1)
+            ###
+
+            # This is the way in which I calculate the covariance here and then get the diagonals
+            if self.kw_diag == True:
+                # Get the covariances
+                kw = torch.einsum("eik,ekj->eij", field_hat_mean.reshape(averages,-1,1), field_hat_mean.reshape(averages,-1,1).permute(0,2,1))
+
+                # Extract only the diagonals
+                kw = torch.einsum("...ii->...i", kw)
+            else:
+                # But I can leave the calculation of the covariance itself for later and store here the average of field_hat
+                kw = field_hat_mean.reshape(averages,-1,1)
+            
         return kw
     
     def _estimate_covariance_svd(self, field_hat : np.ndarray, settings: dict):
 
-        # Retrieve the settings
-        averages=settings["averages"] # In the case of SVD, this is 1
-        elements_to_average=settings["elements_to_average"] # In the case of SVD, this is the number of elements in the rank.
+        if self.bckend == "numpy":
+            # Retrieve the settings
+            averages=settings["averages"] # In the case of SVD, this is 1
+            elements_to_average=settings["elements_to_average"] # In the case of SVD, this is the number of elements in the rank.
 
-        # Create a sort of snapshot matrix S = (Data in the element, element)
-        S = np.copy(field_hat.reshape( averages * elements_to_average , field_hat.shape[1] * field_hat.shape[2] * field_hat.shape[3]))
+            # Create a sort of snapshot matrix S = (Data in the element, element)
+            S = np.copy(field_hat.reshape( averages * elements_to_average , field_hat.shape[1] * field_hat.shape[2] * field_hat.shape[3]))
 
-        # Perform the SVD # It is likely that this should be done streaming / parallel
-        U, s, Vt = np.linalg.svd(S, full_matrices=False)
+            # Perform the SVD # It is likely that this should be done streaming / parallel
+            U, s, Vt = np.linalg.svd(S, full_matrices=False)
 
-        # Keep only the first keep_modes
-        U = U[:, :settings["keep_modes"]]
-        s = s[:settings["keep_modes"]]
-        Vt = Vt[:settings["keep_modes"], :]
+            # Keep only the first keep_modes
+            U = U[:, :settings["keep_modes"]]
+            s = s[:settings["keep_modes"]]
+            Vt = Vt[:settings["keep_modes"], :]
+
+        elif self.bckend == "torch":
+
+            # Retrieve the settings
+            averages = settings["averages"]  # In the case of SVD, this is 1
+            elements_to_average = settings["elements_to_average"]  # In the case of SVD, this is the number of elements in the rank.
+
+            # Create a snapshot matrix S = (Data in the element, element)
+            S = field_hat.reshape(averages * elements_to_average,
+                                field_hat.shape[1] * field_hat.shape[2] * field_hat.shape[3]).clone()
+
+            # Perform the SVD using torch.linalg.svd (set full_matrices=False to match NumPy's behavior)
+            U, s, Vt = torch.linalg.svd(S, full_matrices=False)
+
+            # Keep only the first keep_modes
+            keep_modes = settings["keep_modes"]
+            U = U[:, :keep_modes]
+            s = s[:keep_modes]
+            Vt = Vt[:keep_modes, :]            
 
         return U, s, Vt
 
@@ -685,12 +905,20 @@ class DirectSampler:
             np.ndarray: Transformed field
         """
 
-        if to == "legendre":
-            return apply_operator(self.vinv, field)
-        elif to == "physical":
-            return apply_operator(self.v, field)
-        else:
-            raise ValueError("Invalid space to transform the field to")
+        if self.bckend == "numpy":
+            if to == "legendre":
+                return apply_operator(self.vinv, field)
+            elif to == "physical":
+                return apply_operator(self.v, field)
+            else:
+                raise ValueError("Invalid space to transform the field to")
+        elif self.bckend == "torch":
+            if to == "legendre":
+                return torch_apply_operator(self.vinv_d, field)
+            elif to == "physical":
+                return torch_apply_operator(self.v_d, field)
+            else:
+                raise ValueError("Invalid space to transform the field to")
 
 
     def obs_sample_fixed_bitrate(self, n_samples: int):
@@ -718,76 +946,146 @@ class DirectSampler:
     def _get_covariance_matrix(self, settings: dict, field_name: str, avg_idx2: np.ndarray, elem_idx2: np.ndarray):
         """
         """
-        averages2 = avg_idx2.shape[0]
-        elements_to_average2 = elem_idx2.shape[1]
-        
-        if settings["covariance"]["method"] == "average":
-            if self.kw_diag == True:        
-                # Retrieve the diagonal of the covariance matrix
-                kw = self.uncompressed_data[f"{field_name}"]["kw"][avg_idx2[:,0]]
-        
-                # Transform it into an actual matrix, not simply a vector
-                # Aditionally, add one axis to make it consistent with the rest of the arrays and enable broadcasting
-                kw_ = np.einsum('...i,ij->...ij', kw, np.eye(kw.shape[-1])).reshape(averages2, 1 ,  kw.shape[-1], kw.shape[-1])
-            else:
-                # Retrieve the averaged hat fields
-                f_hat = self.uncompressed_data[f"{field_name}"]["kw"][avg_idx2[:,0]]
-                # Calculate the covariance matrix with f_hat@f_hat^T
-                kw = np.einsum("eik,ekj->eij", f_hat, f_hat.transpose(0,2,1))
-                # Add an axis to make it consistent with the rest of the arrays and enable broadcasting
-                kw_ = kw.reshape(kw.shape[0], 1, kw.shape[1], kw.shape[2])
+
+        if self.bckend == "numpy":
+
+            averages2 = avg_idx2.shape[0]
+            elements_to_average2 = elem_idx2.shape[1]
             
-            kw = kw_
-        
-        elif settings["covariance"]["method"] == "svd":
-
-            self.log.write("debug", f"Obtaining the covariance matrix for the current chunk")
-
-            # Retrieve the SVD components
-            U = self.uncompressed_data[f"{field_name}"]["U"]
-            s = self.uncompressed_data[f"{field_name}"]["s"]
-            Vt = self.uncompressed_data[f"{field_name}"]["Vt"]
-
-            # Select only the relevant entries of U
-            ## Reshape to allow the indices to be broadcasted
-            averages = settings["covariance"]["averages"]
-            elements_to_average = settings["covariance"]["elements_to_average"]
-            U = U.reshape(averages, elements_to_average, 1, -1) # Here I need to have ALL!
-            ## Select the relevant entries
-            U = U[avg_idx2, elem_idx2, :, :]
-            #Reshape to original shape
-            U = U.reshape(averages2*elements_to_average2, -1) # Here use the size of avrg_index and elem_index instead, since it is reduced.
-
-            # Construct the f_hat
-            f_hat = np.einsum("ik,k,kj->ij", U, s, Vt)
-
-            # This is the way in which I calculate the covariance here and then get the diagonals
-            if self.kw_diag == True:
-                # Get the covariances
-                kw_ = np.einsum("eik,ekj->eij", f_hat.reshape(averages2*elements_to_average2,-1,1), f_hat.reshape(averages2*elements_to_average2,-1,1).transpose(0,2,1))
-                
-                # Extract only the diagonals
-                kw_ = np.einsum("...ii->...i", kw_)
-                
-                # Transform it into an actual matrix, not simply a vector
-                # Aditionally, add one axis to make it consistent with the rest of the arrays and enable broadcasting
-                kw_ = np.copy(np.einsum('...i,ij->...ij', kw_, np.eye(kw_.shape[-1])))            
-
-                #Make the shape consistent
-                kw_ = kw_.reshape(averages2, elements_to_average2 ,  kw_.shape[-1], kw_.shape[-1])
-                
-            else:
-                # Reshape
-                f_hat = f_hat.reshape(averages2*elements_to_average2,-1,1)
-        
-                # Calculate the covariance matrix with f_hat@f_hat^T
-                kw_ = np.einsum("eik,ekj->eij", f_hat, f_hat.transpose(0,2,1))
-        
-                # Add an axis to make it consistent with the rest of the arrays and enable broadcasting
-                kw_ = kw_.reshape(averages2, elements_to_average2, kw_.shape[1], kw_.shape[2])
+            if settings["covariance"]["method"] == "average":
+                if self.kw_diag == True:        
+                    # Retrieve the diagonal of the covariance matrix
+                    kw = self.uncompressed_data[f"{field_name}"]["kw"][avg_idx2[:,0]]
             
-            # Get the covariance matrix for the current chunk
-            kw = np.copy(kw_)
+                    # Transform it into an actual matrix, not simply a vector
+                    # Aditionally, add one axis to make it consistent with the rest of the arrays and enable broadcasting
+                    kw_ = np.einsum('...i,ij->...ij', kw, np.eye(kw.shape[-1])).reshape(averages2, 1 ,  kw.shape[-1], kw.shape[-1])
+                else:
+                    # Retrieve the averaged hat fields
+                    f_hat = self.uncompressed_data[f"{field_name}"]["kw"][avg_idx2[:,0]]
+                    # Calculate the covariance matrix with f_hat@f_hat^T
+                    kw = np.einsum("eik,ekj->eij", f_hat, f_hat.transpose(0,2,1))
+                    # Add an axis to make it consistent with the rest of the arrays and enable broadcasting
+                    kw_ = kw.reshape(kw.shape[0], 1, kw.shape[1], kw.shape[2])
+                
+                kw = kw_
+            
+            elif settings["covariance"]["method"] == "svd":
+
+                self.log.write("debug", f"Obtaining the covariance matrix for the current chunk")
+
+                # Retrieve the SVD components
+                U = self.uncompressed_data[f"{field_name}"]["U"]
+                s = self.uncompressed_data[f"{field_name}"]["s"]
+                Vt = self.uncompressed_data[f"{field_name}"]["Vt"]
+
+                # Select only the relevant entries of U
+                ## Reshape to allow the indices to be broadcasted
+                averages = settings["covariance"]["averages"]
+                elements_to_average = settings["covariance"]["elements_to_average"]
+                U = U.reshape(averages, elements_to_average, 1, -1) # Here I need to have ALL!
+                ## Select the relevant entries
+                U = U[avg_idx2, elem_idx2, :, :]
+                #Reshape to original shape
+                U = U.reshape(averages2*elements_to_average2, -1) # Here use the size of avrg_index and elem_index instead, since it is reduced.
+
+                # Construct the f_hat
+                f_hat = np.einsum("ik,k,kj->ij", U, s, Vt)
+
+                # This is the way in which I calculate the covariance here and then get the diagonals
+                if self.kw_diag == True:
+                    # Get the covariances
+                    kw_ = np.einsum("eik,ekj->eij", f_hat.reshape(averages2*elements_to_average2,-1,1), f_hat.reshape(averages2*elements_to_average2,-1,1).transpose(0,2,1))
+                    
+                    # Extract only the diagonals
+                    kw_ = np.einsum("...ii->...i", kw_)
+                    
+                    # Transform it into an actual matrix, not simply a vector
+                    # Aditionally, add one axis to make it consistent with the rest of the arrays and enable broadcasting
+                    kw_ = np.copy(np.einsum('...i,ij->...ij', kw_, np.eye(kw_.shape[-1])))            
+
+                    #Make the shape consistent
+                    kw_ = kw_.reshape(averages2, elements_to_average2 ,  kw_.shape[-1], kw_.shape[-1])
+                    
+                else:
+                    # Reshape
+                    f_hat = f_hat.reshape(averages2*elements_to_average2,-1,1)
+            
+                    # Calculate the covariance matrix with f_hat@f_hat^T
+                    kw_ = np.einsum("eik,ekj->eij", f_hat, f_hat.transpose(0,2,1))
+            
+                    # Add an axis to make it consistent with the rest of the arrays and enable broadcasting
+                    kw_ = kw_.reshape(averages2, elements_to_average2, kw_.shape[1], kw_.shape[2])
+                
+                # Get the covariance matrix for the current chunk
+                kw = np.copy(kw_)
+
+        
+        elif self.bckend == 'torch':
+
+            averages2 = avg_idx2.shape[0]
+            elements_to_average2 = elem_idx2.shape[1]
+
+            if settings["covariance"]["method"] == "average":
+                print('Getting covariance with average method')
+                if self.kw_diag:
+                    print('The kw is diagonal')
+                    # Retrieve the diagonal of the covariance matrix
+                    kw = self.uncompressed_data[f"{field_name}"]["kw"][avg_idx2[:, 0]]
+                    # Transform it into an actual matrix (not just a vector) and add an extra axis
+                    eye = torch.eye(kw.shape[-1], device=kw.device, dtype=kw.dtype)
+                    kw_ = torch.einsum("...i,ij->...ij", kw, eye).reshape(averages2, 1, kw.shape[-1], kw.shape[-1])
+                else:
+                    # Retrieve the averaged hat fields
+                    f_hat = self.uncompressed_data[f"{field_name}"]["kw"][avg_idx2[:, 0]]
+                    # Calculate the covariance matrix as f_hat @ f_hat^T using einsum
+                    kw = torch.einsum("eik,ekj->eij", f_hat, f_hat.permute(0, 2, 1))
+                    # Add an axis to make it consistent for broadcasting
+                    kw_ = kw.reshape(kw.shape[0], 1, kw.shape[1], kw.shape[2])
+                
+                kw = kw_
+
+            elif settings["covariance"]["method"] == "svd":
+                self.log.write("debug", f"Obtaining the covariance matrix for the current chunk")
+
+                # Retrieve the SVD components
+                U = self.uncompressed_data[f"{field_name}"]["U"]
+                s = self.uncompressed_data[f"{field_name}"]["s"]
+                Vt = self.uncompressed_data[f"{field_name}"]["Vt"]
+
+                # Reshape U to allow broadcasting and select the relevant entries
+                averages = settings["covariance"]["averages"]
+                elements_to_average = settings["covariance"]["elements_to_average"]
+                U = U.reshape(averages, elements_to_average, 1, -1)  # shape: (averages, elements_to_average, 1, -1)
+                U = U[avg_idx2, elem_idx2, :, :]  # shape: (averages2, elements_to_average2, 1, -1)
+                U = U.reshape(averages2 * elements_to_average2, -1)  # shape: (averages2*elements_to_average2, -1)
+
+                # Construct f_hat using einsum. This performs the equivalent of U * diag(s) * Vt.
+                f_hat = torch.einsum("ik,k,kj->ij", U, s, Vt)
+
+                if self.kw_diag:
+                    # Reshape f_hat so that each row becomes a matrix column vector
+                    f_hat_reshaped = f_hat.reshape(averages2 * elements_to_average2, -1, 1)
+                    # Compute the covariance matrices for each entry: f_hat @ f_hat^T
+                    kw_ = torch.einsum("eik,ekj->eij", f_hat_reshaped, f_hat_reshaped.permute(0, 2, 1))
+                    # Extract only the diagonals
+                    kw_diag = torch.einsum("...ii->...i", kw_)
+                    # Convert the diagonal vector into a full matrix by multiplying with an identity matrix
+                    eye = torch.eye(kw_diag.shape[-1], device=kw_diag.device, dtype=kw_diag.dtype)
+                    kw_ = torch.einsum("...i,ij->...ij", kw_diag, eye)
+                    # Reshape so that the result has shape (averages2, elements_to_average2, n, n)
+                    kw_ = kw_.reshape(averages2, elements_to_average2, kw_.shape[-2], kw_.shape[-1])
+                else:
+                    # Reshape f_hat and compute the covariance matrices
+                    f_hat_reshaped = f_hat.reshape(averages2 * elements_to_average2, -1, 1)
+                    kw_ = torch.einsum("eik,ekj->eij", f_hat_reshaped, f_hat_reshaped.permute(0, 2, 1))
+                    # Add an axis for broadcasting and reshape accordingly
+                    kw_ = kw_.reshape(averages2, elements_to_average2, kw_.shape[1], kw_.shape[2])
+                
+                # Ensure a copy is made if needed (torch.clone() is used in place of np.copy)
+                kw = kw_.clone()
+                
+        print('Done with covariance!')
 
         return kw
     
@@ -834,6 +1132,54 @@ class DirectSampler:
             sigma21 = k22 - (k21@np.linalg.inv(k11+eps)@k12)           
             ## Predict the standard deviation of all entires (data set 2) given the known samples (data set 1)
             y_21_std = np.sqrt(np.abs(np.einsum("...ii->...i", sigma21)))
+
+        return y_21, y_21_std
+
+
+    def gaussian_process_regression_torch(self, y: torch.Tensor, V: torch.Tensor, kw: torch.Tensor, 
+                                    ind_train: torch.Tensor, avg_idx: torch.Tensor, elem_idx: torch.Tensor,
+                                    avg_idx2: torch.Tensor, elem_idx2: torch.Tensor, 
+                                    freq: int = None, predict_mean: bool = True, predict_std: bool = True):
+        
+        # Select the correct freq index:
+        if freq is None:
+            freq_idex = slice(None)
+        else:
+            freq_idex = slice(freq + 1)
+
+        # Select the current samples (using advanced indexing)
+        y_11 = y[avg_idx, elem_idx, ind_train[avg_idx2, elem_idx2, freq_idex], :]
+
+        V_11 = V[ind_train[avg_idx2, elem_idx2, freq_idex], :]
+        V_22 = V.reshape(1, 1, V.shape[0], V.shape[1])
+
+        # Get covariance matrices
+        # Covariance of the sampled entries
+        temp = torch.matmul(V_11, kw)  # shape: (averages, elements_to_average, freq+1, n)
+        k11 = torch.matmul(temp, V_11.transpose(-1, -2))  # shape: (averages, elements_to_average, freq+1, freq+1)
+        
+        # Covariance for predictions
+        temp = torch.matmul(V_11, kw)  # shape: (averages, elements_to_average, freq+1, n)
+        k12 = torch.matmul(temp, V_22.transpose(-1, -2))  # shape: (averages, elements_to_average, freq+1, n)
+        k21 = k12.permute(0, 1, 3, 2)  # shape: (averages, elements_to_average, n, freq+1)
+
+        temp = torch.matmul(V_22, kw)  # shape: (averages, elements_to_average, n, n)
+        k22 = torch.matmul(temp, V_22.transpose(-1, -2))  # shape: (averages, elements_to_average, n, n)
+
+        # Create a small epsilon for numerical stability in inversion.
+        eps = 1e-10 * torch.eye(k11.shape[-1], device=k11.device, dtype=k11.dtype).reshape(1, 1, k11.shape[-1], k11.shape[-1])
+
+        y_21 = None
+        if predict_mean:
+            # Predict the mean: y_21 = k21 * inv(k11 + eps) * y_11
+            y_21 = torch.matmul(torch.matmul(k21, torch.linalg.inv(k11 + eps)), y_11)
+
+        y_21_std = None
+        if predict_std:
+            # Predict the covariance of predictions
+            sigma21 = k22 - torch.matmul(torch.matmul(k21, torch.linalg.inv(k11 + eps)), k12)
+            # Extract the diagonal (variance) and compute the standard deviation
+            y_21_std = torch.sqrt(torch.abs(torch.einsum("...ii->...i", sigma21)))
 
         return y_21, y_21_std
 
@@ -964,9 +1310,6 @@ class DirectSampler:
 
         return y_21, y_21_std
 
-
-    
-
 def apply_operator(dr, field):
         """
         Apply a 2D/3D operator to a field
@@ -1010,6 +1353,39 @@ def apply_operator(dr, field):
         transformed_field.shape = field_shape
 
         return transformed_field
+
+def torch_apply_operator(dr, field):
+    """
+    Apply a 2D/3D operator to a field using PyTorch.
+    
+    Parameters:
+      dr (torch.Tensor): The operator tensor with shape (N, N) where N = lz * ly * lx.
+      field (torch.Tensor): The field tensor with shape (nelv, lz, ly, lx).
+    
+    Returns:
+      torch.Tensor: The transformed field with the same shape as the input field.
+    """
+    # Save the original shape: (nelv, lz, ly, lx)
+    original_shape = field.shape
+
+    # Flatten the spatial dimensions: reshape to (nelv, lz*ly*lx, 1)
+    field_flat = field.reshape(original_shape[0], -1, 1)
+
+    # Prepare the operator for broadcasting by reshaping to (1, N, N)
+    dr_reshaped = dr.reshape(1, dr.shape[0], dr.shape[1])
+
+    # Apply the operator using einsum.
+    # The einsum notation "ejk,ekm->ejm" indicates:
+    # - 'e' indexes over the batch (nelv),
+    # - 'j' indexes the output vector dimension,
+    # - 'k' indexes the common dimension,
+    # - 'm' is the singleton dimension.
+    transformed_field = torch.einsum("ejk,ekm->ejm", dr_reshaped, field_flat)
+
+    # Reshape the result back to the original field shape
+    transformed_field = transformed_field.reshape(original_shape)
+    
+    return transformed_field
 
 def get_samples_and_cov(x,y,V,kw,ind_train,ind_notchosen):
 
