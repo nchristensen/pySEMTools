@@ -235,6 +235,7 @@ class DirectSampler:
             mode = "non_parallel"
 
         # Read global settings (from the top-level "settings" group, written by rank 0).
+        global_settings = {}
         if rank == 0:
             global_settings = load_hdf5_settings(f["settings"])
         global_settings = comm.bcast(global_settings, root=0)
@@ -430,7 +431,7 @@ class DirectSampler:
 
                 for freq in range(0,numfreq):
 
-                    self.log.write("info", f"Obtaining sample {freq+1}/{numfreq}")
+                    self.log.write("debug", f"Obtaining sample {freq+1}/{numfreq}")
 
                     # Sort the indices for each average and element
                     ind_train[avg_idx2, elem_idx2, :freq+1] = np.sort(ind_train[avg_idx2, elem_idx2, :freq+1], axis=2)
@@ -738,7 +739,7 @@ class DirectSampler:
         
         elif settings["covariance"]["method"] == "svd":
 
-            self.log.write("info", f"Obtaining the covariance matrix for the current chunk")
+            self.log.write("debug", f"Obtaining the covariance matrix for the current chunk")
 
             # Retrieve the SVD components
             U = self.uncompressed_data[f"{field_name}"]["U"]
