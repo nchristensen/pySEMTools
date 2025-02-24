@@ -812,7 +812,7 @@ class DirectSampler:
         temp = np.matmul(V_11, kw)  # shape: (averages, elements_to_average, freq+1, n)
         k11 = np.matmul(temp, np.swapaxes(V_11, -1, -2))  # results in shape: (averages, elements_to_average, freq+1, freq+1)
         ### Covariance of the predictions
-        temp = np.matmul(V_11, kw)  # shape: (averages, elements_to_average, freq+1, n)
+        #temp = np.matmul(V_11, kw)  # shape: (averages, elements_to_average, freq+1, n)
         k12 = np.matmul(temp, np.swapaxes(V_22, -1, -2))  # if V_22 is shaped appropriately
         k21 = k12.transpose(0, 1, 3, 2)
 
@@ -823,16 +823,20 @@ class DirectSampler:
         ## Create some matrices to stabilize the inversions
         eps = 1e-10*np.eye(k11.shape[-1]).reshape(1,1,k11.shape[-1],k11.shape[-1])
         ## Predict the mean and covariance matrix of all entires (data set 2) given the known samples (data set 1)
-
+        
+        self.log.write("debug", "Calculated covariance")
+        
         y_21 = None
         if predict_mean:
-            y_21= k21@np.linalg.inv(k11+eps)@(y_11)
+            y_21= k21@np.linalg.solve(k11+eps, y_11)
 
         y_21_std = None
         if predict_std:    
-            sigma21 = k22 - (k21@np.linalg.inv(k11+eps)@k12)           
+            sigma21 = k22 - (k21@np.linalg.solve(k11+eps ,k12))           
             ## Predict the standard deviation of all entires (data set 2) given the known samples (data set 1)
             y_21_std = np.sqrt(np.abs(np.einsum("...ii->...i", sigma21)))
+
+        self.log.write("debug", "Inverted")
 
         return y_21, y_21_std
 
