@@ -791,7 +791,7 @@ class DirectSampler:
 
         return kw
     
-    def vanilla_gaussian_process_regression(self, y: np.ndarray, V: np.ndarray, kw: np.ndarray, 
+    def gaussian_process_regression(self, y: np.ndarray, V: np.ndarray, kw: np.ndarray, 
                                     ind_train: np.ndarray, avg_idx: np.ndarray, elem_idx: np.ndarray,
                                     avg_idx2: np.ndarray, elem_idx2: np.ndarray, freq: int = None, predict_mean: bool = True, predict_std: bool = True):
 
@@ -837,7 +837,7 @@ class DirectSampler:
 
         return y_21, y_21_std
 
-    def gaussian_process_regression(self, y: np.ndarray, V: np.ndarray, kw: np.ndarray, 
+    def torch_gaussian_process_regression(self, y: np.ndarray, V: np.ndarray, kw: np.ndarray, 
                                     ind_train: np.ndarray, avg_idx: np.ndarray, elem_idx: np.ndarray,
                                     avg_idx2: np.ndarray, elem_idx2: np.ndarray, freq: int = None, predict_mean: bool = True, predict_std: bool = True,
                                     cholesky = True):
