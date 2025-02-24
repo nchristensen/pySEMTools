@@ -10,6 +10,7 @@ import bz2
 import sys
 import h5py
 import os
+import torch
 
 class DirectSampler:
 
@@ -792,7 +793,8 @@ class DirectSampler:
 
     def gaussian_process_regression(self, y: np.ndarray, V: np.ndarray, kw: np.ndarray, 
                                     ind_train: np.ndarray, avg_idx: np.ndarray, elem_idx: np.ndarray,
-                                    avg_idx2: np.ndarray, elem_idx2: np.ndarray, freq: int = None, predict_mean: bool = True, predict_std: bool = True):
+                                    avg_idx2: np.ndarray, elem_idx2: np.ndarray, freq: int = None, predict_mean: bool = True, predict_std: bool = True,
+                                    cholesky = True):
 
         # select the correct freq index:
         if freq is None:
@@ -806,37 +808,113 @@ class DirectSampler:
         V_11 = V[ind_train[avg_idx2,elem_idx2,freq_idex], :]
         V_22 = V.reshape(1,1,V.shape[0],V.shape[1])
 
-        ## Get covariance matrices
-        ## This approach was faster than using einsum. Potentially due to the size of the matrices
-        ### Covariance of the sampled entries
-        temp = np.matmul(V_11, kw)  # shape: (averages, elements_to_average, freq+1, n)
-        k11 = np.matmul(temp, np.swapaxes(V_11, -1, -2))  # results in shape: (averages, elements_to_average, freq+1, freq+1)
-        ### Covariance of the predictions
-        #temp = np.matmul(V_11, kw)  # shape: (averages, elements_to_average, freq+1, n)
-        k12 = np.matmul(temp, np.swapaxes(V_22, -1, -2))  # if V_22 is shaped appropriately
-        k21 = k12.transpose(0, 1, 3, 2)
+        self.log.tic()
+        if self.kw_diag == True:
+        
+            # Extract the diagonal entries from KW.
+            # This results in an array of shape (averages, elements_to_average, n)
+            kw_diag = np.diagonal(kw, axis1=-2, axis2=-1)
 
-        temp = np.matmul(V_22, kw)  # shape: (averages, elements_to_average, n, n)
-        k22 = np.matmul(temp, np.swapaxes(V_22, -1, -2))  # results in shape: (averages, elements_to_average, n, n)
+            # For V_11, which is assumed to have shape (averages, elements_to_average, freq+1, n),
+            # multiplying by a diagonal matrix on the right is equivalent to element-wise scaling 
+            # of its last axis. We add a new axis so that broadcasting works correctly.
+            temp = V_11 * kw_diag[:, :, None, :]  
+            # Compute k11: (averages, elements_to_average, freq+1, freq+1)
+            k11 = np.matmul(temp, np.swapaxes(V_11, -1, -2))
+
+            # Compute k12 similarly using V_22.
+            k12 = np.matmul(temp, np.swapaxes(V_22, -1, -2))
+            k21 = k12.transpose(0, 1, 3, 2)
+
+            # For V_22, do the same diagonal multiplication.
+            temp2 = V_22 * kw_diag[:, :, None, :]
+            k22 = np.matmul(temp2, np.swapaxes(V_22, -1, -2))
+        
+        else:
+
+            ## Get covariance matrices
+            ## This approach was faster than using einsum. Potentially due to the size of the matrices
+            ### Covariance of the sampled entries
+            temp = np.matmul(V_11, kw)  # shape: (averages, elements_to_average, freq+1, n)
+            k11 = np.matmul(temp, np.swapaxes(V_11, -1, -2))  # results in shape: (averages, elements_to_average, freq+1, freq+1)
+            ### Covariance of the predictions
+            #temp = np.matmul(V_11, kw)  # shape: (averages, elements_to_average, freq+1, n)
+            k12 = np.matmul(temp, np.swapaxes(V_22, -1, -2))  # if V_22 is shaped appropriately
+            k21 = k12.transpose(0, 1, 3, 2)
+
+            temp = np.matmul(V_22, kw)  # shape: (averages, elements_to_average, n, n)
+            k22 = np.matmul(temp, np.swapaxes(V_22, -1, -2))  # results in shape: (averages, elements_to_average, n, n)
 
         # Make predictions to sample
         ## Create some matrices to stabilize the inversions
         eps = 1e-10*np.eye(k11.shape[-1]).reshape(1,1,k11.shape[-1],k11.shape[-1])
         ## Predict the mean and covariance matrix of all entires (data set 2) given the known samples (data set 1)
+
         
         self.log.write("debug", "Calculated covariance")
+        self.log.toc() 
         
-        y_21 = None
-        if predict_mean:
-            y_21= k21@np.linalg.solve(k11+eps, y_11)
+        self.log.tic()
+        if cholesky:
 
-        y_21_std = None
-        if predict_std:    
-            sigma21 = k22 - (k21@np.linalg.solve(k11+eps ,k12))           
-            ## Predict the standard deviation of all entires (data set 2) given the known samples (data set 1)
-            y_21_std = np.sqrt(np.abs(np.einsum("...ii->...i", sigma21)))
+            #k11[np.where(k11 < 0)] = 0
+
+            # Compute the Cholesky factor L such that (k11 + eps) = L L^T.
+            L = np.linalg.cholesky(k11 + eps)  # L shape: (averages, elements_to_average, freq+1, freq+1)
+            self.log.write("debug", "Cholesky factor computed")
+
+            y_21 = None
+            if predict_mean:
+                # Solve (k11 + eps) * sol = y_11 using two triangular solves:
+                # 1. Solve L * z = y_11:
+                z = np.linalg.solve(L, y_11)
+                # 2. Solve L^T * sol = z:
+                sol = np.linalg.solve(np.swapaxes(L, -1, -2), z)
+                # Predictive mean: y_21 = k21 @ sol
+                y_21 = np.matmul(k21, sol)
+
+            y_21_std = None
+            if predict_std:
+                # Instead of computing the full predictive covariance, we only need its diagonal.
+                # Solve for v in (k11 + eps) * v = k12:
+                self.log.write("info", f"solving L v = k12 with shape {L.shape} and {k12.shape}")
+                #v = np.linalg.solve(L, k12)  # v shape: (averages, elements_to_average, freq+1, n)
+                v = batched_triangular_solve(L, k12)  # v shape: (a, b, m, n)
+ 
+                self.log.write("debug", "v obtained")
+                # The term k21*(k11+eps)^{-1}*k12 equals v^T v.
+                # Its diagonal is obtained by summing the squares of v along the training dimension (axis 2).
+                v_sq_sum = np.sum(v**2, axis=2)  # shape: (averages, elements_to_average, n)
+                self.log.write("debug", "v^2 obtained")
+                # Extract the diagonal of k22:
+                batch0, batch1, n_test, _ = k22.shape
+                diag_k22 = np.empty((batch0, batch1, n_test))
+                for i in range(batch0):
+                    for j in range(batch1):
+                        diag_k22[i, j, :] = np.diagonal(k22[i, j, :, :])
+                self.log.write("debug", "diag_k22 obtained")
+                # The predictive variance (diagonal) is: diag(sigma21) = diag(k22) - v_sq_sum.
+                sigma21_diag = diag_k22 - v_sq_sum
+                self.log.write("debug", "sigma21_diag obtained")
+                y_21_std = np.sqrt(np.abs(sigma21_diag))
+                self.log.write("debug", "y_21_std obtained")
+        
+        else:
+
+            y_21 = None
+            if predict_mean:
+                y_21= np.matmul(k21, np.linalg.solve(k11+eps, y_11))
+
+            y_21_std = None
+            if predict_std:    
+                sigma21 = k22 - np.matmul(k21, np.linalg.solve(k11+eps ,k12))
+                self.log.write("debug", "Predicted sigma21")           
+                ## Predict the standard deviation of all entires (data set 2) given the known samples (data set 1)
+                y_21_std = np.sqrt(np.abs(np.einsum("...ii->...i", sigma21)))
+                self.log.write("debug", "Predicted y_21_std")
 
         self.log.write("debug", "Inverted")
+        self.log.toc() 
 
         return y_21, y_21_std
 
@@ -994,3 +1072,20 @@ def load_hdf5_settings(group):
         if isinstance(item, h5py.Group):
             settings[key] = load_hdf5_settings(item)
     return settings
+
+def batched_triangular_solve(L: np.ndarray, B: np.ndarray) -> np.ndarray:
+    """
+    Solve L * X = B for X in a batched fashion.
+    
+    L: numpy array of shape (batch0, batch1, m, m)
+    B: numpy array of shape (batch0, batch1, m, n_rhs)
+    
+    Returns:
+      X: numpy array of shape (batch0, batch1, m, n_rhs)
+    """
+    # Convert to torch tensors (on CPU; you can also specify device='cuda' if available)
+    L_t = torch.from_numpy(L).float()
+    B_t = torch.from_numpy(B).float()
+    # Use torch.linalg.solve which supports batched matrices.
+    X_t = torch.linalg.solve(L_t, B_t)
+    return X_t.cpu().numpy()
