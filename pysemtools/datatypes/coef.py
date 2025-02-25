@@ -2,6 +2,7 @@
 
 from math import pi
 import numpy as np
+import sys
 import importlib
 if importlib.util.find_spec('torch') is not None:
     import torch
@@ -84,14 +85,23 @@ class Coef:
 
         self.bckend = bckend
         if bckend == 'torch':
+
             if sys.modules.get("torch") is None:
                 raise ImportError("torch is not installed. Please install it to use the torch backend.")
             self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+            # Correct dtype if input is torch tensor
+            print(self.dtype )
+            if self.dtype == torch.float64:
+                self.dtype = np.float64
+            elif self.dtype == torch.float32:
+                self.dtype = np.float32
+            # Set the actual torch dtype in another place
             if self.dtype == np.float64:
                 self.dtype_d = torch.float64
             elif self.dtype == np.float32:
                 self.dtype_d = torch.float32
-            
+            print(self.dtype_d)
             if not self.apply_1d_operators:
                 raise ValueError("The torch backend only supports the apply_1d_operators option.")
 
@@ -108,11 +118,12 @@ class Coef:
             self.v = torch.tensor(self.v, dtype=self.dtype_d, device=self.device)
             self.vinv = torch.tensor(self.vinv, dtype=self.dtype_d, device=self.device)
             self.w3 = torch.tensor(self.w3, dtype=self.dtype_d, device=self.device)
-            self.x = torch.tensor(self.x, dtype=self.dtype_d, device=self.device)
-            self.w = torch.tensor(self.w, dtype=self.dtype_d, device=self.device)
+            self.x = torch.tensor(self.x.copy(), dtype=self.dtype_d, device=self.device)
+            self.w = torch.tensor(self.w.copy(), dtype=self.dtype_d, device=self.device)
             self.dr = torch.tensor(self.dr, dtype=self.dtype_d, device=self.device)
             self.ds = torch.tensor(self.ds, dtype=self.dtype_d, device=self.device)
-            self.dt = torch.tensor(self.dt, dtype=self.dtype_d, device=self.device)
+            if msh.gdim > 2:
+                self.dt = torch.tensor(self.dt, dtype=self.dtype_d, device=self.device)
             self.dn = torch.tensor(self.dn, dtype=self.dtype_d, device=self.device)
 
         self.log.write("info", "Calculating the components of the jacobian")
@@ -134,20 +145,36 @@ class Coef:
             self.dzds = self.dudrst(msh.z, direction="s")
             self.dzdt = self.dudrst(msh.z, direction="t")
 
-        self.drdx = np.zeros_like(self.dxdr, dtype=self.dtype)
-        self.drdy = np.zeros_like(self.dxdr, dtype=self.dtype)
-        if msh.gdim > 2:
-            self.drdz = np.zeros_like(self.dxdr, dtype=self.dtype)
+        if self.bckend == 'numpy':
+            self.drdx = np.zeros_like(self.dxdr, dtype=self.dtype)
+            self.drdy = np.zeros_like(self.dxdr, dtype=self.dtype)
+            if msh.gdim > 2:
+                self.drdz = np.zeros_like(self.dxdr, dtype=self.dtype)
 
-        self.dsdx = np.zeros_like(self.dxdr, dtype=self.dtype)
-        self.dsdy = np.zeros_like(self.dxdr, dtype=self.dtype)
-        if msh.gdim > 2:
-            self.dsdz = np.zeros_like(self.dxdr, dtype=self.dtype)
+            self.dsdx = np.zeros_like(self.dxdr, dtype=self.dtype)
+            self.dsdy = np.zeros_like(self.dxdr, dtype=self.dtype)
+            if msh.gdim > 2:
+                self.dsdz = np.zeros_like(self.dxdr, dtype=self.dtype)
 
-        if msh.gdim > 2:
-            self.dtdx = np.zeros_like(self.dxdr, dtype=self.dtype)
-            self.dtdy = np.zeros_like(self.dxdr, dtype=self.dtype)
-            self.dtdz = np.zeros_like(self.dxdr, dtype=self.dtype)
+            if msh.gdim > 2:
+                self.dtdx = np.zeros_like(self.dxdr, dtype=self.dtype)
+                self.dtdy = np.zeros_like(self.dxdr, dtype=self.dtype)
+                self.dtdz = np.zeros_like(self.dxdr, dtype=self.dtype)
+        else:
+            self.drdx = torch.zeros_like(self.dxdr, dtype=self.dtype_d, device=self.device)
+            self.drdy = torch.zeros_like(self.dxdr, dtype=self.dtype_d, device=self.device)
+            if msh.gdim > 2:
+                self.drdz = torch.zeros_like(self.dxdr, dtype=self.dtype_d, device=self.device)
+
+            self.dsdx = torch.zeros_like(self.dxdr, dtype=self.dtype_d, device=self.device)
+            self.dsdy = torch.zeros_like(self.dxdr, dtype=self.dtype_d, device=self.device)
+            if msh.gdim > 2:
+                self.dsdz = torch.zeros_like(self.dxdr, dtype=self.dtype_d, device=self.device)
+
+            if msh.gdim > 2:
+                self.dtdx = torch.zeros_like(self.dxdr, dtype=self.dtype_d, device=self.device)
+                self.dtdy = torch.zeros_like(self.dxdr, dtype=self.dtype_d, device=self.device)
+                self.dtdz = torch.zeros_like(self.dxdr, dtype=self.dtype_d, device=self.device)
 
         # Find the jacobian determinant, its inverse inverse and mass matrix (3D)
         # jac maps domain from xyz to rst -> dxyz =  jac * drst during integration
@@ -172,6 +199,10 @@ class Coef:
         # Where we calculate the jacobian determinant
         # and then multiply with weights
         if msh.gdim > 2 and get_area:
+
+            if self.bckend == 'torch':
+                raise ValueError("The torch backend does not support area calculation yet.")
+            
             self.log.write("info", "Calculating area weights and normal vectors")
 
             self.area = np.zeros((msh.nelv, 6, msh.ly, msh.lx), dtype=self.dtype)
@@ -655,7 +686,10 @@ class Coef:
         lx = field.shape[3]  # This is not a mistake. This is how the data is read
         ly = field.shape[2]
         lz = field.shape[1]
-        dudxyz = np.zeros_like(field, dtype=field.dtype)
+        if self.bckend == 'numpy':
+            dudxyz = np.zeros_like(field, dtype=field.dtype)
+        elif self.bckend == 'torch':
+            dudxyz = torch.zeros_like(field, dtype=field.dtype, device=self.device)
 
         dfdr = self.dudrst(field, direction="r")
         dfds = self.dudrst(field, direction="s")
