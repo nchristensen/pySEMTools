@@ -881,7 +881,7 @@ class DirectSampler:
             y_reconstructed[mask] = sampled_field[mask]
         if get_std:
             y_reconstructed_std = y_reconstructed_std.reshape(sampled_field.shape)
-            y_reconstructed_std[mask] = 0
+            #y_reconstructed_std[mask] = 0
 
         return y_reconstructed, y_reconstructed_std
  
@@ -1333,7 +1333,7 @@ class DirectSampler:
             k22 = torch.matmul(temp, V_22.transpose(-1, -2))  # shape: (averages, elements_to_average, n, n)
 
         # Create a small epsilon for numerical stability in inversion.
-        eps = 1e-10 * torch.eye(k11.shape[-1], device=k11.device, dtype=k11.dtype).reshape(1, 1, k11.shape[-1], k11.shape[-1])
+        eps = 1e-7 * torch.eye(k11.shape[-1], device=k11.device, dtype=k11.dtype).reshape(1, 1, k11.shape[-1], k11.shape[-1])
 
         if method == 'naive':
             y_21 = None
