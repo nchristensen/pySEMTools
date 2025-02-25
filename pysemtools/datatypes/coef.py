@@ -63,7 +63,7 @@ class Coef:
     --------
     Assuming you have a mesh object and MPI communicator object, you can initialize the Coef object as follows:
 
-    >>> from pynektools import Coef
+    >>> from pysemtools import Coef
     >>> coef = Coef(msh, comm)
     """
 

@@ -11,18 +11,18 @@ os.environ["PYNEKTOOLS_DEBUG"] = 'true'
 comm = MPI.COMM_WORLD
 
 # Data types
-from pynektools.datatypes.msh import Mesh
-from pynektools.datatypes.coef import Coef
-from pynektools.datatypes.field import Field, FieldRegistry
+from pysemtools.datatypes.msh import Mesh
+from pysemtools.datatypes.coef import Coef
+from pysemtools.datatypes.field import Field, FieldRegistry
 
 # Readers
-from pynektools.io.ppymech.neksuite import preadnek, pynekread
+from pysemtools.io.ppymech.neksuite import preadnek, pynekread
 
 # Writers
-from pynektools.io.ppymech.neksuite import pwritenek, pynekwrite
+from pysemtools.io.ppymech.neksuite import pwritenek, pynekwrite
 
 # Sampler
-from pynektools.compression.gpc_direct_sampling import DirectSampler
+from pysemtools.compression.gpc_direct_sampling import DirectSampler
 
 def main():
 
