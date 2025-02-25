@@ -400,7 +400,9 @@ class DirectSampler:
     def _sample_fixed_bitrate(self, field: np.ndarray, field_name: str, settings: dict, max_samples_per_it : int = 1):
         """
         """
-        
+        if max_samples_per_it != 1:
+            self.log.write("warning", "The max_samples_per_it parameter is not supported for the numpy backend. It will be ignored (Set to 1)")
+
         # Set the reshaping parameters
         averages = settings["covariance"]["averages"]
         elements_to_average = settings["covariance"]["elements_to_average"]
@@ -568,17 +570,16 @@ class DirectSampler:
                 # Loop over frequency/sample iterations.
                 freq = 0  # Tracks total number of samples collected so far
                 iteration = 1  # Tracks the number of iterations performed
+                self.log.write("debug", f"Sample 1 is index 0")
                 while freq < numfreq - 1:
 
-                    print('looping', freq, numfreq)
-                    self.log.write("log", f"Obtaining sample {freq+1}/{numfreq}")
+                    self.log.write("debug", f"Obtaining sample {freq+1+1}/{numfreq}")
 
                     # For the current chunk, sort the sampled indices along the frequency axis.
                     # Using slicing over the contiguous block.
                     sub_ind_train = ind_train[start_a:end_a, start_e:end_e, :freq+1]
                     sorted_sub_ind, _ = torch.sort(sub_ind_train, dim=2)
                     ind_train[start_a:end_a, start_e:end_e, :freq+1] = sorted_sub_ind
-                    print("ind at begining", ind_train[start_a, start_e,:freq+1])
 
                     # Get prediction and standard deviation from your Gaussian process regression.
                     # (Assumes that the called function accepts torch tensors and chunk indices.)
@@ -605,7 +606,6 @@ class DirectSampler:
                     
                     # Determine how many new samples to select this iteration
                     num_samples_this_it = 1 if iteration < lx else min(max_samples_per_it, (numfreq-1) - freq)
-                    print(num_samples_this_it)
 
 
                     # Change the strategy depending on the number of samples to be selected.
@@ -654,12 +654,7 @@ class DirectSampler:
                                 selected_indices[i, j, :num_samples_this_it] = torch.tensor(valid_indices, device=y.device, dtype=torch.long)
 
                         # Store the newly selected indices in `ind_train`
-                        print("choosing now")
-                        print("selected_indices", selected_indices[0,0])
                         ind_train[start_a:end_a, start_e:end_e, (freq+1):(freq+num_samples_this_it)+1] = selected_indices
-                        print("indtrain", ind_train[start_a,start_e])
-                        print("indtrain_shape", ind_train[start_a,start_e].shape)
-
 
                     # Update counters
                     freq += num_samples_this_it
@@ -1078,9 +1073,7 @@ class DirectSampler:
             elements_to_average2 = elem_idx2.shape[1]
 
             if settings["covariance"]["method"] == "average":
-                print('Getting covariance with average method')
                 if self.kw_diag:
-                    print('The kw is diagonal')
                     # Retrieve the diagonal of the covariance matrix
                     kw = self.uncompressed_data[f"{field_name}"]["kw"][avg_idx2[:, 0]]
                     # Transform it into an actual matrix (not just a vector) and add an extra axis
@@ -1135,8 +1128,6 @@ class DirectSampler:
                 
                 # Ensure a copy is made if needed (torch.clone() is used in place of np.copy)
                 kw = kw_.clone()
-                
-        print('Done with covariance!')
 
         return kw
     
