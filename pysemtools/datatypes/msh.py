@@ -229,6 +229,12 @@ class Mesh:
             self.offset_el, self.offset_el + self.nelv, dtype=np.int64
         )
 
+        # If the bckend attribute does not exist, inform that it is set to numpy
+        if not hasattr(self, 'bckend'):
+            self.log.write('warning',"Backend not set. Setting to numpy.")
+            self.log.write('warning',"The object was likely initialized from data or coordinates.")
+            self.bckend = 'numpy'
+
         if self.bckend == 'torch':
             # Find the device
             self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")

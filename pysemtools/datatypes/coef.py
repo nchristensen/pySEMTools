@@ -91,7 +91,6 @@ class Coef:
             self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
             # Correct dtype if input is torch tensor
-            print(self.dtype )
             if self.dtype == torch.float64:
                 self.dtype = np.float64
             elif self.dtype == torch.float32:
@@ -101,7 +100,6 @@ class Coef:
                 self.dtype_d = torch.float64
             elif self.dtype == np.float32:
                 self.dtype_d = torch.float32
-            print(self.dtype_d)
             if not self.apply_1d_operators:
                 raise ValueError("The torch backend only supports the apply_1d_operators option.")
 
@@ -201,7 +199,7 @@ class Coef:
         if msh.gdim > 2 and get_area:
 
             if self.bckend == 'torch':
-                raise ValueError("The torch backend does not support area calculation yet.")
+                raise ValueError("The torch backend does not support facet area calculation yet.")
             
             self.log.write("info", "Calculating area weights and normal vectors")
 
