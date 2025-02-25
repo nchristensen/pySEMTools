@@ -768,7 +768,10 @@ class Coef:
         """
 
         sendbuf = np.ones((1), dtype)
-        sendbuf[0] = np.sum(a)
+        if self.bckend == 'numpy':
+            sendbuf[0] = np.sum(a)
+        elif self.bckend == 'torch':
+            sendbuf[0] = torch.sum(a).cpu().numpy()
         recvbuf = np.zeros((1), dtype)
         comm.Allreduce(sendbuf, recvbuf)
 
