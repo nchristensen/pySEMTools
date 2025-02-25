@@ -648,7 +648,7 @@ class Coef:
         field : ndarray
             Field to average over shared points.
         msh : Mesh
-            Pynektools Mesh object.
+            pySEMTools Mesh object.
 
         Returns
         -------
