@@ -1,5 +1,6 @@
 """ Module that contains the class and methods to perform direct sampling on a field """
 
+import random
 from mpi4py import MPI
 from ..monitoring.logger import Logger
 from ..datatypes.msh import Mesh
@@ -118,7 +119,7 @@ class DirectSampler:
         self.compressed_data = {}
     
     def sample_field(self, field: np.ndarray = None, field_name: str = "field", covariance_method: str = "average", covariance_elements_to_average: int = 1, covariance_keep_modes: int=1,
-                    compression_method: str = "fixed_bitrate", bitrate: float = 1/2):
+                    compression_method: str = "fixed_bitrate", bitrate: float = 1/2, max_samples_per_it: int = 1):
         
         self.log.write("info", "Sampling the field with options: covariance_method: {covariance_method}, compression_method: {compression_method}")
 
@@ -136,11 +137,11 @@ class DirectSampler:
             
             if self.bckend == "numpy":
                 self.log.write("info", f"Sampling the field using the fixed bitrate method. using settings: {self.settings['compression']}")
-                field_sampled = self._sample_fixed_bitrate(field, field_name, self.settings)
+                field_sampled = self._sample_fixed_bitrate(field, field_name, self.settings, max_samples_per_it)
             elif self.bckend == "torch":
                 self.log.write("info", f"Sampling the field using the fixed bitrate method. using settings: {self.settings['compression']}")
                 self.log.write("info", f"Using backend: {self.bckend} on device: {self.device}")
-                field_sampled = self._sample_fixed_bitrate_torch(field, field_name, self.settings)
+                field_sampled = self._sample_fixed_bitrate_torch(field, field_name, self.settings, max_samples_per_it)
 
             self.uncompressed_data[f"{field_name}"]["field"] = field_sampled
             self.log.write("info", f"Sampled_field saved in field uncompressed_data[\"{field_name}\"][\"field\"]")
@@ -396,7 +397,7 @@ class DirectSampler:
         else:
             raise ValueError("Invalid method to estimate the covariance matrix")
     
-    def _sample_fixed_bitrate(self, field: np.ndarray, field_name: str, settings: dict):
+    def _sample_fixed_bitrate(self, field: np.ndarray, field_name: str, settings: dict, max_samples_per_it : int = 1):
         """
         """
         
@@ -497,13 +498,16 @@ class DirectSampler:
         # Reshape the field back to its original shape
         return y_truncated.reshape(field.shape)
 
-    def _sample_fixed_bitrate_torch(self, field: torch.Tensor, field_name: str, settings: dict):
+    def _sample_fixed_bitrate_torch(self, field: torch.Tensor, field_name: str, settings: dict, max_samples_per_it: int = 1):
         """
         """
         # Set the reshaping parameters
         averages = settings["covariance"]["averages"]
         elements_to_average = settings["covariance"]["elements_to_average"]
         n_samples = settings["compression"]["n_samples"]
+
+        # Set the number of samples to be taken individually before grouping them
+        lx = self.lx
 
         # For KW routines, we first reshape into a five-dimensional tensor.
         V = self.v_d
@@ -561,7 +565,10 @@ class DirectSampler:
                 kw = self._get_covariance_matrix(settings, field_name, avg_idx2, elem_idx2)
 
                 # Loop over frequency/sample iterations.
-                for freq in range(numfreq):
+                # Loop over frequency/sample iterations.
+                freq = 0  # Tracks total number of samples collected so far
+                iteration = 1  # Tracks the number of iterations performed
+                while freq < numfreq - 1:
 
                     print('looping', freq, numfreq)
                     self.log.write("log", f"Obtaining sample {freq+1}/{numfreq}")
@@ -571,6 +578,7 @@ class DirectSampler:
                     sub_ind_train = ind_train[start_a:end_a, start_e:end_e, :freq+1]
                     sorted_sub_ind, _ = torch.sort(sub_ind_train, dim=2)
                     ind_train[start_a:end_a, start_e:end_e, :freq+1] = sorted_sub_ind
+                    print("ind at begining", ind_train[start_a, start_e,:freq+1])
 
                     # Get prediction and standard deviation from your Gaussian process regression.
                     # (Assumes that the called function accepts torch tensors and chunk indices.)
@@ -594,25 +602,68 @@ class DirectSampler:
                             indexing='ij'
                         )
                         sub_y_std[a_idx, e_idx, indices] = 0
+                    
+                    # Determine how many new samples to select this iteration
+                    num_samples_this_it = 1 if iteration < lx else min(max_samples_per_it, (numfreq-1) - freq)
+                    print(num_samples_this_it)
 
-                    # Get the index (along the third dimension) of the maximum standard deviation.
-                    imax = torch.argmax(sub_y_std, dim=2)
 
-                    # For any location where imax == 0, replace it with a random index not already sampled.
-                    if (imax == 0).any():
-                        zero_indices = (imax == 0).nonzero(as_tuple=False)
-                        for idx in zero_indices:
-                            i, j = idx[0].item(), idx[1].item()
-                            # Get already selected indices for this (i,j) in the current chunk.
-                            already_selected = ind_train[start_a:end_a, start_e:end_e, :freq+1][i, j].tolist()
-                            all_indices = set(range(y.shape[2]))
-                            possible_indices = list(all_indices - set(already_selected))
-                            if possible_indices:
-                                imax[i, j] = random.choice(possible_indices)
+                    # Change the strategy depending on the number of samples to be selected.
+                    # This one is always off, kept here for debugging in the close future
+                    if max_samples_per_it == 0:
+                        
+                        # Get the index (along the third dimension) of the maximum standard deviation.
+                        imax = torch.argmax(sub_y_std, dim=2)
 
-                    # Save the newly selected indices if more samples are needed.
-                    if freq < numfreq - 1:
+                        # For any location where imax == 0, replace it with a random index not already sampled.
+                        if (imax == 0).any():
+                            zero_indices = (imax == 0).nonzero(as_tuple=False)
+                            for idx in zero_indices:
+                                i, j = idx[0].item(), idx[1].item()
+                                # Get already selected indices for this (i,j) in the current chunk.
+                                already_selected = ind_train[start_a:end_a, start_e:end_e, :freq+1][i, j].tolist()
+                                all_indices = set(range(y.shape[2]))
+                                possible_indices = list(all_indices - set(already_selected))
+                                if possible_indices:
+                                    imax[i, j] = random.choice(possible_indices)
+
+                        # Save the newly selected indices if more samples are needed.
                         ind_train[start_a:end_a, start_e:end_e, freq+1] = imax
+                    
+                    else:
+
+                        # Get indices of the `num_samples_this_it` largest standard deviations.
+                        sorted_indices = torch.argsort(sub_y_std, dim=2, descending=True)  # Sort along last dim
+                        selected_indices = sorted_indices[:, :, :num_samples_this_it]  # Select top `num_samples_this_it`
+
+                        # Ensure that we don't pick already selected indices.
+                        for i in range(selected_indices.shape[0]):  # Iterate over batch (chunk_a)
+                            for j in range(selected_indices.shape[1]):  # Iterate over batch (chunk_e)
+                                already_selected = set(ind_train[i, j, :freq+1].tolist())  # Convert to set for fast lookup
+                                sorted_list = sorted_indices[i, j]  # Torch tensor of sorted indices
+
+                                # Keep only valid indices (not in already_selected)
+                                valid_indices = []
+                                for idx in sorted_list:
+                                    if idx.item() not in already_selected:  # Check if it's already selected
+                                        valid_indices.append(idx)
+                                        if len(valid_indices) == num_samples_this_it:
+                                            break  # Stop once we have enough indices
+
+                                # Convert valid_indices back to a tensor and store it
+                                selected_indices[i, j, :num_samples_this_it] = torch.tensor(valid_indices, device=y.device, dtype=torch.long)
+
+                        # Store the newly selected indices in `ind_train`
+                        print("choosing now")
+                        print("selected_indices", selected_indices[0,0])
+                        ind_train[start_a:end_a, start_e:end_e, (freq+1):(freq+num_samples_this_it)+1] = selected_indices
+                        print("indtrain", ind_train[start_a,start_e])
+                        print("indtrain_shape", ind_train[start_a,start_e].shape)
+
+
+                    # Update counters
+                    freq += num_samples_this_it
+                    iteration += 1
 
                 # After finishing frequency iterations for this chunk, assign the final selected samples.
                 # For each frequency k, we extract the corresponding sample from y and place it into y_truncated.
