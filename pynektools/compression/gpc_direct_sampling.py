@@ -45,6 +45,12 @@ class DirectSampler:
             self.v_d = torch.tensor(self.v, dtype=self.dtype_d, device = self.device, requires_grad=False)
             self.vinv_d = torch.tensor(self.vinv, dtype=self.dtype_d, device = self.device, requires_grad=False)
 
+            # If the data was initialized from file, put it in a torch tensor
+            if hasattr(self, "uncompressed_data"):
+                for field in self.uncompressed_data.keys():
+                    for data in self.uncompressed_data[field].keys():
+                        self.uncompressed_data[field][data] = torch.tensor(self.uncompressed_data[field][data], dtype=self.dtype_d, device = self.device, requires_grad=False)
+
     def init_from_file(self, comm: MPI.Comm, filename: str, max_elements_to_process: int = 256):
         """
         """
@@ -687,8 +693,14 @@ class DirectSampler:
 
         # Reshape the truncated field back to the original shape of "field"
         return y_truncated.reshape(field.shape)
- 
+
     def reconstruct_field(self, field_name: str = None, get_mean: bool = True, get_std: bool = False):
+            if self.bckend == "numpy":
+                return self.reconstruct_field_numpy(field_name, get_mean, get_std)
+            elif self.bckend == "torch":
+                return self.reconstruct_field_torch(field_name, get_mean, get_std)
+
+    def reconstruct_field_numpy(self, field_name: str = None, get_mean: bool = True, get_std: bool = False):
         """
         """
 
@@ -779,6 +791,98 @@ class DirectSampler:
             y_reconstructed_std = y_reconstructed_std.reshape(sampled_field.shape)
 
         # Reshape the field back to its original shape
+        return y_reconstructed, y_reconstructed_std
+
+    def reconstruct_field_torch(self, field_name: str = None, get_mean: bool = True, get_std: bool = False):
+        """
+        Reconstructs the field using Gaussian Process Regression in PyTorch.
+        """
+
+        # Retrieve the sampled field
+        sampled_field = self.uncompressed_data[field_name]["field"]
+        settings = self.settings
+
+        # Set the reshaping parameters
+        averages = settings["covariance"]["averages"]
+        elements_to_average = settings["covariance"]["elements_to_average"]
+
+        # Retrieve the number of samples
+        n_samples = settings["compression"]["n_samples"]
+
+        # Move data to the same device as sampled_field
+        device = sampled_field.device
+
+        # Reshape the fields into the KW-supported shapes
+        y = sampled_field.reshape(averages, elements_to_average, -1, 1)  # Shape: (averages, elements_to_average, all_dim, 1)
+        V = self.v_d
+        numfreq = n_samples
+
+        # Allocate storage for reconstructed fields
+        y_reconstructed = None
+        y_reconstructed_std = None
+        if get_mean:
+            y_reconstructed = torch.full_like(y, -50, device=device)
+        if get_std:
+            y_reconstructed_std = torch.full_like(y, -50, device=device)
+
+        # Create an array that contains the indices of the sampled elements
+        ind_train = torch.zeros((averages, elements_to_average, n_samples), dtype=torch.long, device=device)
+
+        # Populate ind_train using PyTorch indexing
+        for e in range(averages):
+            for i in range(elements_to_average):
+                temp = torch.where(y[e, i] != -50)
+                ind_train[e, i, :temp[0].numel()] = temp[0]
+
+        ind_train, _ = torch.sort(ind_train, dim=2)  # Ensure indices are sorted
+        self.ind_train_rct = ind_train
+
+        # Set up indexing tensors for selections
+        chunk_size_e = self.max_elements_to_process
+        n_chunks_e = int(torch.ceil(torch.tensor(elements_to_average / chunk_size_e)).item())
+        chunk_size_a = self.max_elements_to_process
+        n_chunks_a = int(torch.ceil(torch.tensor(averages / chunk_size_a)).item())
+
+        for chunk_id_a in range(n_chunks_a):
+            start_a = chunk_id_a * chunk_size_a
+            end_a = min((chunk_id_a + 1) * chunk_size_a, averages)
+
+            for chunk_id_e in range(n_chunks_e):
+                start_e = chunk_id_e * chunk_size_e
+                end_e = min((chunk_id_e + 1) * chunk_size_e, elements_to_average)
+
+                avg_idx = torch.arange(start_a, end_a, device=device).view(-1, 1, 1)  # Shape: (chunk_a, 1, 1)
+                elem_idx = torch.arange(start_e, end_e, device=device).view(1, -1, 1)  # Shape: (1, chunk_e, 1)
+
+                self.log.write("info", f"Processing up to {(avg_idx.flatten()[-1] + 1) * (elem_idx.flatten()[-1] + 1)}/{self.nelv} elements")
+
+                avg_idx2 = avg_idx.view(avg_idx.shape[0], 1)  # Shape: (chunk_a, 1)
+                elem_idx2 = elem_idx.view(1, elem_idx.shape[1])  # Shape: (1, chunk_e)
+
+                # Get covariance matrix using the PyTorch version
+                kw = self._get_covariance_matrix(settings, field_name, avg_idx2, elem_idx2)
+
+                # Get the prediction and the standard deviation
+                y_21, y_21_std = self.gaussian_process_regression_torch(
+                    y, V, kw, ind_train, avg_idx, elem_idx, avg_idx2, elem_idx2,
+                    predict_mean=get_mean, predict_std=get_std
+                )
+
+                # Store reconstructed values
+                if get_mean:
+                    y_reconstructed[avg_idx2, elem_idx2] = y_21
+                if get_std:
+                    y_reconstructed_std[avg_idx2, elem_idx2] = y_21_std.view(*y_21_std.shape[:3], 1)
+
+        # Final reshaping back to original shape
+        mask = sampled_field != -50
+        if get_mean:
+            y_reconstructed = y_reconstructed.reshape(sampled_field.shape)
+            y_reconstructed[mask] = sampled_field[mask]
+        if get_std:
+            y_reconstructed_std = y_reconstructed_std.reshape(sampled_field.shape)
+            y_reconstructed_std[mask] = 0
+
         return y_reconstructed, y_reconstructed_std
  
  
