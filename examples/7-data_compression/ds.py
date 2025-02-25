@@ -5,7 +5,7 @@ import numpy as np
 import cProfile
 
 import os
-os.environ["PYNEKTOOLS_DEBUG"] = 'true'
+os.environ["PYSEMTOOLS_DEBUG"] = 'true'
 
 # Get mpi info
 comm = MPI.COMM_WORLD
