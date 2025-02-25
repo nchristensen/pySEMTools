@@ -1139,7 +1139,8 @@ class DirectSampler:
     def gaussian_process_regression_torch(self, y: torch.Tensor, V: torch.Tensor, kw: torch.Tensor, 
                                     ind_train: torch.Tensor, avg_idx: torch.Tensor, elem_idx: torch.Tensor,
                                     avg_idx2: torch.Tensor, elem_idx2: torch.Tensor, 
-                                    freq: int = None, predict_mean: bool = True, predict_std: bool = True):
+                                    freq: int = None, predict_mean: bool = True, predict_std: bool = True,
+                                    method = 'lu'):
         
         # Select the correct freq index:
         if freq is None:
@@ -1154,32 +1155,126 @@ class DirectSampler:
         V_22 = V.reshape(1, 1, V.shape[0], V.shape[1])
 
         # Get covariance matrices
-        # Covariance of the sampled entries
-        temp = torch.matmul(V_11, kw)  # shape: (averages, elements_to_average, freq+1, n)
-        k11 = torch.matmul(temp, V_11.transpose(-1, -2))  # shape: (averages, elements_to_average, freq+1, freq+1)
-        
-        # Covariance for predictions
-        temp = torch.matmul(V_11, kw)  # shape: (averages, elements_to_average, freq+1, n)
-        k12 = torch.matmul(temp, V_22.transpose(-1, -2))  # shape: (averages, elements_to_average, freq+1, n)
-        k21 = k12.permute(0, 1, 3, 2)  # shape: (averages, elements_to_average, n, freq+1)
+        if self.kw_diag:
+            # Extract the diagonal elements of kw (shape: (b1, b2, n))
+            kw_diag = torch.diagonal(kw, dim1=-2, dim2=-1)  # Only the diagonal elements
 
-        temp = torch.matmul(V_22, kw)  # shape: (averages, elements_to_average, n, n)
-        k22 = torch.matmul(temp, V_22.transpose(-1, -2))  # shape: (averages, elements_to_average, n, n)
+            # Compute covariance matrices efficiently
+            # Covariance of the sampled entries
+            temp = V_11 * kw_diag.unsqueeze(-2)  # Broadcasting (shape: (b1, b2, freq+1, n))
+            k11 = torch.matmul(temp, V_11.transpose(-1, -2))  # Shape: (b1, b2, freq+1, freq+1)
+
+            # Covariance for predictions
+            k12 = torch.matmul(temp, V_22.transpose(-1, -2))  # Shape: (b1, b2, freq+1, n)
+            k21 = k12.transpose(-2, -1)  # Shape: (b1, b2, n, freq+1)
+
+            # Covariance of the real data
+            temp = V_22 * kw_diag.unsqueeze(-2)  # Broadcasting (shape: (b1, b2, n, n))
+            k22 = torch.matmul(temp, V_22.transpose(-1, -2))  # Shape: (b1, b2, n, n)
+
+        else:
+
+            # Covariance of the sampled entries
+            temp = torch.matmul(V_11, kw)  # shape: (averages, elements_to_average, freq+1, n)
+            k11 = torch.matmul(temp, V_11.transpose(-1, -2))  # shape: (averages, elements_to_average, freq+1, freq+1)
+            
+            # Covariance for predictions 
+            k12 = torch.matmul(temp, V_22.transpose(-1, -2))  # shape: (averages, elements_to_average, freq+1, n)
+            k21 = k12.permute(0, 1, 3, 2)  # shape: (averages, elements_to_average, n, freq+1)
+
+            # Covariance of the real data
+            temp = torch.matmul(V_22, kw)  # shape: (averages, elements_to_average, n, n)
+            k22 = torch.matmul(temp, V_22.transpose(-1, -2))  # shape: (averages, elements_to_average, n, n)
 
         # Create a small epsilon for numerical stability in inversion.
         eps = 1e-10 * torch.eye(k11.shape[-1], device=k11.device, dtype=k11.dtype).reshape(1, 1, k11.shape[-1], k11.shape[-1])
 
-        y_21 = None
-        if predict_mean:
-            # Predict the mean: y_21 = k21 * inv(k11 + eps) * y_11
-            y_21 = torch.matmul(torch.matmul(k21, torch.linalg.inv(k11 + eps)), y_11)
+        if method == 'naive':
+            y_21 = None
+            if predict_mean:
+                # Predict the mean: y_21 = k21 * inv(k11 + eps) * y_11
+                y_21 = torch.matmul(k21, torch.linalg.solve(k11 + eps, y_11))
 
-        y_21_std = None
-        if predict_std:
-            # Predict the covariance of predictions
-            sigma21 = k22 - torch.matmul(torch.matmul(k21, torch.linalg.inv(k11 + eps)), k12)
-            # Extract the diagonal (variance) and compute the standard deviation
-            y_21_std = torch.sqrt(torch.abs(torch.einsum("...ii->...i", sigma21)))
+            y_21_std = None
+            if predict_std:
+                # Predict the covariance of predictions
+                sigma21 = k22 - torch.matmul(k21, torch.linalg.solve(k11 + eps, k12))
+                # Extract the diagonal (variance) and compute the standard deviation
+                y_21_std = torch.sqrt(torch.abs(torch.einsum("...ii->...i", sigma21)))
+        
+        elif method == 'cholesky':
+            # Compute Cholesky factorization
+            L = torch.linalg.cholesky(k11 + eps)  # L (lower triangular) such that k11 + eps = LL^T
+            y_21 = None
+            if predict_mean:
+                
+                # Solve L * u = y_11 (forward substitution)
+                u = torch.linalg.solve_triangular(L, y_11, upper=False)
+
+                # Solve L^T * x = u (backward substitution)
+                x = torch.linalg.solve_triangular(L.transpose(-1, -2), u, upper=True)
+
+                # Compute the predicted mean
+                y_21 = torch.matmul(k21, x)
+
+            y_21_std = None
+            if predict_std:
+                # Solve L * u = k12 (forward substitution)
+                u = torch.linalg.solve_triangular(L, k12, upper=False)
+
+                # Solve L^T * x = u (backward substitution)
+                x = torch.linalg.solve_triangular(L.transpose(-1, -2), u, upper=True)
+
+                # Compute only the diagonal of sigma21 efficiently
+                sigma21_diag = torch.diagonal(k22 - torch.matmul(k21, x), dim1=-2, dim2=-1)
+
+                # Compute the standard deviation
+                y_21_std = torch.sqrt(torch.abs(sigma21_diag))
+
+        elif method == 'lu':
+            # Compute LU factorization
+            LU, piv = torch.linalg.lu_factor(k11 + eps)  # LU decomposition
+            
+            y_21 = None
+            if predict_mean:
+
+                # Solve the system using LU (equivalent to (k11 + eps)^-1 * y_11)
+                x = torch.linalg.lu_solve(LU, piv, y_11)
+
+                # Compute the predicted mean
+                y_21 = torch.matmul(k21, x)
+
+            y_21_std = None
+            if predict_std:
+                # Solve LU system for k12
+                x = torch.linalg.lu_solve(LU, piv, k12)
+
+                # Compute only the diagonal of sigma21 efficiently
+                sigma21_diag = torch.diagonal(k22 - torch.matmul(k21, x), dim1=-2, dim2=-1)
+
+                # Compute the standard deviation
+                y_21_std = torch.sqrt(torch.abs(sigma21_diag))
+
+        elif method == 'cg':
+
+            y_21 = None
+            if predict_mean:
+                # Solve the system using PCG (Preconditioned Conjugate Gradient)
+                x = conjugate_gradient(k11 + eps, y_11, max_iter=100)  # max_iter can be tuned
+
+                # Compute the predicted mean
+                y_21 = torch.matmul(k21, x)
+
+            y_21_std = None
+            if predict_std:
+                # Solve PCG system for k12
+                x = conjugate_gradient(k11 + eps, k12, max_iter=100)
+
+                # Compute only the diagonal of sigma21 efficiently
+                sigma21_diag = torch.diagonal(k22 - torch.matmul(k21, x), dim1=-2, dim2=-1)
+
+                # Compute the standard deviation
+                y_21_std = torch.sqrt(torch.abs(sigma21_diag))
 
         return y_21, y_21_std
 
@@ -1511,3 +1606,31 @@ def batched_triangular_solve(L: np.ndarray, B: np.ndarray) -> np.ndarray:
     # Use torch.linalg.solve which supports batched matrices.
     X_t = torch.linalg.solve(L_t, B_t)
     return X_t.cpu().numpy()
+
+def conjugate_gradient(A, b, tol=1e-5, max_iter=1000):
+    """
+    Solves Ax = b using the Preconditioned Conjugate Gradient (PCG) method.
+    A must be symmetric and positive definite (SPD).
+    """
+    x = torch.zeros_like(b)  # Initial guess (zero vector)
+    r = b - torch.matmul(A, x)  # Initial residual
+    z = r  # No preconditioner (Identity matrix)
+    p = z.clone()  # Initial search direction
+    rs_old = torch.sum(r * z, dim=-2, keepdim=True)  # Inner product (batch-wise)
+
+    for i in range(max_iter):
+        Ap = torch.matmul(A, p)
+        alpha = rs_old / torch.sum(p * Ap, dim=-2, keepdim=True)  # Step size
+        x = x + alpha * p  # Update solution
+        r = r - alpha * Ap  # Update residual
+
+        if torch.norm(r) < tol:  # Convergence check
+            break
+
+        z = r  # No preconditioning
+        rs_new = torch.sum(r * z, dim=-2, keepdim=True)  # New inner product
+        beta = rs_new / rs_old  # Compute beta
+        p = z + beta * p  # Update search direction
+        rs_old = rs_new  # Store for next iteration
+
+    return x  # Approximate solution x
