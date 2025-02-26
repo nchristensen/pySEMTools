@@ -245,14 +245,14 @@ class Mesh:
                 self.dtype_d = torch.float64
             
             # Transfer needed data
-            self.x = torch.tensor(self.x, dtype=self.dtype_d, device=self.device)
-            self.y = torch.tensor(self.y, dtype=self.dtype_d, device=self.device)
-            self.z = torch.tensor(self.z, dtype=self.dtype_d, device=self.device)
-            self.vertices = torch.tensor(self.vertices, dtype=self.dtype_d, device=self.device)
-            self.edge_centers = torch.tensor(self.edge_centers, dtype=self.dtype_d, device=self.device)
+            self.x = torch.as_tensor(self.x, dtype=self.dtype_d, device=self.device)
+            self.y = torch.as_tensor(self.y, dtype=self.dtype_d, device=self.device)
+            self.z = torch.as_tensor(self.z, dtype=self.dtype_d, device=self.device)
+            self.vertices = torch.as_tensor(self.vertices, dtype=self.dtype_d, device=self.device)
+            self.edge_centers = torch.as_tensor(self.edge_centers, dtype=self.dtype_d, device=self.device)
             if hasattr(self, 'facet_centers'):
-                self.facet_centers = torch.tensor(self.facet_centers, dtype=self.dtype_d, device=self.device)
-            self.global_element_number = torch.tensor(self.global_element_number, dtype=torch.int64, device=self.device)
+                self.facet_centers = torch.as_tensor(self.facet_centers, dtype=self.dtype_d, device=self.device)
+            self.global_element_number = torch.as_tensor(self.global_element_number, dtype=torch.int64, device=self.device)
 
     def get_vertices(self):
         '''

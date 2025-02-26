@@ -113,16 +113,16 @@ class Coef:
 
         # Take the data to the GPU
         if bckend == 'torch':
-            self.v = torch.tensor(self.v, dtype=self.dtype_d, device=self.device)
-            self.vinv = torch.tensor(self.vinv, dtype=self.dtype_d, device=self.device)
-            self.w3 = torch.tensor(self.w3, dtype=self.dtype_d, device=self.device)
-            self.x = torch.tensor(self.x.copy(), dtype=self.dtype_d, device=self.device)
-            self.w = torch.tensor(self.w.copy(), dtype=self.dtype_d, device=self.device)
-            self.dr = torch.tensor(self.dr, dtype=self.dtype_d, device=self.device)
-            self.ds = torch.tensor(self.ds, dtype=self.dtype_d, device=self.device)
+            self.v = torch.as_tensor(self.v, dtype=self.dtype_d, device=self.device)
+            self.vinv = torch.as_tensor(self.vinv, dtype=self.dtype_d, device=self.device)
+            self.w3 = torch.as_tensor(self.w3, dtype=self.dtype_d, device=self.device)
+            self.x = torch.as_tensor(self.x.copy(), dtype=self.dtype_d, device=self.device)
+            self.w = torch.as_tensor(self.w.copy(), dtype=self.dtype_d, device=self.device)
+            self.dr = torch.as_tensor(self.dr, dtype=self.dtype_d, device=self.device)
+            self.ds = torch.as_tensor(self.ds, dtype=self.dtype_d, device=self.device)
             if msh.gdim > 2:
-                self.dt = torch.tensor(self.dt, dtype=self.dtype_d, device=self.device)
-            self.dn = torch.tensor(self.dn, dtype=self.dtype_d, device=self.device)
+                self.dt = torch.as_tensor(self.dt, dtype=self.dtype_d, device=self.device)
+            self.dn = torch.as_tensor(self.dn, dtype=self.dtype_d, device=self.device)
 
         self.log.write("info", "Calculating the components of the jacobian")
 

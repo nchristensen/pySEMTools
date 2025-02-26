@@ -65,6 +65,10 @@ class MeshConnectivity:
         self.max_elem_per_face = max_elem_per_face
 
         if isinstance(msh, Mesh):
+
+            if msh.bckend != "numpy":
+                raise ValueError("MeshConnectivity only works with numpy backend at the moment")
+
             # Create local connecitivy
             self.log.write("info", "Computing local connectivity")
             self.local_connectivity(msh)
