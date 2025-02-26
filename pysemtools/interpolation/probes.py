@@ -210,6 +210,8 @@ class Probes:
         # Assign mesh data
         if isinstance(msh, Mesh):
             self.log.write("info", "Mesh provided as keyword argument")
+            if msh.bckend != 'numpy':
+                raise ValueError("Only supported Mesh backend at the moment is numpy")
             self.x = msh.x
             self.y = msh.y
             self.z = msh.z

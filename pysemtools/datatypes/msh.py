@@ -1,5 +1,9 @@
 """ Module that contains msh class, which contains relevant data on the domain"""
 
+import sys
+import importlib
+if importlib.util.find_spec('torch') is not None:
+    import torch
 import numpy as np
 from ..monitoring.logger import Logger
 from .element_slicing import fetch_elem_facet_data as fd
@@ -73,7 +77,7 @@ class Mesh:
     """
 
     def __init__(
-        self, comm, data=None, x=None, y=None, z=None, create_connectivity=True
+        self, comm, data=None, x=None, y=None, z=None, create_connectivity=False, bckend="numpy"
     ):
 
         self.log = Logger(comm=comm, module_name="Mesh")
@@ -91,6 +95,11 @@ class Mesh:
 
         else:
             self.log.write("info", "Initializing empty Mesh object.")
+
+        self.bckend = bckend
+        if bckend == 'torch':
+            if sys.modules.get("torch") is None:
+                raise ImportError("torch is not installed. Please install it to use the torch backend.")
 
     def init_from_data(self, comm, data):
         """
@@ -219,6 +228,31 @@ class Mesh:
         self.global_element_number = np.arange(
             self.offset_el, self.offset_el + self.nelv, dtype=np.int64
         )
+
+        # If the bckend attribute does not exist, inform that it is set to numpy
+        if not hasattr(self, 'bckend'):
+            self.log.write('warning',"Backend not set. Setting to numpy.")
+            self.log.write('warning',"The object was likely initialized from data or coordinates.")
+            self.bckend = 'numpy'
+
+        if self.bckend == 'torch':
+            # Find the device
+            self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+            # Set the device dtype
+            if self.x.dtype == np.float32:
+                self.dtype_d = torch.float32
+            elif self.x.dtype == np.float64:
+                self.dtype_d = torch.float64
+            
+            # Transfer needed data
+            self.x = torch.as_tensor(self.x, dtype=self.dtype_d, device=self.device)
+            self.y = torch.as_tensor(self.y, dtype=self.dtype_d, device=self.device)
+            self.z = torch.as_tensor(self.z, dtype=self.dtype_d, device=self.device)
+            self.vertices = torch.as_tensor(self.vertices, dtype=self.dtype_d, device=self.device)
+            self.edge_centers = torch.as_tensor(self.edge_centers, dtype=self.dtype_d, device=self.device)
+            if hasattr(self, 'facet_centers'):
+                self.facet_centers = torch.as_tensor(self.facet_centers, dtype=self.dtype_d, device=self.device)
+            self.global_element_number = torch.as_tensor(self.global_element_number, dtype=torch.int64, device=self.device)
 
     def get_vertices(self):
         '''

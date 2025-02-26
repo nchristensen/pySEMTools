@@ -1,6 +1,19 @@
 """ Contians class that contains information associated to fields"""
 
+import sys
+import importlib
 import numpy as np
+if importlib.util.find_spec('torch') is not None:
+    import torch
+    dtype_map = {
+        np.dtype('float64'): torch.float64,
+        np.dtype('float32'): torch.float32,
+        np.dtype('int64'): torch.int64,
+        np.dtype('int64'): torch.int64,
+        np.dtype('int32'): torch.int32,
+        np.dtype('int32'): torch.int32,
+        np.dtype('bool'): torch.bool,
+    }
 from ..monitoring.logger import Logger
 from ..io.ppymech.neksuite import pynekread_field
 
@@ -230,7 +243,7 @@ class FieldRegistry(Field):
         HexaData object that contains the coordinates of the domain.
     """
 
-    def __init__(self, comm, data=None):
+    def __init__(self, comm, data=None, bckend="numpy"):
 
         super().__init__(comm, data=data)
 
@@ -238,8 +251,15 @@ class FieldRegistry(Field):
         self.registry = NoOverwriteDict()
         self.registry_pos = {}
         self.scal_fields_names = []
+        
+        self.bckend = bckend
+        if bckend == 'torch':
+            if sys.modules.get("torch") is None:
+                raise ImportError("torch is not installed. Please install it to use the torch backend.")
+            self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
         self.update_vars()
+ 
 
     def update_vars(self):
         """
@@ -248,27 +268,63 @@ class FieldRegistry(Field):
 
         super().update_vars()
 
-        if self.vel_fields > 0:
-            self.registry["u"] = self.fields["vel"][0]
-            self.registry_pos["u"] = "vel_0"
-            self.registry["v"] = self.fields["vel"][1]
-            self.registry_pos["v"] = "vel_1"
-            if self.vel_fields > 2:
-                self.registry["w"] = self.fields["vel"][2]
-                self.registry_pos["w"] = "vel_2"
+        if self.bckend == 'numpy':
+            if self.vel_fields > 0:
+                self.registry["u"] = self.fields["vel"][0]
+                self.registry_pos["u"] = "vel_0"
+                self.registry["v"] = self.fields["vel"][1]
+                self.registry_pos["v"] = "vel_1"
+                if self.vel_fields > 2:
+                    self.registry["w"] = self.fields["vel"][2]
+                    self.registry_pos["w"] = "vel_2"
 
-        if self.pres_fields > 0:
-            self.registry["p"] = self.fields["pres"][0]
-            self.registry_pos["p"] = "pres_0"
+            if self.pres_fields > 0:
+                self.registry["p"] = self.fields["pres"][0]
+                self.registry_pos["p"] = "pres_0"
 
-        if self.temp_fields > 0:
-            self.registry["t"] = self.fields["temp"][0]
-            self.registry_pos["t"] = "temp_0"
+            if self.temp_fields > 0:
+                self.registry["t"] = self.fields["temp"][0]
+                self.registry_pos["t"] = "temp_0"
 
-        if self.scal_fields > 0:
-            for i in range(0, self.scal_fields):
-                self.registry[f"s{i}"] = self.fields["scal"][i]
-                self.registry_pos[f"s{i}"] = f"scal_{i}"
+            if self.scal_fields > 0:
+                for i in range(0, self.scal_fields):
+                    self.registry[f"s{i}"] = self.fields["scal"][i]
+                    self.registry_pos[f"s{i}"] = f"scal_{i}"
+        
+        elif self.bckend == 'torch':
+            if self.vel_fields > 0:
+                dtype_d = dtype_map[self.fields["vel"][0].dtype]
+                self.fields["vel"][0] = torch.as_tensor(self.fields["vel"][0], dtype=dtype_d, device=self.device)
+                self.registry["u"] = self.fields["vel"][0]
+                self.registry_pos["u"] = "vel_0"
+                dtype_d = dtype_map[self.fields["vel"][1].dtype]
+                self.fields["vel"][1] = torch.as_tensor(self.fields["vel"][1], dtype=dtype_d, device=self.device)
+                self.registry["v"] = self.fields["vel"][1]
+                self.registry_pos["v"] = "vel_1"
+                if self.vel_fields > 2:
+                    dtype_d = dtype_map[self.fields["vel"][2].dtype]
+                    self.fields["vel"][2] = torch.as_tensor(self.fields["vel"][2], dtype=dtype_d, device=self.device)
+                    self.registry["w"] = self.fields["vel"][2]
+                    self.registry_pos["w"] = "vel_2"
+                
+            if self.pres_fields > 0:
+                dtype_d = dtype_map[self.fields["pres"][0].dtype]
+                self.fields["pres"][0] = torch.as_tensor(self.fields["pres"][0], dtype=dtype_d, device=self.device)
+                self.registry["p"] = self.fields["pres"][0]
+                self.registry_pos["p"] = "pres_0"
+
+            if self.temp_fields > 0:
+                dtype_d = dtype_map[self.fields["temp"][0].dtype]
+                self.fields["temp"][0] = torch.as_tensor(self.fields["temp"][0], dtype=dtype_d, device=self.device)
+                self.registry["t"] = self.fields["temp"][0]
+                self.registry_pos["t"] = "temp_0"
+
+            if self.scal_fields > 0:
+                for i in range(0, self.scal_fields):
+                    dtype_d = dtype_map[self.fields["scal"][i].dtype]
+                    self.fields["scal"][i] = torch.as_tensor(self.fields["scal"][i], dtype=dtype_d, device=self.device)
+                    self.registry[f"s{i}"] = self.fields["scal"][i]
+                    self.registry_pos[f"s{i}"] = f"scal_{i}"
 
     def clear(self):
         """
@@ -407,6 +463,10 @@ class FieldRegistry(Field):
                 # cast it
                 field = field.astype(dtype)
 
+            if self.bckend == 'torch':
+                # First check if the field is already a tensor:
+                if not isinstance(field, torch.Tensor):
+                    field = torch.as_tensor(field, dtype=dtype_map[dtype], device=self.device)
 
             if field_name in self.registry:
                 self.log.write(

@@ -44,6 +44,10 @@ class MeshPartitioner:
         self.condition = np.all(conditions, axis=0)
         # Create a list with the element index of the compliant elements
         self.compliant_elements = np.unique(np.where(self.condition)[0])
+
+        if msh.bckend != "numpy":
+            raise ValueError("Only numpy backend is supported at the moment")
+
         # Create a new mesh object with the compliant elements
         x_ = msh.x[self.compliant_elements]
         y_ = msh.y[self.compliant_elements]

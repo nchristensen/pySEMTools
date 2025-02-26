@@ -2,6 +2,10 @@
 
 from math import pi
 import numpy as np
+import sys
+import importlib
+if importlib.util.find_spec('torch') is not None:
+    import torch
 from ..monitoring.logger import Logger
 
 
@@ -67,7 +71,7 @@ class Coef:
     >>> coef = Coef(msh, comm)
     """
 
-    def __init__(self, msh, comm, get_area=False, apply_1d_operators=True):
+    def __init__(self, msh, comm, get_area=False, apply_1d_operators=True, bckend = "numpy"):
 
         self.log = Logger(comm=comm, module_name="Coef")
         self.log.tic()
@@ -79,6 +83,26 @@ class Coef:
         self.dtype = msh.x.dtype
         self.apply_1d_operators = apply_1d_operators
 
+        self.bckend = bckend
+        if bckend == 'torch':
+
+            if sys.modules.get("torch") is None:
+                raise ImportError("torch is not installed. Please install it to use the torch backend.")
+            self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+            # Correct dtype if input is torch tensor
+            if self.dtype == torch.float64:
+                self.dtype = np.float64
+            elif self.dtype == torch.float32:
+                self.dtype = np.float32
+            # Set the actual torch dtype in another place
+            if self.dtype == np.float64:
+                self.dtype_d = torch.float64
+            elif self.dtype == np.float32:
+                self.dtype_d = torch.float32
+            if not self.apply_1d_operators:
+                raise ValueError("The torch backend only supports the apply_1d_operators option.")
+
         self.v, self.vinv, self.w3, self.x, self.w = get_transform_matrix(
             msh.lx, msh.gdim, apply_1d_operators=apply_1d_operators, dtype=self.dtype
         )
@@ -86,6 +110,19 @@ class Coef:
         self.dr, self.ds, self.dt, self.dn = get_derivative_matrix(
             msh.lx, msh.gdim, dtype=self.dtype, apply_1d_operators=apply_1d_operators
         )
+
+        # Take the data to the GPU
+        if bckend == 'torch':
+            self.v = torch.as_tensor(self.v, dtype=self.dtype_d, device=self.device)
+            self.vinv = torch.as_tensor(self.vinv, dtype=self.dtype_d, device=self.device)
+            self.w3 = torch.as_tensor(self.w3, dtype=self.dtype_d, device=self.device)
+            self.x = torch.as_tensor(self.x.copy(), dtype=self.dtype_d, device=self.device)
+            self.w = torch.as_tensor(self.w.copy(), dtype=self.dtype_d, device=self.device)
+            self.dr = torch.as_tensor(self.dr, dtype=self.dtype_d, device=self.device)
+            self.ds = torch.as_tensor(self.ds, dtype=self.dtype_d, device=self.device)
+            if msh.gdim > 2:
+                self.dt = torch.as_tensor(self.dt, dtype=self.dtype_d, device=self.device)
+            self.dn = torch.as_tensor(self.dn, dtype=self.dtype_d, device=self.device)
 
         self.log.write("info", "Calculating the components of the jacobian")
 
@@ -106,20 +143,36 @@ class Coef:
             self.dzds = self.dudrst(msh.z, direction="s")
             self.dzdt = self.dudrst(msh.z, direction="t")
 
-        self.drdx = np.zeros_like(self.dxdr, dtype=self.dtype)
-        self.drdy = np.zeros_like(self.dxdr, dtype=self.dtype)
-        if msh.gdim > 2:
-            self.drdz = np.zeros_like(self.dxdr, dtype=self.dtype)
+        if self.bckend == 'numpy':
+            self.drdx = np.zeros_like(self.dxdr, dtype=self.dtype)
+            self.drdy = np.zeros_like(self.dxdr, dtype=self.dtype)
+            if msh.gdim > 2:
+                self.drdz = np.zeros_like(self.dxdr, dtype=self.dtype)
 
-        self.dsdx = np.zeros_like(self.dxdr, dtype=self.dtype)
-        self.dsdy = np.zeros_like(self.dxdr, dtype=self.dtype)
-        if msh.gdim > 2:
-            self.dsdz = np.zeros_like(self.dxdr, dtype=self.dtype)
+            self.dsdx = np.zeros_like(self.dxdr, dtype=self.dtype)
+            self.dsdy = np.zeros_like(self.dxdr, dtype=self.dtype)
+            if msh.gdim > 2:
+                self.dsdz = np.zeros_like(self.dxdr, dtype=self.dtype)
 
-        if msh.gdim > 2:
-            self.dtdx = np.zeros_like(self.dxdr, dtype=self.dtype)
-            self.dtdy = np.zeros_like(self.dxdr, dtype=self.dtype)
-            self.dtdz = np.zeros_like(self.dxdr, dtype=self.dtype)
+            if msh.gdim > 2:
+                self.dtdx = np.zeros_like(self.dxdr, dtype=self.dtype)
+                self.dtdy = np.zeros_like(self.dxdr, dtype=self.dtype)
+                self.dtdz = np.zeros_like(self.dxdr, dtype=self.dtype)
+        else:
+            self.drdx = torch.zeros_like(self.dxdr, dtype=self.dtype_d, device=self.device)
+            self.drdy = torch.zeros_like(self.dxdr, dtype=self.dtype_d, device=self.device)
+            if msh.gdim > 2:
+                self.drdz = torch.zeros_like(self.dxdr, dtype=self.dtype_d, device=self.device)
+
+            self.dsdx = torch.zeros_like(self.dxdr, dtype=self.dtype_d, device=self.device)
+            self.dsdy = torch.zeros_like(self.dxdr, dtype=self.dtype_d, device=self.device)
+            if msh.gdim > 2:
+                self.dsdz = torch.zeros_like(self.dxdr, dtype=self.dtype_d, device=self.device)
+
+            if msh.gdim > 2:
+                self.dtdx = torch.zeros_like(self.dxdr, dtype=self.dtype_d, device=self.device)
+                self.dtdy = torch.zeros_like(self.dxdr, dtype=self.dtype_d, device=self.device)
+                self.dtdz = torch.zeros_like(self.dxdr, dtype=self.dtype_d, device=self.device)
 
         # Find the jacobian determinant, its inverse inverse and mass matrix (3D)
         # jac maps domain from xyz to rst -> dxyz =  jac * drst during integration
@@ -144,6 +197,10 @@ class Coef:
         # Where we calculate the jacobian determinant
         # and then multiply with weights
         if msh.gdim > 2 and get_area:
+
+            if self.bckend == 'torch':
+                raise ValueError("The torch backend does not support facet area calculation yet.")
+            
             self.log.write("info", "Calculating area weights and normal vectors")
 
             self.area = np.zeros((msh.nelv, 6, msh.ly, msh.lx), dtype=self.dtype)
@@ -326,41 +383,77 @@ class Coef:
             elif direction == "t":
                 return self.dudrst_3d_operator(field, self.dt)
             else:
-                raise ValueError("Invalid direction. Should be 'r', 's', or 't'")
+                raise ValueError("Invalid direction. Should be 'r', 's', or 't'") 
         elif self.apply_1d_operators:
-            if direction == "r":
-                if self.gdim == 2:
-                    return self.dudrst_1d_operator(
-                        field, self.dr, np.eye(ly, dtype=self.dtype)
-                    )
-                elif self.gdim == 3:
-                    return self.dudrst_1d_operator(
-                        field,
-                        self.dr,
-                        np.eye(ly, dtype=self.dtype),
-                        np.eye(lz, dtype=self.dtype),
-                    )
-            elif direction == "s":
-                if self.gdim == 2:
-                    return self.dudrst_1d_operator(
-                        field, np.eye(lx, dtype=self.dtype), self.ds
-                    )
-                elif self.gdim == 3:
+            if self.bckend == 'numpy':
+                if direction == "r":
+                    if self.gdim == 2:
+                        return self.dudrst_1d_operator(
+                            field, self.dr, np.eye(ly, dtype=self.dtype)
+                        )
+                    elif self.gdim == 3:
+                        return self.dudrst_1d_operator(
+                            field,
+                            self.dr,
+                            np.eye(ly, dtype=self.dtype),
+                            np.eye(lz, dtype=self.dtype),
+                        )
+                elif direction == "s":
+                    if self.gdim == 2:
+                        return self.dudrst_1d_operator(
+                            field, np.eye(lx, dtype=self.dtype), self.ds
+                        )
+                    elif self.gdim == 3:
+                        return self.dudrst_1d_operator(
+                            field,
+                            np.eye(lx, dtype=self.dtype),
+                            self.ds,
+                            np.eye(lz, dtype=self.dtype),
+                        )
+                elif direction == "t":
                     return self.dudrst_1d_operator(
                         field,
                         np.eye(lx, dtype=self.dtype),
-                        self.ds,
-                        np.eye(lz, dtype=self.dtype),
+                        np.eye(ly, dtype=self.dtype),
+                        self.dt,
                     )
-            elif direction == "t":
-                return self.dudrst_1d_operator(
-                    field,
-                    np.eye(lx, dtype=self.dtype),
-                    np.eye(ly, dtype=self.dtype),
-                    self.dt,
-                )
-            else:
-                raise ValueError("Invalid direction. Should be 'r', 's', or 't'")
+                else:
+                    raise ValueError("Invalid direction. Should be 'r', 's', or 't'")
+            elif self.bckend == 'torch':
+                if direction == "r":
+                    if self.gdim == 2:
+                        return self.dudrst_1d_operator_torch(
+                            field, self.dr, torch.eye(ly, dtype=self.dtype_d, device=self.device)
+                        )
+                    elif self.gdim == 3:
+                        return self.dudrst_1d_operator_torch(
+                            field,
+                            self.dr,
+                            torch.eye(ly, dtype=self.dtype_d, device=self.device),
+                            torch.eye(lz, dtype=self.dtype_d, device=self.device),
+                        )
+                elif direction == "s":
+                    if self.gdim == 2:
+                        return self.dudrst_1d_operator_torch(
+                            field, torch.eye(lx, dtype=self.dtype_d, device=self.device), self.ds
+                        )
+                    elif self.gdim == 3:
+                        return self.dudrst_1d_operator_torch(
+                            field,
+                            torch.eye(lx, dtype=self.dtype_d, device=self.device),
+                            self.ds,
+                            torch.eye(lz, dtype=self.dtype_d, device=self.device),
+                        )
+                elif direction == "t":
+                    return self.dudrst_1d_operator_torch(
+                        field,
+                        torch.eye(lx, dtype=self.dtype_d, device=self.device),
+                        torch.eye(ly, dtype=self.dtype_d, device=self.device),
+                        self.dt,
+                    )
+                else:
+                    raise ValueError("Invalid direction. Should be 'r', 's', or 't'")
+
 
     def dudrst_3d_operator(self, field, dr):
         """
@@ -504,6 +597,46 @@ class Coef:
 
         return dudrst
 
+    def dudrst_1d_operator_torch(self, field, dr, ds, dt=None):
+        """
+        Perform derivative applying the 1D operators provided as inputs.
+
+        Parameters
+        ----------
+        field : torch.Tensor
+            Field to take derivative of. Shape should be (nelv, lz, ly, lx).
+        dr : torch.Tensor
+            Derivative matrix in the r direction to apply to each element. Shape should be (lx, lx).
+        ds : torch.Tensor
+            Derivative matrix in the s direction to apply to each element. Shape should be (ly, ly).
+        dt : torch.Tensor (optional)
+            Derivative matrix in the t direction. Shape should be (lz, lz).
+
+        Returns
+        -------
+        torch.Tensor
+            Derivative of the field with respect to r/s/t. Shape is the same as the input field.
+        """
+        nelv, lz, ly, lx = field.shape  # Read dimensions
+
+        # Reshape the field for batch-wise matrix multiplication
+        field_reshaped = field.view(nelv, 1, lz * ly * lx, 1)
+
+        # Reshape the operators
+        dr = dr.view(1, 1, lx, lx)
+        ds = ds.view(1, 1, ly, ly)
+        if dt is not None:
+            dt = dt.view(1, 1, lz, lz)
+
+        # Perform the operation (assumed function to be PyTorch-compatible)
+        dudrst = apply_1d_operators_torch(field_reshaped, dr, ds, dt)
+
+        # Reshape everything back
+        dudrst = dudrst.view(nelv, lz, ly, lx)
+
+        return dudrst
+
+
     def dudxyz(self, field, drdx, dsdx, dtdx=None):
         """
         Perform derivative with respect to physical coordinate x,y,z.
@@ -551,7 +684,10 @@ class Coef:
         lx = field.shape[3]  # This is not a mistake. This is how the data is read
         ly = field.shape[2]
         lz = field.shape[1]
-        dudxyz = np.zeros_like(field, dtype=field.dtype)
+        if self.bckend == 'numpy':
+            dudxyz = np.zeros_like(field, dtype=field.dtype)
+        elif self.bckend == 'torch':
+            dudxyz = torch.zeros_like(field, dtype=field.dtype, device=self.device)
 
         dfdr = self.dudrst(field, direction="r")
         dfds = self.dudrst(field, direction="s")
@@ -630,7 +766,10 @@ class Coef:
         """
 
         sendbuf = np.ones((1), dtype)
-        sendbuf[0] = np.sum(a)
+        if self.bckend == 'numpy':
+            sendbuf[0] = np.sum(a)
+        elif self.bckend == 'torch':
+            sendbuf[0] = torch.sum(a).cpu().numpy()
         recvbuf = np.zeros((1), dtype)
         comm.Allreduce(sendbuf, recvbuf)
 
@@ -1163,6 +1302,14 @@ def apply_1d_operators(x, dr, ds, dt=None, use_broadcast=True):
         else:
             return apply_operators_2d_no_broadcast(dr, ds, x)
 
+def apply_1d_operators_torch(x, dr, ds, dt=None):
+
+    if not isinstance(dt, type(None)):
+        return apply_operators_3d_torch(dr, ds, dt, x)
+    else:
+        return apply_operators_2d_torch(dr, ds, x)
+
+
 
 def apply_operators_2d_no_broadcast(dr, ds, x):
     """This function applies operators the same way as they are applied in NEK5000
@@ -1247,6 +1394,39 @@ def apply_operators_2d(dr, ds, x):
 
     return temp.reshape((tempshape[0], tempshape[1], tempsize, 1)).copy()
 
+def apply_operators_2d_torch(dr, ds, x):
+    """
+    This function applies operators the same way as they are applied in NEK5000,
+    but optimized for PyTorch.
+    """
+    dshape = dr.shape
+    xshape = x.shape
+    xsize = xshape[2] * xshape[3]
+
+    # Transpose the operator in the r direction, leaving the first dimensions unaltered
+    drt = dr.transpose(2, 3)
+    drt_s0 = drt.shape[2]
+
+    # Reshape the field to be consistent
+    xreshape = x.reshape((xshape[0], xshape[1], int(xsize / drt_s0), drt_s0))
+
+    # Apply the operator using einsum
+    temp = torch.einsum("ijkl,ijlm->ijkm", xreshape, drt)
+
+    # Reshape the arrays as needed
+    tempsize = temp.shape[2] * temp.shape[3]
+    ds_s0 = ds.shape[2]
+    ds_s1 = ds.shape[3]
+
+    # Apply in s direction
+    temp = temp.reshape((xshape[0], xshape[1], ds_s1, int(tempsize / ds_s1)))
+    temp = torch.einsum("ijkl,ijlm->ijkm", ds, temp)
+
+    # Reshape to proper size
+    tempshape = temp.shape
+    tempsize = temp.shape[2] * temp.shape[3]
+
+    return temp.reshape((tempshape[0], tempshape[1], tempsize, 1)).clone()
 
 def apply_operators_3d(dr, ds, dt, x):
     """
@@ -1304,6 +1484,49 @@ def apply_operators_3d(dr, ds, dt, x):
     tempsize = temp.shape[2] * temp.shape[3]
 
     return temp.reshape((tempshape[0], tempshape[1], tempsize, 1)).copy()
+
+def apply_operators_3d_torch(dr, ds, dt, x):
+    """
+    This function applies operators the same way as they are applied in NEK5000,
+    but optimized for PyTorch.
+    """
+    dshape = dr.shape
+    xshape = x.shape
+    xsize = xshape[2] * xshape[3]
+
+    # Transpose the operator in the r direction, leaving the first dimensions unaltered
+    drt = dr.transpose(2, 3)
+    drt_s0 = drt.shape[2]
+
+    # Reshape the field to be consistent
+    xreshape = x.reshape((xshape[0], xshape[1], int(xsize / drt_s0), drt_s0))
+
+    # Apply the operator using einsum
+    temp = torch.einsum("ijkl,ijlm->ijkm", xreshape, drt)
+
+    # Reshape the arrays as needed
+    tempsize = temp.shape[2] * temp.shape[3]
+    ds_s0 = ds.shape[2]
+    ds_s1 = ds.shape[3]
+
+    # Apply in s direction
+    temp = temp.reshape((xshape[0], xshape[1], ds_s1, ds_s1, int(tempsize / (ds_s1**2))))
+    temp = torch.einsum("ijklm,ijkmn->ijkln", ds.reshape((dshape[0], dshape[1], 1, ds_s0, ds_s1)), temp)
+
+    # Reshape the arrays as needed
+    tempsize = temp.shape[2] * temp.shape[3] * temp.shape[4]
+    dt_s1 = dt.shape[3]
+
+    # Apply in t direction
+    temp = temp.reshape((xshape[0], xshape[1], dt_s1, int(tempsize / dt_s1)))
+    temp = torch.einsum("ijkl,ijlm->ijkm", dt, temp)
+
+    # Reshape to proper size
+    tempshape = temp.shape
+    tempsize = temp.shape[2] * temp.shape[3]
+
+    return temp.reshape((tempshape[0], tempshape[1], tempsize, 1)).clone()
+
 
 
 def calculate_jacobian_inverse_and_determinant(self):
