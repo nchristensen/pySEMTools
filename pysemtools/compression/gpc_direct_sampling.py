@@ -587,8 +587,7 @@ class DirectSampler:
                     sorted_sub_ind, _ = torch.sort(sub_ind_train, dim=2)
                     ind_train[start_a:end_a, start_e:end_e, :freq+1] = sorted_sub_ind
 
-                    # Get prediction and standard deviation from your Gaussian process regression.
-                    # (Assumes that the called function accepts torch tensors and chunk indices.)
+                    #Perform gaussian process regression
                     y_21, y_21_std = self.gaussian_process_regression_torch(
                         y, V, kw, ind_train,
                         avg_idx, elem_idx, avg_idx2, elem_idx2,
