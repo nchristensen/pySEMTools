@@ -28,9 +28,9 @@ affiliations:
    index: 1
  - name: Institute of Fluid Mechanics (LSTM), Friedrich--Alexander--Universität (FAU)
    index: 2
- - name: CST, KTH Royal Institute of Technology
+ - name: Division of Computational Science and Technology (CST), KTH Royal Institute of Technology
    index: 3
- - name: Technical University of Denmark
+ - name: Department of Civil and Mechanical Engineering Solid Mechanics, Technical University of Denmark
    index: 4
 date: 18 February 2025
 bibliography: paper.bib
@@ -72,6 +72,6 @@ We note that all of these functionalities are supported by examples in the softw
 
 # Acknowledgements
 
-This work is partially funded by the “Adaptive multi-tier intelligent data manager for Exascale (ADMIRE)” project, which is funded by the European Union's Horizon 2020 JTI-EuroHPC research and innovation program under grant Agreement number: 956748. Computations for testing were enabled by resources provided by the National Academic Infrastructure for Super­computing in Sweden (NAISS), partially funded by the Swedish Research Council through grant agreement no. 2018-05973.
+This work is partially funded by the “Adaptive multi-tier intelligent data manager for Exascale (ADMIRE)” project, which is funded by the European Union's Horizon 2020 JTI-EuroHPC research and innovation program under grant Agreement number: 956748. Computations for testing were enabled by resources provided by the National Academic Infrastructure for Supercomputing in Sweden (NAISS), partially funded by the Swedish Research Council through grant agreement no. 2018-05973.
 
 # References
