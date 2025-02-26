@@ -335,6 +335,8 @@ class DirectSampler:
                     shape = (keep_modes)
                 elif data_key == "Vt":
                     shape = (keep_modes, lx*ly*lz)
+                elif data_key == "f_hat":    
+                    shape = (nelv, lz, ly, lx)
                 else:
                     raise ValueError("Invalid data key")
 
@@ -399,9 +401,29 @@ class DirectSampler:
             self.log.write("info", f"U saved in field uncompressed_data[\"{field_name}\"][\"U\"]")
             self.log.write("info", f"s saved in field uncompressed_data[\"{field_name}\"][\"s\"]")
             self.log.write("info", f"Vt saved in field uncompressed_data[\"{field_name}\"][\"Vt\"]")
+        
+        elif method == "dlt":
+            # In this case, the kw will not be only the diagonal of the stored data but an approximation of the actual covariance
+            self.kw_diag = True
+            
+            self.settings["covariance"] = {"method": "dlt",
+                                           "averages" : self.nelv,
+                                           "elements_to_average": int(1),
+                                           "keep_modes": keep_modes,
+                                           "kw_diag": self.kw_diag}
+            
+            self.log.write("info", f"Estimating the covariance matrix using the SVD method. Keeping {keep_modes} modes")
+            fld_hat_truncated = self._estimate_covariance_dlt(field_hat, self.settings["covariance"])
+
+            # Store the covariances in the data to be compressed:
+            self.uncompressed_data[f"{field_name}"]["f_hat"] = fld_hat_truncated
+
+            self.log.write("info", f"f_hat saved in field uncompressed_data[\"{field_name}\"][\"f_hat\"]")
 
         else:
             raise ValueError("Invalid method to estimate the covariance matrix")
+        
+        self.log.write("info", f"Covariance matrix estimated with settings: {self.settings['covariance']}")
     
     def _sample_fixed_bitrate(self, field: np.ndarray, field_name: str, settings: dict, max_samples_per_it : int = 1):
         """
@@ -569,7 +591,6 @@ class DirectSampler:
                 imax = torch.zeros((avg_idx.shape[0], elem_idx.shape[1]), dtype=torch.int64, device=y.device)
 
                 # Get the covariance matrix for the current chunk.
-                print("Getting covariance matrix")
                 kw = self._get_covariance_matrix(settings, field_name, avg_idx2, elem_idx2)
 
                 # Loop over frequency/sample iterations.
@@ -587,8 +608,7 @@ class DirectSampler:
                     sorted_sub_ind, _ = torch.sort(sub_ind_train, dim=2)
                     ind_train[start_a:end_a, start_e:end_e, :freq+1] = sorted_sub_ind
 
-                    # Get prediction and standard deviation from your Gaussian process regression.
-                    # (Assumes that the called function accepts torch tensors and chunk indices.)
+                    #Perform gaussian process regression
                     y_21, y_21_std = self.gaussian_process_regression_torch(
                         y, V, kw, ind_train,
                         avg_idx, elem_idx, avg_idx2, elem_idx2,
@@ -1041,7 +1061,80 @@ class DirectSampler:
             Vt = Vt[:keep_modes, :]            
 
         return U, s, Vt
+    
+    def _estimate_covariance_dlt(self, field_hat : np.ndarray, settings: dict):
 
+        if self.bckend == "numpy":
+            nelv = int(settings['averages'] * settings['elements_to_average'])
+            n_samples = settings["keep_modes"]
+
+            # Get needed information
+            V = self.v
+            numfreq = n_samples
+
+            # Now reshape the x, y elements into column vectors
+            y = field_hat.reshape(field_hat.shape[0], -1)
+
+            #allocation the truncated field
+            y_truncated = np.copy(y)
+
+            # Set up chunking parameters to avoid processing too many elements at once.
+            chunk_size_e = self.max_elements_to_process
+            n_chunks_e = math.ceil(nelv / chunk_size_e)
+
+            # Loop over chunks along the element dimension.
+            for chunk_id_e in range(n_chunks_e):
+                start_e = chunk_id_e * chunk_size_e
+                end_e = min((chunk_id_e + 1) * chunk_size_e, nelv)
+
+                # Create chunk-specific index helpers.
+                elem_idx = np.arange(start_e, end_e)
+
+                # Get the sorted coefficients in each element in descending order
+                ind = np.argsort(np.abs(y[elem_idx, :]), axis=1)[:, ::-1]
+
+                # Set the entries after the numfreq-th to zero
+                y_truncated[elem_idx.reshape(-1,1), ind[:, numfreq:]] = 0
+
+        elif self.bckend == "torch":
+
+            nelv = int(settings['averages'] * settings['elements_to_average'])
+            n_samples = settings["keep_modes"]
+            
+            # Reshape so that we have [nelv, -1]
+            y = field_hat.reshape(field_hat.shape[0], -1)  # shape: (nelv, ?)
+
+            # Make a copy for truncation
+            y_truncated = y.clone()
+
+            # Prepare chunking
+            chunk_size_e = self.max_elements_to_process
+            n_chunks_e = math.ceil(nelv / chunk_size_e)
+
+            for chunk_id_e in range(n_chunks_e):
+                start_e = chunk_id_e * chunk_size_e
+                end_e = min((chunk_id_e + 1) * chunk_size_e, nelv)
+
+                # Get the row indices for this chunk
+                elem_idx = torch.arange(start_e, end_e, device=y.device)  # shape: (chunk_size,)
+
+                # Extract the sub-tensor for this chunk: (chunk_size, ?)
+                sub_y = y[elem_idx, :]
+
+                # Sort indices by absolute value in descending order along dim=1
+                ind = torch.argsort(torch.abs(sub_y), dim=1, descending=True)
+
+                # Keep only the top n_samples indices
+                col_idx_to_zero = ind[:, n_samples:]
+
+                # Construct row indices (broadcasted) to match the shape of col_idx_to_zero
+                row_idx = elem_idx.unsqueeze(1).expand(-1, col_idx_to_zero.shape[1])
+
+                # Set those positions to zero
+                y_truncated[row_idx, col_idx_to_zero] = 0
+
+        # Reshape back to the original shape
+        return y_truncated.reshape(field_hat.shape)
  
     def transform_field(self, field: np.ndarray = None, to: str = "legendre") -> np.ndarray:
         """
@@ -1169,8 +1262,39 @@ class DirectSampler:
                 
                 # Get the covariance matrix for the current chunk
                 kw = np.copy(kw_)
+            
+            elif settings["covariance"]["method"] == "dlt":
 
-        
+                averages = settings["covariance"]["averages"]
+                elements_to_average = settings["covariance"]["elements_to_average"]
+                
+                # Retrieve the truncated field
+                f_hat_full = uncompressed_data[f"{field_name}"]["f_hat"].reshape(averages, elements_to_average, -1, 1)
+                f_hat = f_hat_full[avg_idx2, elem_idx2, :, :]
+                
+                # Calculate the covariance matrix with f_hat @ f_hat.T
+                if kw_diag:
+                    # Reshape f_hat so that each row becomes a matrix column vector
+                    f_hat_reshaped = f_hat.reshape(averages2 * elements_to_average2, -1, 1)
+                    # Compute the covariance matrices for each entry: f_hat @ f_hat.T
+                    kw_ = np.einsum("eik,ekj->eij", f_hat_reshaped, np.transpose(f_hat_reshaped, (0, 2, 1)))
+                    # Extract only the diagonals
+                    kw_diag = np.einsum("...ii->...i", kw_)
+                    # Convert the diagonal vector into a full matrix by multiplying with an identity matrix
+                    eye = np.eye(kw_diag.shape[-1], dtype=kw_diag.dtype)
+                    kw_ = np.einsum("...i,ij->...ij", kw_diag, eye)
+                    # Reshape so that the result has shape (averages2, elements_to_average2, n, n)
+                    kw_ = kw_.reshape(averages2, elements_to_average2, kw_.shape[-2], kw_.shape[-1])
+                else:
+                    # Reshape f_hat and compute the covariance matrices
+                    f_hat_reshaped = f_hat.reshape(averages2 * elements_to_average2, -1, 1)
+                    kw_ = np.einsum("eik,ekj->eij", f_hat_reshaped, np.transpose(f_hat_reshaped, (0, 2, 1)))
+                    # Add an axis for broadcasting and reshape accordingly
+                    kw_ = kw_.reshape(averages2, elements_to_average2, kw_.shape[1], kw_.shape[2])
+                
+                # Ensure a copy is made (np.copy() is used in place of torch.clone())
+                kw = np.copy(kw_)
+     
         elif self.bckend == 'torch':
 
             averages2 = avg_idx2.shape[0]
@@ -1232,6 +1356,40 @@ class DirectSampler:
                 
                 # Ensure a copy is made if needed (torch.clone() is used in place of np.copy)
                 kw = kw_.clone()
+            
+            elif settings["covariance"]["method"] == "dlt":
+
+                self.log.write("debug", f"Obtaining the covariance matrix for the current chunk")
+
+                averages = settings["covariance"]["averages"]
+                elements_to_average = settings["covariance"]["elements_to_average"]
+
+                # Retrieve the truncated field
+                f_hat_full = self.uncompressed_data[f"{field_name}"]["f_hat"].view(averages, elements_to_average, -1, 1)
+                f_hat = f_hat_full[avg_idx2, elem_idx2, :, :]
+
+                # Calculate the covariance matrix with f_hat@f_hat^T
+                if self.kw_diag:
+                    # Reshape f_hat so that each row becomes a matrix column vector
+                    f_hat_reshaped = f_hat.view(averages2 * elements_to_average2, -1, 1)
+                    # Compute the covariance matrices for each entry: f_hat @ f_hat^T
+                    kw_ = torch.einsum("eik,ekj->eij", f_hat_reshaped, f_hat_reshaped.permute(0, 2, 1))
+                    # Extract only the diagonals
+                    kw_diag = torch.einsum("...ii->...i", kw_)
+                    # Convert the diagonal vector into a full matrix by multiplying with an identity matrix
+                    eye = torch.eye(kw_diag.shape[-1], device=kw_diag.device, dtype=kw_diag.dtype)
+                    kw_ = torch.einsum("...i,ij->...ij", kw_diag, eye)
+                    # Reshape so that the result has shape (averages2, elements_to_average2, n, n)
+                    kw_ = kw_.reshape(averages2, elements_to_average2, kw_.shape[-2], kw_.shape[-1])
+                else:
+                    # Reshape f_hat and compute the covariance matrices
+                    f_hat_reshaped = f_hat.view(averages2 * elements_to_average2, -1, 1)
+                    kw_ = torch.einsum("eik,ekj->eij", f_hat_reshaped, f_hat_reshaped.permute(0, 2, 1))
+                    # Add an axis for broadcasting and reshape accordingly
+                    kw_ = kw_.reshape(averages2, elements_to_average2, kw_.shape[1], kw_.shape[2])
+                
+                # Ensure a copy is made if needed (torch.clone() is used in place of np.copy)
+                kw = kw_.clone() 
 
         return kw
     
