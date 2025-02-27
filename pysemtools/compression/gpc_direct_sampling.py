@@ -383,8 +383,6 @@ class DirectSampler:
 
         self.log.write("info", "Transforming the field into to legendre space")
         field_hat = self.transform_field(field, to="legendre")
-        # Temporary:
-        self.field_hat = field_hat
 
         if method == "average":
 
@@ -546,16 +544,12 @@ class DirectSampler:
                 # This is still with column vectors at the end. We need to reshape it.
                 y_truncated[avg_idx, elem_idx, ind_train[avg_idx2, elem_idx2, :],:] = y_11
 
-                self.ind_train_sample = ind_train
-
         # Reshape the field back to its original shape
         return y_truncated.reshape(field.shape)
 
     def _sample_fixed_bitrate_torch(self, field: torch.Tensor, field_name: str, settings: dict, max_samples_per_it: int = 1):
         """
         """
-
-        self.ifsampling = True
 
         # Set the reshaping parameters
         averages = settings["covariance"]["averages"]
@@ -734,9 +728,6 @@ class DirectSampler:
                 # Place the updated chunk back into y_truncated.
                 y_truncated[start_a:end_a, start_e:end_e, :, :] = y_trunc_chunk
 
-                # Save the sampled indices in an attribute (if needed elsewhere).
-                self.ind_train_sample = ind_train
-
         # Reshape the truncated field back to the original shape of "field"
         return y_truncated.reshape(field.shape)
 
@@ -786,7 +777,6 @@ class DirectSampler:
                 temp = np.where(y[e,i] != -50)
                 ind_train[e,i, :len(temp[0])] = temp[0]
         ind_train = np.sort(ind_train, axis=2)
-        self.ind_train_rct = ind_train
 
         # Set up some help for the selections
         avg_idx = np.arange(averages)[:, np.newaxis, np.newaxis]        # shape: (averages, 1, 1)
@@ -863,7 +853,6 @@ class DirectSampler:
         V = self.v_d
         numfreq = n_samples
         
-        #self.ifsampling = False
         if unsampled_field_available:
             unsampled_field = self.supporting_data[field_name]["unsampled_field"].view(averages, elements_to_average, -1, 1)
         else:
@@ -887,7 +876,6 @@ class DirectSampler:
                 ind_train[e, i, :temp[0].numel()] = temp[0]
 
         ind_train, _ = torch.sort(ind_train, dim=2)  # Ensure indices are sorted
-        self.ind_train_rct = ind_train
 
         # Set up indexing tensors for selections
         chunk_size_e = self.max_elements_to_process
@@ -1423,37 +1411,6 @@ class DirectSampler:
                 
                 # Ensure a copy is made if needed (torch.clone() is used in place of np.copy)
                 kw = kw_.clone() 
-
-
-                ##### Extra and temporal code to test the covariance matrix
-                if hasattr(self, "field_hat"):
-                    print(" Finding the real covariance for the chunk")
-                    _f_hat_full = self.field_hat.view(averages, elements_to_average, -1, 1)
-                    _f_hat = _f_hat_full[avg_idx2, elem_idx2, :, :]
-
-                    # Calculate the covariance matrix with f_hat@f_hat^T
-                    if self.kw_diag:
-                        # Reshape f_hat so that each row becomes a matrix column vector
-                        _f_hat_reshaped = _f_hat.view(averages2 * elements_to_average2, -1, 1)
-                        # Compute the covariance matrices for each entry: f_hat @ f_hat^T
-                        _kw_ = torch.einsum("eik,ekj->eij", _f_hat_reshaped, _f_hat_reshaped.permute(0, 2, 1))
-                        # Extract only the diagonals
-                        _kw_diag = torch.einsum("...ii->...i", _kw_)
-                        # Convert the diagonal vector into a full matrix by multiplying with an identity matrix
-                        _eye = torch.eye(_kw_diag.shape[-1], device=_kw_diag.device, dtype=_kw_diag.dtype)
-                        _kw_ = torch.einsum("...i,ij->...ij", _kw_diag, _eye)
-                        # Reshape so that the result has shape (averages2, elements_to_average2, n, n)
-                        _kw_ = _kw_.reshape(averages2, elements_to_average2, _kw_.shape[-2], _kw_.shape[-1])
-                    else:
-                        # Reshape f_hat and compute the covariance matrices
-                        _f_hat_reshaped = _f_hat.view(averages2 * elements_to_average2, -1, 1)
-                        _kw_ = torch.einsum("eik,ekj->eij", _f_hat_reshaped, _f_hat_reshaped.permute(0, 2, 1))
-                        # Add an axis for broadcasting and reshape accordingly
-                        _kw_ = _kw_.reshape(averages2, elements_to_average2, _kw_.shape[1], _kw_.shape[2])
-                    
-                    # Ensure a copy is made if needed (torch.clone() is used in place of np.copy)
-                    self.kw_real = _kw_.clone() 
-
 
         return kw
     
