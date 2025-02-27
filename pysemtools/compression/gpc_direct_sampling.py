@@ -549,6 +549,9 @@ class DirectSampler:
     def _sample_fixed_bitrate_torch(self, field: torch.Tensor, field_name: str, settings: dict, max_samples_per_it: int = 1):
         """
         """
+
+        self.ifsampling = True
+
         # Set the reshaping parameters
         averages = settings["covariance"]["averages"]
         elements_to_average = settings["covariance"]["elements_to_average"]
@@ -835,6 +838,8 @@ class DirectSampler:
         """
         Reconstructs the field using Gaussian Process Regression in PyTorch.
         """
+
+        #self.ifsampling = False
 
         # Retrieve the sampled field
         sampled_field = self.uncompressed_data[field_name]["field"]
@@ -1409,6 +1414,37 @@ class DirectSampler:
                 # Ensure a copy is made if needed (torch.clone() is used in place of np.copy)
                 kw = kw_.clone() 
 
+
+                ##### Extra and temporal code to test the covariance matrix
+                if hasattr(self, "field_hat"):
+                    print(" Finding the real covariance for the chunk")
+                    _f_hat_full = self.field_hat.view(averages, elements_to_average, -1, 1)
+                    _f_hat = _f_hat_full[avg_idx2, elem_idx2, :, :]
+
+                    # Calculate the covariance matrix with f_hat@f_hat^T
+                    if self.kw_diag:
+                        # Reshape f_hat so that each row becomes a matrix column vector
+                        _f_hat_reshaped = _f_hat.view(averages2 * elements_to_average2, -1, 1)
+                        # Compute the covariance matrices for each entry: f_hat @ f_hat^T
+                        _kw_ = torch.einsum("eik,ekj->eij", _f_hat_reshaped, _f_hat_reshaped.permute(0, 2, 1))
+                        # Extract only the diagonals
+                        _kw_diag = torch.einsum("...ii->...i", _kw_)
+                        # Convert the diagonal vector into a full matrix by multiplying with an identity matrix
+                        _eye = torch.eye(_kw_diag.shape[-1], device=_kw_diag.device, dtype=_kw_diag.dtype)
+                        _kw_ = torch.einsum("...i,ij->...ij", _kw_diag, _eye)
+                        # Reshape so that the result has shape (averages2, elements_to_average2, n, n)
+                        _kw_ = _kw_.reshape(averages2, elements_to_average2, _kw_.shape[-2], _kw_.shape[-1])
+                    else:
+                        # Reshape f_hat and compute the covariance matrices
+                        _f_hat_reshaped = _f_hat.view(averages2 * elements_to_average2, -1, 1)
+                        _kw_ = torch.einsum("eik,ekj->eij", _f_hat_reshaped, _f_hat_reshaped.permute(0, 2, 1))
+                        # Add an axis for broadcasting and reshape accordingly
+                        _kw_ = _kw_.reshape(averages2, elements_to_average2, _kw_.shape[1], _kw_.shape[2])
+                    
+                    # Ensure a copy is made if needed (torch.clone() is used in place of np.copy)
+                    self.kw_real = _kw_.clone() 
+
+
         return kw
     
     def gaussian_process_regression(self, y: np.ndarray, V: np.ndarray, kw: np.ndarray, 
@@ -1505,8 +1541,14 @@ class DirectSampler:
             k21 = k12.permute(0, 1, 3, 2)  # shape: (averages, elements_to_average, n, freq+1)
 
             # Covariance of the real data
-            temp = torch.matmul(V_22, kw)  # shape: (averages, elements_to_average, n, n)
-            k22 = torch.matmul(temp, V_22.transpose(-1, -2))  # shape: (averages, elements_to_average, n, n)
+            if not self.ifsampling:
+                temp = torch.matmul(V_22, kw)  # shape: (averages, elements_to_average, n, n)
+                k22 = torch.matmul(temp, V_22.transpose(-1, -2))  # shape: (averages, elements_to_average, n, n)
+            else:
+                print("if sampling is true")
+                temp = torch.matmul(V_22, self.kw_real)  # shape: (averages, elements_to_average, n, n)
+                k22 = torch.matmul(temp, V_22.transpose(-1, -2))  # shape: (averages, elements_to_average, n, n)
+            
 
         # Create a small epsilon for numerical stability in inversion.
         eps = 1e-7 * torch.eye(k11.shape[-1], device=k11.device, dtype=k11.dtype).reshape(1, 1, k11.shape[-1], k11.shape[-1])
@@ -1584,6 +1626,7 @@ class DirectSampler:
 
                 # Compute the standard deviation
                 y_21_std = torch.sqrt(torch.abs(sigma21_diag))
+                #y_21_std = torch.abs(sigma21_diag)
 
         elif method == 'cg':
 
