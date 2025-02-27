@@ -1537,8 +1537,9 @@ class DirectSampler:
             k21 = k12.transpose(-2, -1)  # Shape: (b1, b2, n, freq+1)
 
             # Covariance of the real data
-            temp = V_22 * kw_diag.unsqueeze(-2)  # Broadcasting (shape: (b1, b2, n, n))
-            k22 = torch.matmul(temp, V_22.transpose(-1, -2))  # Shape: (b1, b2, n, n)
+            if isinstance(unsampled_field, type(None)):
+                temp = V_22 * kw_diag.unsqueeze(-2)  # Broadcasting (shape: (b1, b2, n, n))
+                k22 = torch.matmul(temp, V_22.transpose(-1, -2))  # Shape: (b1, b2, n, n)
 
         else:
 
@@ -1551,23 +1552,14 @@ class DirectSampler:
             k21 = k12.permute(0, 1, 3, 2)  # shape: (averages, elements_to_average, n, freq+1)
 
             # Covariance of the real data
-            if not self.ifsampling:
+            if isinstance(unsampled_field, type(None)):
                 temp = torch.matmul(V_22, kw)  # shape: (averages, elements_to_average, n, n)
                 k22 = torch.matmul(temp, V_22.transpose(-1, -2))  # shape: (averages, elements_to_average, n, n)
-            else:
-                print("if sampling is true")
-                temp = torch.matmul(V_22, self.kw_real)  # shape: (averages, elements_to_average, n, n)
-                k22 = torch.matmul(temp, V_22.transpose(-1, -2))  # shape: (averages, elements_to_average, n, n)
 
-
-                _y = unsampled_field[avg_idx2, elem_idx2]
-                
-                k22 = torch.matmul(_y, _y.transpose(-1, -2))
-                
-                print(_y.shape)
-                print(k22.shape)
-            
-
+        if not isinstance(unsampled_field, type(None)):
+            _y = unsampled_field[avg_idx2, elem_idx2]    
+            k22 = torch.matmul(_y, _y.transpose(-1, -2))
+        
         # Create a small epsilon for numerical stability in inversion.
         eps = 1e-7 * torch.eye(k11.shape[-1], device=k11.device, dtype=k11.dtype).reshape(1, 1, k11.shape[-1], k11.shape[-1])
 
