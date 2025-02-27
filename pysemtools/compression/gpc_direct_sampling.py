@@ -732,11 +732,11 @@ class DirectSampler:
         # Reshape the truncated field back to the original shape of "field"
         return y_truncated.reshape(field.shape)
 
-    def reconstruct_field(self, field_name: str = None, get_mean: bool = True, get_std: bool = False):
+    def reconstruct_field(self, field_name: str = None, get_mean: bool = True, get_std: bool = False, mean_op = None, std_op = None):
             if self.bckend == "numpy":
                 return self.reconstruct_field_numpy(field_name, get_mean, get_std)
             elif self.bckend == "torch":
-                return self.reconstruct_field_torch(field_name, get_mean, get_std)
+                return self.reconstruct_field_torch(field_name, get_mean, get_std, mean_op = mean_op, std_op = mean_op)
 
     def reconstruct_field_numpy(self, field_name: str = None, get_mean: bool = True, get_std: bool = False):
         """
@@ -831,7 +831,7 @@ class DirectSampler:
         # Reshape the field back to its original shape
         return y_reconstructed, y_reconstructed_std
 
-    def reconstruct_field_torch(self, field_name: str = None, get_mean: bool = True, get_std: bool = False):
+    def reconstruct_field_torch(self, field_name: str = None, get_mean: bool = True, get_std: bool = False, mean_op = None, std_op = None):
         """
         Reconstructs the field using Gaussian Process Regression in PyTorch.
         """
@@ -903,7 +903,7 @@ class DirectSampler:
                 # Get the prediction and the standard deviation
                 y_21, y_21_std = self.gaussian_process_regression_torch(
                     y, V, kw, ind_train, avg_idx, elem_idx, avg_idx2, elem_idx2,
-                    predict_mean=get_mean, predict_std=get_std
+                    predict_mean=get_mean, predict_std=get_std, mean_op = mean_op, std_op = std_op
                 )
 
                 # Store reconstructed values
@@ -916,7 +916,7 @@ class DirectSampler:
         mask = sampled_field != -50
         if get_mean:
             y_reconstructed = y_reconstructed.reshape(sampled_field.shape)
-            y_reconstructed[mask] = sampled_field[mask]
+            #y_reconstructed[mask] = sampled_field[mask]
         if get_std:
             y_reconstructed_std = y_reconstructed_std.reshape(sampled_field.shape)
             #y_reconstructed_std[mask] = 0
@@ -1462,7 +1462,7 @@ class DirectSampler:
                                     ind_train: torch.Tensor, avg_idx: torch.Tensor, elem_idx: torch.Tensor,
                                     avg_idx2: torch.Tensor, elem_idx2: torch.Tensor, 
                                     freq: int = None, predict_mean: bool = True, predict_std: bool = True,
-                                    method = 'lu'):
+                                    method = 'lu', mean_op = None, std_op = None):
         
         # Select the correct freq index:
         if freq is None:
@@ -1566,13 +1566,21 @@ class DirectSampler:
                 # Compute the predicted mean
                 y_21 = torch.matmul(k21, x)
 
+                if mean_op is not None:
+                    y_21 = torch.matmul(mean_op.view(1,1,V.shape[0],V.shape[1]), y_21)
+
             y_21_std = None
             if predict_std:
                 # Solve LU system for k12
                 x = torch.linalg.lu_solve(LU, piv, k12)
 
                 # Compute only the diagonal of sigma21 efficiently
-                sigma21_diag = torch.diagonal(k22 - torch.matmul(k21, x), dim1=-2, dim2=-1)
+                sigma21_diag = k22 - torch.matmul(k21, x)
+
+                if std_op is not None:
+                    sigma21_diag = torch.matmul(torch.matmul(std_op.view(1,1,V.shape[0],V.shape[1]), sigma21_diag), std_op.view(1,1,V.shape[0],V.shape[1]).transpose(-1,-2))
+
+                sigma21_diag = torch.diagonal(sigma21_diag, dim1=-2, dim2=-1)
 
                 # Compute the standard deviation
                 y_21_std = torch.sqrt(torch.abs(sigma21_diag))
