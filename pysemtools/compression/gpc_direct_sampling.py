@@ -422,7 +422,7 @@ class DirectSampler:
         
         elif method == "dlt":
             # In this case, the kw will not be only the diagonal of the stored data but an approximation of the actual covariance
-            self.kw_diag = True
+            self.kw_diag = False
             
             self.settings["covariance"] = {"method": "dlt",
                                            "averages" : self.nelv,
