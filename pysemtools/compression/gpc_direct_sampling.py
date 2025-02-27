@@ -60,6 +60,8 @@ class DirectSampler:
                     for data in self.uncompressed_data[field].keys():
                         self.uncompressed_data[field][data] = torch.tensor(self.uncompressed_data[field][data], dtype=self.dtype_d, device = self.device, requires_grad=False)
 
+        self.supporting_data = {}
+
     def init_from_file(self, comm: MPI.Comm, filename: str, max_elements_to_process: int = 256):
         """
         """
@@ -376,6 +378,9 @@ class DirectSampler:
         # Create a dictionary to store the data that will be compressed
         self.uncompressed_data[f"{field_name}"] = {}
 
+        self.supporting_data[f"{field_name}"] = {}
+        self.supporting_data[f"{field_name}"]["unsampled_field"] = field
+
         self.log.write("info", "Transforming the field into to legendre space")
         field_hat = self.transform_field(field, to="legendre")
         # Temporary:
@@ -633,7 +638,7 @@ class DirectSampler:
                     y_21, y_21_std = self.gaussian_process_regression_torch(
                         y, V, kw, ind_train,
                         avg_idx, elem_idx, avg_idx2, elem_idx2,
-                        freq, predict_mean=False, predict_std=True
+                        freq, predict_mean=False, predict_std=True, unsampled_field=y
                     )
 
                     # Set the standard deviation to zero at indices that have already been sampled.
@@ -839,8 +844,6 @@ class DirectSampler:
         Reconstructs the field using Gaussian Process Regression in PyTorch.
         """
 
-        #self.ifsampling = False
-
         # Retrieve the sampled field
         sampled_field = self.uncompressed_data[field_name]["field"]
         settings = self.settings
@@ -859,6 +862,12 @@ class DirectSampler:
         y = sampled_field.reshape(averages, elements_to_average, -1, 1)  # Shape: (averages, elements_to_average, all_dim, 1)
         V = self.v_d
         numfreq = n_samples
+        
+        #self.ifsampling = False
+        if self.ifsampling:
+            unsampled_field = self.supporting_data[field_name]["unsampled_field"].view(averages, elements_to_average, -1, 1)
+        else:
+            unsampled_field = None
 
         # Allocate storage for reconstructed fields
         y_reconstructed = None
@@ -908,7 +917,8 @@ class DirectSampler:
                 # Get the prediction and the standard deviation
                 y_21, y_21_std = self.gaussian_process_regression_torch(
                     y, V, kw, ind_train, avg_idx, elem_idx, avg_idx2, elem_idx2,
-                    predict_mean=get_mean, predict_std=get_std, mean_op = mean_op, std_op = std_op
+                    predict_mean=get_mean, predict_std=get_std, mean_op = mean_op, std_op = std_op,
+                    unsampled_field=unsampled_field
                 )
 
                 # Store reconstructed values
@@ -1498,7 +1508,7 @@ class DirectSampler:
                                     ind_train: torch.Tensor, avg_idx: torch.Tensor, elem_idx: torch.Tensor,
                                     avg_idx2: torch.Tensor, elem_idx2: torch.Tensor, 
                                     freq: int = None, predict_mean: bool = True, predict_std: bool = True,
-                                    method = 'lu', mean_op = None, std_op = None):
+                                    method = 'lu', mean_op = None, std_op = None, unsampled_field = None):
         
         # Select the correct freq index:
         if freq is None:
@@ -1548,6 +1558,14 @@ class DirectSampler:
                 print("if sampling is true")
                 temp = torch.matmul(V_22, self.kw_real)  # shape: (averages, elements_to_average, n, n)
                 k22 = torch.matmul(temp, V_22.transpose(-1, -2))  # shape: (averages, elements_to_average, n, n)
+
+
+                _y = unsampled_field[avg_idx2, elem_idx2]
+                
+                k22 = torch.matmul(_y, _y.transpose(-1, -2))
+                
+                print(_y.shape)
+                print(k22.shape)
             
 
         # Create a small epsilon for numerical stability in inversion.
