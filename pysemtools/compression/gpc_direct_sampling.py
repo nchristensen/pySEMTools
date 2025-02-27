@@ -5,7 +5,7 @@ from mpi4py import MPI
 from ..monitoring.logger import Logger
 from ..datatypes.msh import Mesh
 from ..datatypes.coef import Coef
-from ..datatypes.coef import get_transform_matrix
+from ..datatypes.coef import get_transform_matrix, get_derivative_matrix
 import numpy as np
 import bz2
 import sys
@@ -44,6 +44,15 @@ class DirectSampler:
             # Transfer needed data
             self.v_d = torch.tensor(self.v, dtype=self.dtype_d, device = self.device, requires_grad=False)
             self.vinv_d = torch.tensor(self.vinv, dtype=self.dtype_d, device = self.device, requires_grad=False)
+            self.dr_d = torch.tensor(self.dr, dtype=self.dtype_d, device = self.device, requires_grad=False)
+            self.ds_d = torch.tensor(self.ds, dtype=self.dtype_d, device = self.device, requires_grad=False)
+            if self.gdim > 2:
+                self.dt_d = torch.tensor(self.dt, dtype=self.dtype_d, device = self.device, requires_grad=False)
+            self.dn_d = torch.tensor(self.dn, dtype=self.dtype_d, device = self.device, requires_grad=False)
+            self.dv_dr_d = torch.matmul(self.dr_d, self.v_d)
+            self.dv_ds_d = torch.matmul(self.ds_d, self.v_d)
+            if self.gdim > 2:
+                self.dv_dt_d = torch.matmul(self.dt_d, self.v_d)
 
             # If the data was initialized from file, put it in a torch tensor
             if hasattr(self, "uncompressed_data"):
@@ -115,6 +124,15 @@ class DirectSampler:
         self.v, self.vinv, self.w3, self.x, self.w = get_transform_matrix(
             self.lx, self.gdim, apply_1d_operators=False, dtype=self.dtype
         )
+
+        self.dr, self.ds, self.dt, self.dn = get_derivative_matrix(
+            self.lx, self.gdim, dtype=self.dtype, apply_1d_operators=False
+        )
+
+        self.dv_dr = np.matmul(self.dr, self.v)
+        self.dv_ds = np.matmul(self.ds, self.v)
+        if self.gdim > 2:
+            self.dv_dt = np.matmul(self.dt, self.v) 
 
 
     def clear(self):
@@ -1269,7 +1287,7 @@ class DirectSampler:
                 elements_to_average = settings["covariance"]["elements_to_average"]
                 
                 # Retrieve the truncated field
-                f_hat_full = uncompressed_data[f"{field_name}"]["f_hat"].reshape(averages, elements_to_average, -1, 1)
+                f_hat_full = self.uncompressed_data[f"{field_name}"]["f_hat"].reshape(averages, elements_to_average, -1, 1)
                 f_hat = f_hat_full[avg_idx2, elem_idx2, :, :]
                 
                 # Calculate the covariance matrix with f_hat @ f_hat.T
