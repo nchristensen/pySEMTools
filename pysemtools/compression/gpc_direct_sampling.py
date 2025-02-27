@@ -1462,7 +1462,7 @@ class DirectSampler:
                                     ind_train: torch.Tensor, avg_idx: torch.Tensor, elem_idx: torch.Tensor,
                                     avg_idx2: torch.Tensor, elem_idx2: torch.Tensor, 
                                     freq: int = None, predict_mean: bool = True, predict_std: bool = True,
-                                    method = 'lu'):
+                                    method = 'lu', mean_op : torch.Tensor = None, std_op : torch.Tensor = None):
         
         # Select the correct freq index:
         if freq is None:
@@ -1475,6 +1475,27 @@ class DirectSampler:
 
         V_11 = V[ind_train[avg_idx2, elem_idx2, freq_idex], :]
         V_22 = V.reshape(1, 1, V.shape[0], V.shape[1])
+
+        # Choose which operator to do to make all faster
+        precomputed_operators = True
+        null_operators = 0
+        if isinstance(mean_op, type(None)):
+            null_operators += 1
+        if isinstance(std_op, type(None)):
+            null_operators += 1
+
+        if null_operators == 2:
+            pass # V_22 will be used as is
+        elif null_operators == 1:
+            # If only one operator is passed, then use that one for both mean and std
+            if isinstance(mean_op, type(None)):
+                V_22 = mean_op.view(1, 1, V.shape[0], V.shape[1])
+            else:
+                V_22 = std_op.view(1, 1, V.shape[0], V.shape[1])
+        else:
+            mean_op = mean_op.view(1, 1, V.shape[0], V.shape[1])
+            std_op = std_op.view(1, 1, V.shape[0], V.shape[1])
+            precomputed_operators = False
 
         # Get covariance matrices
         if self.kw_diag:
@@ -1517,10 +1538,17 @@ class DirectSampler:
                 # Predict the mean: y_21 = k21 * inv(k11 + eps) * y_11
                 y_21 = torch.matmul(k21, torch.linalg.solve(k11 + eps, y_11))
 
+                if not precomputed_operators:
+                    y_21 = torch.matmul(mean_op, y_21)
+
             y_21_std = None
             if predict_std:
                 # Predict the covariance of predictions
                 sigma21 = k22 - torch.matmul(k21, torch.linalg.solve(k11 + eps, k12))
+
+                if not precomputed_operators:
+                    sigma21 = torch.matmul(torch.matmul(std_op, sigma21), std_op.transpose(-1, -2))
+
                 # Extract the diagonal (variance) and compute the standard deviation
                 y_21_std = torch.sqrt(torch.abs(torch.einsum("...ii->...i", sigma21)))
         
@@ -1538,6 +1566,10 @@ class DirectSampler:
 
                 # Compute the predicted mean
                 y_21 = torch.matmul(k21, x)
+                
+                if not precomputed_operators:
+                    y_21 = torch.matmul(mean_op, y_21)
+
 
             y_21_std = None
             if predict_std:
@@ -1549,10 +1581,13 @@ class DirectSampler:
 
                 # Compute only the diagonal of sigma21 efficiently
                 sigma21_diag = torch.diagonal(k22 - torch.matmul(k21, x), dim1=-2, dim2=-1)
+                
+                if not precomputed_operators:
+                    sigma21_diag = torch.matmul(torch.matmul(std_op, sigma21_diag), std_op.transpose(-1, -2))
 
                 # Compute the standard deviation
                 y_21_std = torch.sqrt(torch.abs(sigma21_diag))
-
+                
         elif method == 'lu':
             # Compute LU factorization
             LU, piv = torch.linalg.lu_factor(k11 + eps)  # LU decomposition
@@ -1565,6 +1600,10 @@ class DirectSampler:
 
                 # Compute the predicted mean
                 y_21 = torch.matmul(k21, x)
+                
+                if not precomputed_operators:
+                    y_21 = torch.matmul(mean_op, y_21)
+
 
             y_21_std = None
             if predict_std:
@@ -1573,6 +1612,9 @@ class DirectSampler:
 
                 # Compute only the diagonal of sigma21 efficiently
                 sigma21_diag = torch.diagonal(k22 - torch.matmul(k21, x), dim1=-2, dim2=-1)
+                
+                if not precomputed_operators:
+                    sigma21_diag = torch.matmul(torch.matmul(std_op, sigma21_diag), std_op.transpose(-1, -2))
 
                 # Compute the standard deviation
                 y_21_std = torch.sqrt(torch.abs(sigma21_diag))
@@ -1586,6 +1628,10 @@ class DirectSampler:
 
                 # Compute the predicted mean
                 y_21 = torch.matmul(k21, x)
+                
+                if not precomputed_operators:
+                    y_21 = torch.matmul(mean_op, y_21)
+
 
             y_21_std = None
             if predict_std:
@@ -1594,6 +1640,9 @@ class DirectSampler:
 
                 # Compute only the diagonal of sigma21 efficiently
                 sigma21_diag = torch.diagonal(k22 - torch.matmul(k21, x), dim1=-2, dim2=-1)
+                
+                if not precomputed_operators:
+                    sigma21_diag = torch.matmul(torch.matmul(std_op, sigma21_diag), std_op.transpose(-1, -2))
 
                 # Compute the standard deviation
                 y_21_std = torch.sqrt(torch.abs(sigma21_diag))
