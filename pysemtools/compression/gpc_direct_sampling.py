@@ -736,7 +736,7 @@ class DirectSampler:
             if self.bckend == "numpy":
                 return self.reconstruct_field_numpy(field_name, get_mean, get_std)
             elif self.bckend == "torch":
-                return self.reconstruct_field_torch(field_name, get_mean, get_std, mean_op = mean_op, std_op = mean_op)
+                return self.reconstruct_field_torch(field_name, get_mean, get_std, mean_op = mean_op, std_op = std_op)
 
     def reconstruct_field_numpy(self, field_name: str = None, get_mean: bool = True, get_std: bool = False):
         """
