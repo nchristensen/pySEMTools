@@ -1525,11 +1525,20 @@ class DirectSampler:
             if predict_mean:
                 # Predict the mean: y_21 = k21 * inv(k11 + eps) * y_11
                 y_21 = torch.matmul(k21, torch.linalg.solve(k11 + eps, y_11))
+                
+                if mean_op is not None:
+                    y_21 = torch.matmul(mean_op.view(1,1,V.shape[0],V.shape[1]), y_21)
 
             y_21_std = None
             if predict_std:
                 # Predict the covariance of predictions
                 sigma21 = k22 - torch.matmul(k21, torch.linalg.solve(k11 + eps, k12))
+
+                if std_op is not None:
+                    sigma21 = torch.matmul(torch.matmul(std_op.view(1,1,V.shape[0],V.shape[1]), sigma21), std_op.view(1,1,V.shape[0],V.shape[1]).transpose(-1,-2))
+
+                sigma21 = torch.diagonal(sigma21, dim1=-2, dim2=-1)
+
                 # Extract the diagonal (variance) and compute the standard deviation
                 y_21_std = torch.sqrt(torch.abs(torch.einsum("...ii->...i", sigma21)))
         
@@ -1547,6 +1556,9 @@ class DirectSampler:
 
                 # Compute the predicted mean
                 y_21 = torch.matmul(k21, x)
+                
+                if mean_op is not None:
+                    y_21 = torch.matmul(mean_op.view(1,1,V.shape[0],V.shape[1]), y_21)
 
             y_21_std = None
             if predict_std:
@@ -1557,7 +1569,12 @@ class DirectSampler:
                 x = torch.linalg.solve_triangular(L.transpose(-1, -2), u, upper=True)
 
                 # Compute only the diagonal of sigma21 efficiently
-                sigma21_diag = torch.diagonal(k22 - torch.matmul(k21, x), dim1=-2, dim2=-1)
+                sigma21_diag = k22 - torch.matmul(k21, x)
+                
+                if std_op is not None:
+                    sigma21_diag = torch.matmul(torch.matmul(std_op.view(1,1,V.shape[0],V.shape[1]), sigma21_diag), std_op.view(1,1,V.shape[0],V.shape[1]).transpose(-1,-2))
+
+                sigma21_diag = torch.diagonal(sigma21_diag, dim1=-2, dim2=-1)
 
                 # Compute the standard deviation
                 y_21_std = torch.sqrt(torch.abs(sigma21_diag))
@@ -1604,6 +1621,9 @@ class DirectSampler:
 
                 # Compute the predicted mean
                 y_21 = torch.matmul(k21, x)
+                
+                if mean_op is not None:
+                    y_21 = torch.matmul(mean_op.view(1,1,V.shape[0],V.shape[1]), y_21)
 
             y_21_std = None
             if predict_std:
@@ -1611,7 +1631,12 @@ class DirectSampler:
                 x = conjugate_gradient(k11 + eps, k12, max_iter=100)
 
                 # Compute only the diagonal of sigma21 efficiently
-                sigma21_diag = torch.diagonal(k22 - torch.matmul(k21, x), dim1=-2, dim2=-1)
+                sigma21_diag = k22 - torch.matmul(k21, x)
+                
+                if std_op is not None:
+                    sigma21_diag = torch.matmul(torch.matmul(std_op.view(1,1,V.shape[0],V.shape[1]), sigma21_diag), std_op.view(1,1,V.shape[0],V.shape[1]).transpose(-1,-2))
+
+                sigma21_diag = torch.diagonal(sigma21_diag, dim1=-2, dim2=-1)
 
                 # Compute the standard deviation
                 y_21_std = torch.sqrt(torch.abs(sigma21_diag))
