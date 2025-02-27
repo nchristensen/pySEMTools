@@ -1540,7 +1540,7 @@ class DirectSampler:
                 sigma21 = torch.diagonal(sigma21, dim1=-2, dim2=-1)
 
                 # Extract the diagonal (variance) and compute the standard deviation
-                y_21_std = torch.sqrt(torch.abs(torch.einsum("...ii->...i", sigma21)))
+                y_21_std = torch.sqrt(torch.abs(sigma21))
         
         elif method == 'cholesky':
             # Compute Cholesky factorization
