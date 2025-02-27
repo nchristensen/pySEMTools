@@ -740,11 +740,11 @@ class DirectSampler:
         # Reshape the truncated field back to the original shape of "field"
         return y_truncated.reshape(field.shape)
 
-    def reconstruct_field(self, field_name: str = None, get_mean: bool = True, get_std: bool = False, mean_op = None, std_op = None):
+    def reconstruct_field(self, field_name: str = None, get_mean: bool = True, get_std: bool = False, mean_op = None, std_op = None, unsampled_field_available=False):
             if self.bckend == "numpy":
                 return self.reconstruct_field_numpy(field_name, get_mean, get_std)
             elif self.bckend == "torch":
-                return self.reconstruct_field_torch(field_name, get_mean, get_std, mean_op = mean_op, std_op = std_op)
+                return self.reconstruct_field_torch(field_name, get_mean, get_std, mean_op = mean_op, std_op = std_op, unsampled_field_available=unsampled_field_available)
 
     def reconstruct_field_numpy(self, field_name: str = None, get_mean: bool = True, get_std: bool = False):
         """
@@ -839,7 +839,7 @@ class DirectSampler:
         # Reshape the field back to its original shape
         return y_reconstructed, y_reconstructed_std
 
-    def reconstruct_field_torch(self, field_name: str = None, get_mean: bool = True, get_std: bool = False, mean_op = None, std_op = None):
+    def reconstruct_field_torch(self, field_name: str = None, get_mean: bool = True, get_std: bool = False, mean_op = None, std_op = None, unsampled_field_available = False):
         """
         Reconstructs the field using Gaussian Process Regression in PyTorch.
         """
@@ -864,7 +864,7 @@ class DirectSampler:
         numfreq = n_samples
         
         #self.ifsampling = False
-        if self.ifsampling:
+        if unsampled_field_available:
             unsampled_field = self.supporting_data[field_name]["unsampled_field"].view(averages, elements_to_average, -1, 1)
         else:
             unsampled_field = None
