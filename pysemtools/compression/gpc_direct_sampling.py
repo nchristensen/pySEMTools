@@ -5,7 +5,7 @@ from mpi4py import MPI
 from ..monitoring.logger import Logger
 from ..datatypes.msh import Mesh
 from ..datatypes.coef import Coef
-from ..datatypes.coef import get_transform_matrix
+from ..datatypes.coef import get_transform_matrix, get_derivative_matrix
 import numpy as np
 import bz2
 import sys
@@ -44,12 +44,23 @@ class DirectSampler:
             # Transfer needed data
             self.v_d = torch.tensor(self.v, dtype=self.dtype_d, device = self.device, requires_grad=False)
             self.vinv_d = torch.tensor(self.vinv, dtype=self.dtype_d, device = self.device, requires_grad=False)
+            self.dr_d = torch.tensor(self.dr, dtype=self.dtype_d, device = self.device, requires_grad=False)
+            self.ds_d = torch.tensor(self.ds, dtype=self.dtype_d, device = self.device, requires_grad=False)
+            if self.gdim > 2:
+                self.dt_d = torch.tensor(self.dt, dtype=self.dtype_d, device = self.device, requires_grad=False)
+            self.dn_d = torch.tensor(self.dn, dtype=self.dtype_d, device = self.device, requires_grad=False)
+            self.dv_dr_d = torch.matmul(self.dr_d, self.v_d)
+            self.dv_ds_d = torch.matmul(self.ds_d, self.v_d)
+            if self.gdim > 2:
+                self.dv_dt_d = torch.matmul(self.dt_d, self.v_d)
 
             # If the data was initialized from file, put it in a torch tensor
             if hasattr(self, "uncompressed_data"):
                 for field in self.uncompressed_data.keys():
                     for data in self.uncompressed_data[field].keys():
                         self.uncompressed_data[field][data] = torch.tensor(self.uncompressed_data[field][data], dtype=self.dtype_d, device = self.device, requires_grad=False)
+
+        self.supporting_data = {}
 
     def init_from_file(self, comm: MPI.Comm, filename: str, max_elements_to_process: int = 256):
         """
@@ -115,6 +126,15 @@ class DirectSampler:
         self.v, self.vinv, self.w3, self.x, self.w = get_transform_matrix(
             self.lx, self.gdim, apply_1d_operators=False, dtype=self.dtype
         )
+
+        self.dr, self.ds, self.dt, self.dn = get_derivative_matrix(
+            self.lx, self.gdim, dtype=self.dtype, apply_1d_operators=False
+        )
+
+        self.dv_dr = np.matmul(self.dr, self.v)
+        self.dv_ds = np.matmul(self.ds, self.v)
+        if self.gdim > 2:
+            self.dv_dt = np.matmul(self.dt, self.v) 
 
 
     def clear(self):
@@ -358,10 +378,11 @@ class DirectSampler:
         # Create a dictionary to store the data that will be compressed
         self.uncompressed_data[f"{field_name}"] = {}
 
+        self.supporting_data[f"{field_name}"] = {}
+        self.supporting_data[f"{field_name}"]["unsampled_field"] = field
+
         self.log.write("info", "Transforming the field into to legendre space")
         field_hat = self.transform_field(field, to="legendre")
-        # Temporary:
-        self.field_hat = field_hat
 
         if method == "average":
 
@@ -404,7 +425,7 @@ class DirectSampler:
         
         elif method == "dlt":
             # In this case, the kw will not be only the diagonal of the stored data but an approximation of the actual covariance
-            self.kw_diag = True
+            self.kw_diag = False
             
             self.settings["covariance"] = {"method": "dlt",
                                            "averages" : self.nelv,
@@ -523,14 +544,13 @@ class DirectSampler:
                 # This is still with column vectors at the end. We need to reshape it.
                 y_truncated[avg_idx, elem_idx, ind_train[avg_idx2, elem_idx2, :],:] = y_11
 
-                self.ind_train_sample = ind_train
-
         # Reshape the field back to its original shape
         return y_truncated.reshape(field.shape)
 
     def _sample_fixed_bitrate_torch(self, field: torch.Tensor, field_name: str, settings: dict, max_samples_per_it: int = 1):
         """
         """
+
         # Set the reshaping parameters
         averages = settings["covariance"]["averages"]
         elements_to_average = settings["covariance"]["elements_to_average"]
@@ -612,7 +632,7 @@ class DirectSampler:
                     y_21, y_21_std = self.gaussian_process_regression_torch(
                         y, V, kw, ind_train,
                         avg_idx, elem_idx, avg_idx2, elem_idx2,
-                        freq, predict_mean=False, predict_std=True
+                        freq, predict_mean=False, predict_std=True, unsampled_field=y
                     )
 
                     # Set the standard deviation to zero at indices that have already been sampled.
@@ -708,17 +728,14 @@ class DirectSampler:
                 # Place the updated chunk back into y_truncated.
                 y_truncated[start_a:end_a, start_e:end_e, :, :] = y_trunc_chunk
 
-                # Save the sampled indices in an attribute (if needed elsewhere).
-                self.ind_train_sample = ind_train
-
         # Reshape the truncated field back to the original shape of "field"
         return y_truncated.reshape(field.shape)
 
-    def reconstruct_field(self, field_name: str = None, get_mean: bool = True, get_std: bool = False):
+    def reconstruct_field(self, field_name: str = None, get_mean: bool = True, get_std: bool = False, mean_op = None, std_op = None, unsampled_field_available=False):
             if self.bckend == "numpy":
                 return self.reconstruct_field_numpy(field_name, get_mean, get_std)
             elif self.bckend == "torch":
-                return self.reconstruct_field_torch(field_name, get_mean, get_std)
+                return self.reconstruct_field_torch(field_name, get_mean, get_std, mean_op = mean_op, std_op = std_op, unsampled_field_available=unsampled_field_available)
 
     def reconstruct_field_numpy(self, field_name: str = None, get_mean: bool = True, get_std: bool = False):
         """
@@ -760,7 +777,6 @@ class DirectSampler:
                 temp = np.where(y[e,i] != -50)
                 ind_train[e,i, :len(temp[0])] = temp[0]
         ind_train = np.sort(ind_train, axis=2)
-        self.ind_train_rct = ind_train
 
         # Set up some help for the selections
         avg_idx = np.arange(averages)[:, np.newaxis, np.newaxis]        # shape: (averages, 1, 1)
@@ -813,7 +829,7 @@ class DirectSampler:
         # Reshape the field back to its original shape
         return y_reconstructed, y_reconstructed_std
 
-    def reconstruct_field_torch(self, field_name: str = None, get_mean: bool = True, get_std: bool = False):
+    def reconstruct_field_torch(self, field_name: str = None, get_mean: bool = True, get_std: bool = False, mean_op = None, std_op = None, unsampled_field_available = False):
         """
         Reconstructs the field using Gaussian Process Regression in PyTorch.
         """
@@ -836,6 +852,11 @@ class DirectSampler:
         y = sampled_field.reshape(averages, elements_to_average, -1, 1)  # Shape: (averages, elements_to_average, all_dim, 1)
         V = self.v_d
         numfreq = n_samples
+        
+        if unsampled_field_available:
+            unsampled_field = self.supporting_data[field_name]["unsampled_field"].view(averages, elements_to_average, -1, 1)
+        else:
+            unsampled_field = None
 
         # Allocate storage for reconstructed fields
         y_reconstructed = None
@@ -855,7 +876,6 @@ class DirectSampler:
                 ind_train[e, i, :temp[0].numel()] = temp[0]
 
         ind_train, _ = torch.sort(ind_train, dim=2)  # Ensure indices are sorted
-        self.ind_train_rct = ind_train
 
         # Set up indexing tensors for selections
         chunk_size_e = self.max_elements_to_process
@@ -885,7 +905,8 @@ class DirectSampler:
                 # Get the prediction and the standard deviation
                 y_21, y_21_std = self.gaussian_process_regression_torch(
                     y, V, kw, ind_train, avg_idx, elem_idx, avg_idx2, elem_idx2,
-                    predict_mean=get_mean, predict_std=get_std
+                    predict_mean=get_mean, predict_std=get_std, mean_op = mean_op, std_op = std_op,
+                    unsampled_field=unsampled_field
                 )
 
                 # Store reconstructed values
@@ -898,73 +919,13 @@ class DirectSampler:
         mask = sampled_field != -50
         if get_mean:
             y_reconstructed = y_reconstructed.reshape(sampled_field.shape)
-            y_reconstructed[mask] = sampled_field[mask]
+            #y_reconstructed[mask] = sampled_field[mask]
         if get_std:
             y_reconstructed_std = y_reconstructed_std.reshape(sampled_field.shape)
             #y_reconstructed_std[mask] = 0
 
         return y_reconstructed, y_reconstructed_std
  
- 
-    def predict(self, field_sampled: np.ndarray = None):
-
-        # Global allocation
-        sampling_type = "max_ent"
-
-        field_rct = np.zeros_like(self.field_hat, dtype=self.field_hat.dtype)
-
-        for e in range(0,self.nelv):
-
-            kw = self.kw[int(np.floor(e/self.elements_to_average))]
-            x = field_sampled[e].reshape(-1,1)
-            y = field_sampled[e].reshape(-1,1)
-
-            y_lcl_rct,y_std_lcl_rct = lcl_predict(kw,self.v,self.n_samples,x,y,sampling_type, self.kw_diag)
-
-            field_rct[e] = y_lcl_rct.reshape(field_rct[e].shape)
-    
-        return field_rct
-
-
-    def lcl_sample(self, kw,V,numfreq,x,y,sampling_type):
-        #local inputs
-        V = V
-        numfreq = numfreq
-        
-        x=x.reshape(-1,1)
-        y=y.reshape(-1,1)
-
-        #allocation
-        y_lcl_trunc = np.ones(y.shape)*-50
-
-        #Make Kw a matrix
-        kw=np.diag(kw)
-
-        # Some variables to loop over
-        ind_train=[]
-        imax=0
-
-        for freq in range(0,numfreq):
-
-            # Choose the sample index and sort previous ones
-            ind_train.append(imax)
-            ind_train.sort()
-
-            # Find the indices of the entries that have not been sampled
-            ind_notchosen=[]
-            for i in range(0,y.shape[0]):
-                if i not in ind_train:
-                    ind_notchosen.append(i)
-
-            x_11,y_11,k00,k11,k22,k02,k20,k12,k21 = get_samples_and_cov(x,y,V,kw,ind_train,ind_notchosen)
-
-            y_21,y_21_std,imax = get_prediction_and_maxentropyindex(x_11,y_11,k00,k11,k22,k02,k20,k12,k21,ind_train)
-                
-        # This is a column vector 
-        y_lcl_trunc[ind_train,0] = y_11
-
-        return y_lcl_trunc
-
     def _estimate_covariance_average(self, field_hat : np.ndarray, settings: dict):
 
         if self.bckend == "numpy":
@@ -1163,29 +1124,6 @@ class DirectSampler:
             else:
                 raise ValueError("Invalid space to transform the field to")
 
-
-    def obs_sample_fixed_bitrate(self, n_samples: int):
-        """
-        """
-
-        field_sampled = np.zeros_like(self.field_hat, dtype=self.field_hat.dtype)
-        sampling_type = "max_ent"
-
-        for e in range(0,self.nelv):
-
-            kw = self.kw[int(np.floor(e/self.elements_to_average))]
-            #x = self.transformed_index[e].reshape(-1,1)
-            x = self.field[e].reshape(-1,1)
-            y = self.field[e].reshape(-1,1)
-
-            # The result is a column vector
-            y_lcl_trunc = self.lcl_sample(kw,self.v,n_samples,x,y,sampling_type)
-
-            field_sampled[e] = y_lcl_trunc.reshape(field_sampled[e].shape)
-
-        self.field_sampled = field_sampled
-
-
     def _get_covariance_matrix(self, settings: dict, field_name: str, avg_idx2: np.ndarray, elem_idx2: np.ndarray):
         """
         """
@@ -1269,7 +1207,7 @@ class DirectSampler:
                 elements_to_average = settings["covariance"]["elements_to_average"]
                 
                 # Retrieve the truncated field
-                f_hat_full = uncompressed_data[f"{field_name}"]["f_hat"].reshape(averages, elements_to_average, -1, 1)
+                f_hat_full = self.uncompressed_data[f"{field_name}"]["f_hat"].reshape(averages, elements_to_average, -1, 1)
                 f_hat = f_hat_full[avg_idx2, elem_idx2, :, :]
                 
                 # Calculate the covariance matrix with f_hat @ f_hat.T
@@ -1444,7 +1382,7 @@ class DirectSampler:
                                     ind_train: torch.Tensor, avg_idx: torch.Tensor, elem_idx: torch.Tensor,
                                     avg_idx2: torch.Tensor, elem_idx2: torch.Tensor, 
                                     freq: int = None, predict_mean: bool = True, predict_std: bool = True,
-                                    method = 'lu'):
+                                    method = 'lu', mean_op = None, std_op = None, unsampled_field = None):
         
         # Select the correct freq index:
         if freq is None:
@@ -1473,8 +1411,9 @@ class DirectSampler:
             k21 = k12.transpose(-2, -1)  # Shape: (b1, b2, n, freq+1)
 
             # Covariance of the real data
-            temp = V_22 * kw_diag.unsqueeze(-2)  # Broadcasting (shape: (b1, b2, n, n))
-            k22 = torch.matmul(temp, V_22.transpose(-1, -2))  # Shape: (b1, b2, n, n)
+            if isinstance(unsampled_field, type(None)):
+                temp = V_22 * kw_diag.unsqueeze(-2)  # Broadcasting (shape: (b1, b2, n, n))
+                k22 = torch.matmul(temp, V_22.transpose(-1, -2))  # Shape: (b1, b2, n, n)
 
         else:
 
@@ -1487,9 +1426,14 @@ class DirectSampler:
             k21 = k12.permute(0, 1, 3, 2)  # shape: (averages, elements_to_average, n, freq+1)
 
             # Covariance of the real data
-            temp = torch.matmul(V_22, kw)  # shape: (averages, elements_to_average, n, n)
-            k22 = torch.matmul(temp, V_22.transpose(-1, -2))  # shape: (averages, elements_to_average, n, n)
+            if isinstance(unsampled_field, type(None)):
+                temp = torch.matmul(V_22, kw)  # shape: (averages, elements_to_average, n, n)
+                k22 = torch.matmul(temp, V_22.transpose(-1, -2))  # shape: (averages, elements_to_average, n, n)
 
+        if not isinstance(unsampled_field, type(None)):
+            _y = unsampled_field[avg_idx2, elem_idx2]    
+            k22 = torch.matmul(_y, _y.transpose(-1, -2))
+        
         # Create a small epsilon for numerical stability in inversion.
         eps = 1e-7 * torch.eye(k11.shape[-1], device=k11.device, dtype=k11.dtype).reshape(1, 1, k11.shape[-1], k11.shape[-1])
 
@@ -1498,13 +1442,22 @@ class DirectSampler:
             if predict_mean:
                 # Predict the mean: y_21 = k21 * inv(k11 + eps) * y_11
                 y_21 = torch.matmul(k21, torch.linalg.solve(k11 + eps, y_11))
+                
+                if mean_op is not None:
+                    y_21 = torch.matmul(mean_op.view(1,1,V.shape[0],V.shape[1]), y_21)
 
             y_21_std = None
             if predict_std:
                 # Predict the covariance of predictions
                 sigma21 = k22 - torch.matmul(k21, torch.linalg.solve(k11 + eps, k12))
+
+                if std_op is not None:
+                    sigma21 = torch.matmul(torch.matmul(std_op.view(1,1,V.shape[0],V.shape[1]), sigma21), std_op.view(1,1,V.shape[0],V.shape[1]).transpose(-1,-2))
+
+                sigma21 = torch.diagonal(sigma21, dim1=-2, dim2=-1)
+
                 # Extract the diagonal (variance) and compute the standard deviation
-                y_21_std = torch.sqrt(torch.abs(torch.einsum("...ii->...i", sigma21)))
+                y_21_std = torch.sqrt(torch.abs(sigma21))
         
         elif method == 'cholesky':
             # Compute Cholesky factorization
@@ -1520,6 +1473,9 @@ class DirectSampler:
 
                 # Compute the predicted mean
                 y_21 = torch.matmul(k21, x)
+                
+                if mean_op is not None:
+                    y_21 = torch.matmul(mean_op.view(1,1,V.shape[0],V.shape[1]), y_21)
 
             y_21_std = None
             if predict_std:
@@ -1530,7 +1486,12 @@ class DirectSampler:
                 x = torch.linalg.solve_triangular(L.transpose(-1, -2), u, upper=True)
 
                 # Compute only the diagonal of sigma21 efficiently
-                sigma21_diag = torch.diagonal(k22 - torch.matmul(k21, x), dim1=-2, dim2=-1)
+                sigma21_diag = k22 - torch.matmul(k21, x)
+                
+                if std_op is not None:
+                    sigma21_diag = torch.matmul(torch.matmul(std_op.view(1,1,V.shape[0],V.shape[1]), sigma21_diag), std_op.view(1,1,V.shape[0],V.shape[1]).transpose(-1,-2))
+
+                sigma21_diag = torch.diagonal(sigma21_diag, dim1=-2, dim2=-1)
 
                 # Compute the standard deviation
                 y_21_std = torch.sqrt(torch.abs(sigma21_diag))
@@ -1548,16 +1509,25 @@ class DirectSampler:
                 # Compute the predicted mean
                 y_21 = torch.matmul(k21, x)
 
+                if mean_op is not None:
+                    y_21 = torch.matmul(mean_op.view(1,1,V.shape[0],V.shape[1]), y_21)
+
             y_21_std = None
             if predict_std:
                 # Solve LU system for k12
                 x = torch.linalg.lu_solve(LU, piv, k12)
 
                 # Compute only the diagonal of sigma21 efficiently
-                sigma21_diag = torch.diagonal(k22 - torch.matmul(k21, x), dim1=-2, dim2=-1)
+                sigma21_diag = k22 - torch.matmul(k21, x)
+
+                if std_op is not None:
+                    sigma21_diag = torch.matmul(torch.matmul(std_op.view(1,1,V.shape[0],V.shape[1]), sigma21_diag), std_op.view(1,1,V.shape[0],V.shape[1]).transpose(-1,-2))
+
+                sigma21_diag = torch.diagonal(sigma21_diag, dim1=-2, dim2=-1)
 
                 # Compute the standard deviation
                 y_21_std = torch.sqrt(torch.abs(sigma21_diag))
+                #y_21_std = torch.abs(sigma21_diag)
 
         elif method == 'cg':
 
@@ -1568,6 +1538,9 @@ class DirectSampler:
 
                 # Compute the predicted mean
                 y_21 = torch.matmul(k21, x)
+                
+                if mean_op is not None:
+                    y_21 = torch.matmul(mean_op.view(1,1,V.shape[0],V.shape[1]), y_21)
 
             y_21_std = None
             if predict_std:
@@ -1575,137 +1548,15 @@ class DirectSampler:
                 x = conjugate_gradient(k11 + eps, k12, max_iter=100)
 
                 # Compute only the diagonal of sigma21 efficiently
-                sigma21_diag = torch.diagonal(k22 - torch.matmul(k21, x), dim1=-2, dim2=-1)
+                sigma21_diag = k22 - torch.matmul(k21, x)
+                
+                if std_op is not None:
+                    sigma21_diag = torch.matmul(torch.matmul(std_op.view(1,1,V.shape[0],V.shape[1]), sigma21_diag), std_op.view(1,1,V.shape[0],V.shape[1]).transpose(-1,-2))
+
+                sigma21_diag = torch.diagonal(sigma21_diag, dim1=-2, dim2=-1)
 
                 # Compute the standard deviation
                 y_21_std = torch.sqrt(torch.abs(sigma21_diag))
-
-        return y_21, y_21_std
-
-    def torch_gaussian_process_regression(self, y: np.ndarray, V: np.ndarray, kw: np.ndarray, 
-                                    ind_train: np.ndarray, avg_idx: np.ndarray, elem_idx: np.ndarray,
-                                    avg_idx2: np.ndarray, elem_idx2: np.ndarray, freq: int = None, predict_mean: bool = True, predict_std: bool = True,
-                                    cholesky = True):
-
-        # select the correct freq index:
-        if freq is None:
-            freq_idex = slice(None)
-        else:
-            freq_idex = slice(freq+1)
-
-        # Select the current samples            
-        y_11 = y[avg_idx, elem_idx, ind_train[avg_idx2,elem_idx2,freq_idex],:]
-
-        V_11 = V[ind_train[avg_idx2,elem_idx2,freq_idex], :]
-        V_22 = V.reshape(1,1,V.shape[0],V.shape[1])
-
-        self.log.tic()
-        if self.kw_diag == True:
-        
-            # Extract the diagonal entries from KW.
-            # This results in an array of shape (averages, elements_to_average, n)
-            kw_diag = np.diagonal(kw, axis1=-2, axis2=-1)
-
-            # For V_11, which is assumed to have shape (averages, elements_to_average, freq+1, n),
-            # multiplying by a diagonal matrix on the right is equivalent to element-wise scaling 
-            # of its last axis. We add a new axis so that broadcasting works correctly.
-            temp = V_11 * kw_diag[:, :, None, :]  
-            # Compute k11: (averages, elements_to_average, freq+1, freq+1)
-            k11 = np.matmul(temp, np.swapaxes(V_11, -1, -2))
-
-            # Compute k12 similarly using V_22.
-            k12 = np.matmul(temp, np.swapaxes(V_22, -1, -2))
-            k21 = k12.transpose(0, 1, 3, 2)
-
-            # For V_22, do the same diagonal multiplication.
-            temp2 = V_22 * kw_diag[:, :, None, :]
-            k22 = np.matmul(temp2, np.swapaxes(V_22, -1, -2))
-        
-        else:
-
-            ## Get covariance matrices
-            ## This approach was faster than using einsum. Potentially due to the size of the matrices
-            ### Covariance of the sampled entries
-            temp = np.matmul(V_11, kw)  # shape: (averages, elements_to_average, freq+1, n)
-            k11 = np.matmul(temp, np.swapaxes(V_11, -1, -2))  # results in shape: (averages, elements_to_average, freq+1, freq+1)
-            ### Covariance of the predictions
-            #temp = np.matmul(V_11, kw)  # shape: (averages, elements_to_average, freq+1, n)
-            k12 = np.matmul(temp, np.swapaxes(V_22, -1, -2))  # if V_22 is shaped appropriately
-            k21 = k12.transpose(0, 1, 3, 2)
-
-            temp = np.matmul(V_22, kw)  # shape: (averages, elements_to_average, n, n)
-            k22 = np.matmul(temp, np.swapaxes(V_22, -1, -2))  # results in shape: (averages, elements_to_average, n, n)
-
-        # Make predictions to sample
-        ## Create some matrices to stabilize the inversions
-        eps = 1e-10*np.eye(k11.shape[-1]).reshape(1,1,k11.shape[-1],k11.shape[-1])
-        ## Predict the mean and covariance matrix of all entires (data set 2) given the known samples (data set 1)
-
-        
-        self.log.write("debug", "Calculated covariance")
-        self.log.toc() 
-        
-        self.log.tic()
-        if cholesky:
-
-            #k11[np.where(k11 < 0)] = 0
-
-            # Compute the Cholesky factor L such that (k11 + eps) = L L^T.
-            L = np.linalg.cholesky(k11 + eps)  # L shape: (averages, elements_to_average, freq+1, freq+1)
-            self.log.write("debug", "Cholesky factor computed")
-
-            y_21 = None
-            if predict_mean:
-                # Solve (k11 + eps) * sol = y_11 using two triangular solves:
-                # 1. Solve L * z = y_11:
-                z = np.linalg.solve(L, y_11)
-                # 2. Solve L^T * sol = z:
-                sol = np.linalg.solve(np.swapaxes(L, -1, -2), z)
-                # Predictive mean: y_21 = k21 @ sol
-                y_21 = np.matmul(k21, sol)
-
-            y_21_std = None
-            if predict_std:
-                # Instead of computing the full predictive covariance, we only need its diagonal.
-                # Solve for v in (k11 + eps) * v = k12:
-                self.log.write("info", f"solving L v = k12 with shape {L.shape} and {k12.shape}")
-                #v = np.linalg.solve(L, k12)  # v shape: (averages, elements_to_average, freq+1, n)
-                v = np.linalg.solve(L, k12)  # v shape: (a, b, m, n)
- 
-                self.log.write("debug", "v obtained")
-                # The term k21*(k11+eps)^{-1}*k12 equals v^T v.
-                # Its diagonal is obtained by summing the squares of v along the training dimension (axis 2).
-                v_sq_sum = np.sum(v**2, axis=2)  # shape: (averages, elements_to_average, n)
-                self.log.write("debug", "v^2 obtained")
-                # Extract the diagonal of k22:
-                batch0, batch1, n_test, _ = k22.shape
-                diag_k22 = np.empty((batch0, batch1, n_test))
-                for i in range(batch0):
-                    for j in range(batch1):
-                        diag_k22[i, j, :] = np.diagonal(k22[i, j, :, :])
-                self.log.write("debug", "diag_k22 obtained")
-                # The predictive variance (diagonal) is: diag(sigma21) = diag(k22) - v_sq_sum.
-                sigma21_diag = diag_k22 - v_sq_sum
-                self.log.write("debug", "sigma21_diag obtained")
-                y_21_std = np.sqrt(np.abs(sigma21_diag))
-                self.log.write("debug", "y_21_std obtained")
-        
-        else:
-
-            y_21 = None
-            if predict_mean:
-                y_21= np.matmul(k21, np.linalg.solve(k11+eps, y_11))
-
-            y_21_std = None
-            if predict_std:    
-                sigma21 = k22 - np.matmul(k21, np.linalg.solve(k11+eps ,k12))
-                self.log.write("debug", "Predicted sigma21")           
-                ## Predict the standard deviation of all entires (data set 2) given the known samples (data set 1)
-                y_21_std = np.sqrt(np.abs(np.einsum("...ii->...i", sigma21)))
-                self.log.write("debug", "Predicted y_21_std")
-
-        self.log.write("debug", "Inverted")
-        self.log.toc() 
 
         return y_21, y_21_std
 
@@ -1786,86 +1637,6 @@ def torch_apply_operator(dr, field):
     
     return transformed_field
 
-def get_samples_and_cov(x,y,V,kw,ind_train,ind_notchosen):
-
-    # Sample the main signal
-    x_11=x[ind_train,0]
-    y_11=y[ind_train,0]
-
-    # Sample the basis functions
-    V_00 = V[ind_notchosen,:]
-    V_11 = V[ind_train,:]
-    V_22 = V
-
-    # Get covariance matrices
-    ## Covariance of not sampled entries
-    k00 = V_00@kw@V_00.T
-    k02 = V_00@kw@V_22.T
-    k20=k02.T
-    ## Covariance of the sampled entries
-    k11 = V_11@kw@V_11.T
-    k12 = V_11@kw@V_22.T
-    k21=k12.T
-    ## Covariance of the predictions
-    k22 = V_22@kw@V_22.T
-
-    return x_11,y_11,k00,k11,k22,k02,k20,k12,k21
-
-def get_prediction_and_maxentropyindex(x_11,y_11,k00,k11,k22,k02,k20,k12,k21,ind_train):
-    # Make predictions
-    ## Create some matrices to stabilize the inversions
-    eps = 1e-10*np.eye(len(ind_train))
-    ## Predict the mean and covariance matrix of all entires (data set 2) given the known samples (data set 1)
-    y_21= k21@np.linalg.inv(k11+eps)@(y_11)
-    sigma21 = k22 - (k21@np.linalg.inv(k11+eps)@k12)
-    ## Predict the standard deviation of all entires (data set 2) given the known samples (data set 1)
-    y_21_std = np.sqrt(np.abs(np.diag(sigma21)))
-
-    ## Calculate the mutual information
-    ent=y_21_std
-
-    ## The new sample is that one that has the higher mutual information
-    for i in range(0,ent.shape[0]):
-        if i in ind_train:
-            ent[i]=0
-    imax=np.argmax(ent)
-
-    return y_21,y_21_std,imax
-
-def lcl_predict(kw,V,numfreq,x,y,sampling_type, kw_diag=True):
-##################### local subroutine ##################################
-    #local inputs
-
-    x = x.reshape(-1,1)
-    y = y.reshape(-1,1)
-
-    #allocation
-    y_lcl_rct = np.zeros(y.shape)
-
-    if kw_diag == True:
-        #Make Kw a matrix
-        kw=np.diag(kw)
-    else:
-        kw = kw@kw.T
-    #Make Kw a matrix
-    #kw=np.diag(kw)
-
-    ind_train=np.where(y!=-50)[0]
-
-    # Find the indices of the entries that have not been sampled
-    ind_notchosen=[]
-    for i in range(0,y.shape[0]):
-        if i not in ind_train:
-            ind_notchosen.append(i)
-
-    x_11,y_11,k00,k11,k22,k02,k20,k12,k21 = get_samples_and_cov(x,y,V,kw,ind_train,ind_notchosen)
-
-    y_lcl_rct,y_std_lcl_rct,imax = get_prediction_and_maxentropyindex(x_11,y_11,k00,k11,k22,k02,k20,k12,k21,ind_train)
-
-    y_lcl_rct[ind_train]=y_11
-
-    return y_lcl_rct,y_std_lcl_rct
-
 def add_settings_to_hdf5(h5group, settings_dict):
     """
     Recursively adds the key/value pairs from a settings dictionary to an HDF5 group.
@@ -1893,23 +1664,6 @@ def load_hdf5_settings(group):
         if isinstance(item, h5py.Group):
             settings[key] = load_hdf5_settings(item)
     return settings
-
-def batched_triangular_solve(L: np.ndarray, B: np.ndarray) -> np.ndarray:
-    """
-    Solve L * X = B for X in a batched fashion.
-    
-    L: numpy array of shape (batch0, batch1, m, m)
-    B: numpy array of shape (batch0, batch1, m, n_rhs)
-    
-    Returns:
-      X: numpy array of shape (batch0, batch1, m, n_rhs)
-    """
-    # Convert to torch tensors (on CPU; you can also specify device='cuda' if available)
-    L_t = torch.from_numpy(L).float()
-    B_t = torch.from_numpy(B).float()
-    # Use torch.linalg.solve which supports batched matrices.
-    X_t = torch.linalg.solve(L_t, B_t)
-    return X_t.cpu().numpy()
 
 def conjugate_gradient(A, b, tol=1e-5, max_iter=1000):
     """
