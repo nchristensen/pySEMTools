@@ -83,6 +83,11 @@ class Mesh:
         self.log = Logger(comm=comm, module_name="Mesh")
         self.create_connectivity_bool = create_connectivity
 
+        self.bckend = bckend
+        if bckend == 'torch':
+            if sys.modules.get("torch") is None:
+                raise ImportError("torch is not installed. Please install it to use the torch backend.")
+
         if not isinstance(data, NoneType):
             self.init_from_data(comm, data)
 
@@ -95,11 +100,6 @@ class Mesh:
 
         else:
             self.log.write("info", "Initializing empty Mesh object.")
-
-        self.bckend = bckend
-        if bckend == 'torch':
-            if sys.modules.get("torch") is None:
-                raise ImportError("torch is not installed. Please install it to use the torch backend.")
 
     def init_from_data(self, comm, data):
         """
@@ -428,6 +428,15 @@ class Mesh:
                                     linear_index(i, j, k, e, self.lx, self.ly, self.lz)
                                 ]
 
+    def to(self, comm=None, bckend = 'numpy'):
+        """
+        """
+
+        if self.bckend == 'torch':
+            msh_cpu = Mesh(comm = comm, x = self.x.cpu().numpy(), y = self.y.cpu().numpy(), z = self.z.cpu().numpy(), bckend = bckend)
+            return msh_cpu
+        else:
+            return self
 
 def linear_index(i, j, k, l, lx, ly, lz):
     """
