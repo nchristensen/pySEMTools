@@ -31,7 +31,7 @@ def generate_augmented_field(
     # Get products
     ## From here on, they will be added as scalars. Keep the neko order
     temp = fld.registry["p"] * fld.registry["p"]
-    stat_fld.add_field(comm, field_name="pp", field=temp, dtype=dtype) #5
+    stat_fld.add_field(comm, field_name="t", field=temp, dtype=dtype) #5
     temp = fld.registry["u"] * fld.registry["u"]
     stat_fld.add_field(comm, field_name="uu", field=temp, dtype=dtype)
     temp = fld.registry["v"] * fld.registry["v"]
