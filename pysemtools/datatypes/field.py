@@ -14,6 +14,14 @@ if importlib.util.find_spec('torch') is not None:
         np.dtype('int32'): torch.int32,
         np.dtype('bool'): torch.bool,
     }
+ 
+    inverse_dtype_map = {
+    torch.float64: np.dtype('float64'),
+    torch.float32: np.dtype('float32'),
+    torch.int64: np.dtype('int64'),
+    torch.int32: np.dtype('int32'),
+    torch.bool: np.dtype('bool'),
+}
 from ..monitoring.logger import Logger
 from ..io.ppymech.neksuite import pynekread_field
 
@@ -491,3 +499,15 @@ class FieldRegistry(Field):
                 self.registry_pos[field_name] = f"{prefix}_{len(self.fields[prefix])-1}"
 
             super().update_vars()
+
+    def to(self, comm = None, bckend = 'numpy'):
+        """
+        Move all fields to cpu in numpy to write out
+        """
+        if self.bckend == 'torch':
+            fld_cpu = FieldRegistry(comm, bckend='numpy')
+            for key in self.registry.keys():
+                fld_cpu.add_field(comm, field_name=key, field=self.registry[key].cpu().numpy(), dtype=inverse_dtype_map[self.registry[key].dtype])
+            return fld_cpu
+        else:
+            return self

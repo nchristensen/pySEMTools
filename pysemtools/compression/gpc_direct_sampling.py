@@ -216,13 +216,14 @@ class DirectSampler:
         except Exception:
             # Log that parallel HDF5 is not available and a folder will be created.
             self.log.write("info", "Parallel HDF5 not available; creating folder to store rank files.")
-            base_name, _ = os.path.splitext(filename)
+            path_name = os.path.dirname(filename)
+            base_name = os.path.basename(filename)
             folder_name = f"{base_name}_comp"
             if rank == 0:
-                os.makedirs(folder_name, exist_ok=True)
+                os.makedirs(os.path.join(path_name, folder_name), exist_ok=True)
             # Ensure all ranks wait until the folder has been created.
             comm.Barrier()
-            file_path = os.path.join(folder_name, f"{base_name}_rank_{rank}.h5")
+            file_path = os.path.join(path_name, folder_name, f"{base_name}_rank_{rank}.h5")
             f = h5py.File(file_path, "w")
 
         # Indicate that the data are bytes
@@ -283,9 +284,10 @@ class DirectSampler:
             else:
                 raise RuntimeError("Parallel HDF5 not supported")
         except Exception:
-            base_name, _ = os.path.splitext(filename)
+            path_name = os.path.dirname(filename)
+            base_name = os.path.basename(filename)
             folder_name = f"{base_name}_comp"
-            file_path = os.path.join(folder_name, f"{base_name}_rank_{rank}.h5")
+            file_path = os.path.join(path_name, folder_name, f"{base_name}_rank_{rank}.h5")
             f = h5py.File(file_path, "r")
             mode = "non_parallel"
 
