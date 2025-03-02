@@ -1211,7 +1211,7 @@ class DirectSampler:
                 f_hat = f_hat_full[avg_idx2, elem_idx2, :, :]
                 
                 # Calculate the covariance matrix with f_hat @ f_hat.T
-                if kw_diag:
+                if self.kw_diag:
                     # Reshape f_hat so that each row becomes a matrix column vector
                     f_hat_reshaped = f_hat.reshape(averages2 * elements_to_average2, -1, 1)
                     # Compute the covariance matrices for each entry: f_hat @ f_hat.T
