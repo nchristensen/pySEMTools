@@ -733,11 +733,14 @@ class DirectSampler:
         # Reshape the truncated field back to the original shape of "field"
         return y_truncated.reshape(field.shape)
 
-    def reconstruct_field(self, field_name: str = None, get_mean: bool = True, get_std: bool = False, mean_op = None, std_op = None, unsampled_field_available=False):
+    def reconstruct_field(self, field_name: str = None, get_mean: bool = True, get_std: bool = False, mean_op = None, std_op = None, unsampled_field_available=False, use_coefficients: bool = False):
             if self.bckend == "numpy":
                 return self.reconstruct_field_numpy(field_name, get_mean, get_std)
             elif self.bckend == "torch":
-                return self.reconstruct_field_torch(field_name, get_mean, get_std, mean_op = mean_op, std_op = std_op, unsampled_field_available=unsampled_field_available)
+                if not use_coefficients:
+                    return self.reconstruct_field_torch(field_name, get_mean, get_std, mean_op = mean_op, std_op = std_op, unsampled_field_available=unsampled_field_available)
+                else:
+                    return self.reconstruct_field_torch_coefficients(field_name)
 
     def reconstruct_field_numpy(self, field_name: str = None, get_mean: bool = True, get_std: bool = False):
         """
@@ -925,6 +928,28 @@ class DirectSampler:
         if get_std:
             y_reconstructed_std = y_reconstructed_std.reshape(sampled_field.shape)
             #y_reconstructed_std[mask] = 0
+
+        return y_reconstructed, y_reconstructed_std
+    
+    def reconstruct_field_torch_coefficients(self, field_name: str = None):
+        """
+        Reconstructs the field using Gaussian Process Regression in PyTorch.
+        """
+
+        settings = self.settings
+        # Set the reshaping parameters
+        averages = settings["covariance"]["averages"]
+        elements_to_average = settings["covariance"]["elements_to_average"]
+
+        try:
+            y = self.uncompressed_data[field_name]["f_hat"]
+        except KeyError:
+            raise KeyError(f"Field {field_name} not found in uncompressed_data - make sure you used DLT when compressing, otherwise remove the use_coefficients option")
+        
+        # Allocate storage for reconstructed fields
+        y_reconstructed_std = None
+
+        y_reconstructed = self.transform_field(field = y, to="physical")
 
         return y_reconstructed, y_reconstructed_std
  
