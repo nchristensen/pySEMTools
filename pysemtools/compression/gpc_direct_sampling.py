@@ -1662,7 +1662,7 @@ def torch_apply_operator(dr, field):
     # Reshape the result back to the original field shape
     transformed_field = transformed_field.reshape(original_shape)
     
-    return transformed_field
+    return transformed_field.contiguous()
 
 def add_settings_to_hdf5(h5group, settings_dict):
     """
