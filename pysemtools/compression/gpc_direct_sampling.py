@@ -924,7 +924,7 @@ class DirectSampler:
         mask = sampled_field != -50
         if get_mean:
             y_reconstructed = y_reconstructed.reshape(sampled_field.shape)
-            #y_reconstructed[mask] = sampled_field[mask]
+            y_reconstructed[mask] = sampled_field[mask]
         if get_std:
             y_reconstructed_std = y_reconstructed_std.reshape(sampled_field.shape)
             #y_reconstructed_std[mask] = 0
