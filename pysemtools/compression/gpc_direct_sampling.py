@@ -699,29 +699,47 @@ class DirectSampler:
                     
                     else:
 
-                        # Get indices of the `num_samples_this_it` largest standard deviations.
-                        sorted_indices = torch.argsort(sub_y_std, dim=2, descending=True)  # Sort along last dim
-                        selected_indices = sorted_indices[:, :, :num_samples_this_it]  # Select top `num_samples_this_it`
+                        sorted_indices = torch.argsort(sub_y_std, dim=2, descending=True)  
 
-                        # Ensure that we don't pick already selected indices.
-                        for i in range(selected_indices.shape[0]):  # Iterate over batch (chunk_a)
-                            for j in range(selected_indices.shape[1]):  # Iterate over batch (chunk_e)
-                                already_selected = set(ind_train[i, j, :freq+1].tolist())  # Convert to set for fast lookup
-                                sorted_list = sorted_indices[i, j]  # Torch tensor of sorted indices
+                        final_selected = torch.zeros(
+                            (sub_y_std.shape[0], sub_y_std.shape[1], num_samples_this_it),
+                            dtype=torch.long,
+                            device=sub_y_std.device
+                        )
 
-                                # Keep only valid indices (not in already_selected)
+                        for i in range(sub_y_std.shape[0]):       # chunk_a
+                            for j in range(sub_y_std.shape[1]):   # chunk_e
+
+                                i_global = start_a + i
+                                j_global = start_e + j
+
+                                already_selected = set(ind_train[i_global, j_global, :freq+1].tolist())
+
+                                candidate_list = sorted_indices[i, j]  # shape = [n_points]
+
+                                # Filter out duplicates
                                 valid_indices = []
-                                for idx in sorted_list:
-                                    if idx.item() not in already_selected:  # Check if it's already selected
-                                        valid_indices.append(idx)
-                                        if len(valid_indices) == num_samples_this_it:
-                                            break  # Stop once we have enough indices
+                                for c in candidate_list:
+                                    idx_val = c.item()
+                                    if idx_val not in already_selected:
+                                        valid_indices.append(idx_val)
+                                    # Stop once we have enough new indices
+                                    if len(valid_indices) == num_samples_this_it:
+                                        break
 
-                                # Convert valid_indices back to a tensor and store it
-                                selected_indices[i, j, :num_samples_this_it] = torch.tensor(valid_indices, device=y.device, dtype=torch.long)
+                                final_selected[i, j, :] = torch.tensor(
+                                    valid_indices,
+                                    dtype=torch.long,
+                                    device=sub_y_std.device
+                                )
 
-                        # Store the newly selected indices in `ind_train`
-                        ind_train[start_a:end_a, start_e:end_e, (freq+1):(freq+num_samples_this_it)+1] = selected_indices
+                        # Store the newly selected indices in `ind_train`.
+                        for i in range(sub_y_std.shape[0]):
+                            for j in range(sub_y_std.shape[1]):
+                                i_global = start_a + i
+                                j_global = start_e + j
+                                # Write into the correct slice
+                                ind_train[i_global, j_global, freq+1 : freq+1+num_samples_this_it] = final_selected[i, j]
 
                     # Update the noise if pertinent
                     if update_noise:
