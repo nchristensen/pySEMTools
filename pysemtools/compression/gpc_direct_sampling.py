@@ -177,8 +177,7 @@ class DirectSampler:
             elif self.bckend == "torch":
                 self.log.write("info", f"Sampling the field using the fixed bitrate method. using settings: {self.settings['compression']}")
                 self.log.write("info", f"Using backend: {self.bckend} on device: {self.device}")
-                if update_noise:
-                    print("updating nouise")
+                if update_noise and (covariance_method != "average"):
                     self.uncompressed_data[f"{field_name}"]["noise"] = 1e-3 * torch.ones((field.shape[0], 1), dtype=self.dtype_d, device = self.device, requires_grad=False)
                 field_sampled = self._sample_fixed_bitrate_torch(field, field_name, self.settings, max_samples_per_it, update_noise)
 
@@ -583,10 +582,17 @@ class DirectSampler:
         # Reshape the spatial dimensions into column vectors:
         # New shape: (averages, elements_to_average, spatial_elements, 1)
         y = field.reshape(averages, elements_to_average, field.shape[1] * field.shape[2] * field.shape[3], 1)
+
+        if settings["covariance"]["method"] == "average":
+            update_noise = False
         if update_noise:
             noise = self.uncompressed_data[field_name]["noise"].view(averages, elements_to_average, 1, 1)
         else:
             noise = None
+
+        unsampled_field = y
+        if settings["covariance"]["method"] != "dlt":
+            unsampled_field = None
 
         # Allocate the truncated field with the same type and device as y, filled with -50.
         y_truncated = torch.ones_like(y) * -50
@@ -653,7 +659,7 @@ class DirectSampler:
                     y_21, y_21_std = self.gaussian_process_regression_torch(
                         y, V, kw, ind_train,
                         avg_idx, elem_idx, avg_idx2, elem_idx2,
-                        freq, predict_mean=False, predict_std=True, unsampled_field=y, noise=noise
+                        freq, predict_mean=False, predict_std=True, unsampled_field=unsampled_field, noise=noise
                     )
 
                     # Set the standard deviation to zero at indices that have already been sampled.
@@ -1344,6 +1350,7 @@ class DirectSampler:
                 else:
                     # Retrieve the averaged hat fields
                     f_hat = self.uncompressed_data[f"{field_name}"]["kw"][avg_idx2[:, 0]]
+                    f_hat = f_hat.view(averages2, -1, 1)
                     # Calculate the covariance matrix as f_hat @ f_hat^T using einsum
                     kw = torch.einsum("eik,ekj->eij", f_hat, f_hat.permute(0, 2, 1))
                     # Add an axis to make it consistent for broadcasting
@@ -1537,7 +1544,7 @@ class DirectSampler:
         
         # Create a small epsilon for numerical stability in inversion.
         if isinstance(noise, type(None)):
-            eps = 1e-7 * torch.eye(k11.shape[-1], device=k11.device, dtype=k11.dtype).reshape(1, 1, k11.shape[-1], k11.shape[-1])
+            eps = 1e-10 * torch.eye(k11.shape[-1], device=k11.device, dtype=k11.dtype).reshape(1, 1, k11.shape[-1], k11.shape[-1])
         else:
             eps = noise[avg_idx2, elem_idx2]**2 * torch.eye(k11.shape[-1], device=k11.device).reshape(1, 1, k11.shape[-1], k11.shape[-1])
         
