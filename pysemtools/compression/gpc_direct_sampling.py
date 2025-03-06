@@ -20,9 +20,11 @@ class DirectSampler:
     Class to perform direct sampling on a field in the SEM format
     """
 
-    def __init__(self, comm: MPI.Comm = None, dtype: np.dtype = np.double,  msh: Mesh = None, filename: str = None, max_elements_to_process: int = 256, bckend: str = "numpy"):
+    def __init__(self, comm: MPI.Comm = None, dtype: np.dtype = np.double,  msh: Mesh = None, filename: str = None, max_elements_to_process: int = 256, bckend: str = "numpy", mass_matrix = None):
         
         self.log = Logger(comm=comm, module_name="DirectSampler")
+        
+        self.b = mass_matrix
         
         if msh is not None:
             self.init_from_msh(msh, dtype=dtype, max_elements_to_process=max_elements_to_process)
@@ -53,6 +55,11 @@ class DirectSampler:
             self.dv_ds_d = torch.matmul(self.ds_d, self.v_d)
             if self.gdim > 2:
                 self.dv_dt_d = torch.matmul(self.dt_d, self.v_d)
+
+            if not isinstance(self.b, type(None)):
+                self.b_d = torch.tensor(self.b, dtype=self.dtype_d, device = self.device, requires_grad=False)
+            else:
+                self.b_d = None
 
             # If the data was initialized from file, put it in a torch tensor
             if hasattr(self, "uncompressed_data"):
@@ -145,7 +152,7 @@ class DirectSampler:
         self.compressed_data = {}
     
     def sample_field(self, field: np.ndarray = None, field_name: str = "field", covariance_method: str = "average", covariance_elements_to_average: int = 1, covariance_keep_modes: int=1,
-                    compression_method: str = "fixed_bitrate", bitrate: float = 1/2, max_samples_per_it: int = 1):
+                    compression_method: str = "fixed_bitrate", bitrate: float = 1/2, max_samples_per_it: int = 1, update_noise = False):
         
         self.log.write("info", "Sampling the field with options: covariance_method: {covariance_method}, compression_method: {compression_method}")
 
@@ -159,15 +166,21 @@ class DirectSampler:
         if compression_method == "fixed_bitrate":
             self.settings["compression"] =  {"method": compression_method,
                                              "bitrate": bitrate,
-                                             "n_samples" : int(self.lx*self.ly*self.lz * bitrate)}
+                                             "n_samples" : int(self.lx*self.ly*self.lz * bitrate),
+                                             "update_noise": update_noise}
             
             if self.bckend == "numpy":
                 self.log.write("info", f"Sampling the field using the fixed bitrate method. using settings: {self.settings['compression']}")
+                if update_noise:
+                    raise ValueError("The update_noise option is not supported for the numpy backend")
                 field_sampled = self._sample_fixed_bitrate(field, field_name, self.settings, max_samples_per_it)
             elif self.bckend == "torch":
                 self.log.write("info", f"Sampling the field using the fixed bitrate method. using settings: {self.settings['compression']}")
                 self.log.write("info", f"Using backend: {self.bckend} on device: {self.device}")
-                field_sampled = self._sample_fixed_bitrate_torch(field, field_name, self.settings, max_samples_per_it)
+                if update_noise:
+                    print("updating nouise")
+                    self.uncompressed_data[f"{field_name}"]["noise"] = 1e-3 * torch.ones((field.shape[0], 1), dtype=self.dtype_d, device = self.device, requires_grad=False)
+                field_sampled = self._sample_fixed_bitrate_torch(field, field_name, self.settings, max_samples_per_it, update_noise)
 
             self.uncompressed_data[f"{field_name}"]["field"] = field_sampled
             self.log.write("info", f"Sampled_field saved in field uncompressed_data[\"{field_name}\"][\"field\"]")
@@ -359,6 +372,8 @@ class DirectSampler:
                     shape = (keep_modes, lx*ly*lz)
                 elif data_key == "f_hat":    
                     shape = (nelv, lz, ly, lx)
+                elif data_key == "noise":
+                    shape = (nelv, 1)
                 else:
                     raise ValueError("Invalid data key")
 
@@ -549,7 +564,7 @@ class DirectSampler:
         # Reshape the field back to its original shape
         return y_truncated.reshape(field.shape)
 
-    def _sample_fixed_bitrate_torch(self, field: torch.Tensor, field_name: str, settings: dict, max_samples_per_it: int = 1):
+    def _sample_fixed_bitrate_torch(self, field: torch.Tensor, field_name: str, settings: dict, max_samples_per_it: int = 1, update_noise : bool = False):
         """
         """
 
@@ -568,6 +583,10 @@ class DirectSampler:
         # Reshape the spatial dimensions into column vectors:
         # New shape: (averages, elements_to_average, spatial_elements, 1)
         y = field.reshape(averages, elements_to_average, field.shape[1] * field.shape[2] * field.shape[3], 1)
+        if update_noise:
+            noise = self.uncompressed_data[field_name]["noise"].view(averages, elements_to_average, 1, 1)
+        else:
+            noise = None
 
         # Allocate the truncated field with the same type and device as y, filled with -50.
         y_truncated = torch.ones_like(y) * -50
@@ -634,7 +653,7 @@ class DirectSampler:
                     y_21, y_21_std = self.gaussian_process_regression_torch(
                         y, V, kw, ind_train,
                         avg_idx, elem_idx, avg_idx2, elem_idx2,
-                        freq, predict_mean=False, predict_std=True, unsampled_field=y
+                        freq, predict_mean=False, predict_std=True, unsampled_field=y, noise=noise
                     )
 
                     # Set the standard deviation to zero at indices that have already been sampled.
@@ -703,6 +722,32 @@ class DirectSampler:
 
                         # Store the newly selected indices in `ind_train`
                         ind_train[start_a:end_a, start_e:end_e, (freq+1):(freq+num_samples_this_it)+1] = selected_indices
+
+                    # Update the noise if pertinent
+                    if update_noise:
+
+                        if not isinstance(self.b_d, type(None)):                            
+                            
+                            bb_ = self.b_d.view(averages, elements_to_average, field.shape[1] * field.shape[2] * field.shape[3], 1) 
+                            bb = bb_[avg_idx2, elem_idx2]
+                            y_ = y[avg_idx2, elem_idx2]
+                            residuals = y_ - y_21
+                            residuals2 = residuals ** 2
+
+                            # Get_std
+                            residuals = torch.sum(residuals * bb, dim=2, keepdim=True) / torch.sum(bb, dim=2, keepdim=True)  # per-batch sum across samples
+                            residuals2 = torch.sum(residuals2 *bb, dim=2, keepdim=True) / torch.sum(bb, dim=2, keepdim=True)  # per-batch sum across samples
+                            sigma_n = torch.sqrt(abs(residuals2 - residuals ** 2))  # per-batch std across samples
+
+                            # Update the noise
+                            noise[start_a:end_a, start_e:end_e] = sigma_n
+                            
+                        else:
+                            print("updating noise")
+                            y_ = y[avg_idx2, elem_idx2]
+                            residuals = y_ - y_21
+                            sigma_n = residuals.std(dim=2, keepdim=True)  # per-batch std across samples
+                            noise[start_a:end_a, start_e:end_e] = sigma_n
 
                     # Update counters
                     freq += num_samples_this_it
@@ -862,6 +907,12 @@ class DirectSampler:
             unsampled_field = self.supporting_data[field_name]["unsampled_field"].view(averages, elements_to_average, -1, 1)
         else:
             unsampled_field = None
+        
+        noise_ = self.uncompressed_data[field_name].get("noise", None)
+        if not isinstance(noise_, type(None)):
+            noise = noise_.view(averages, elements_to_average, 1, 1)
+        else:
+            noise = None
 
         # Allocate storage for reconstructed fields
         y_reconstructed = None
@@ -911,7 +962,7 @@ class DirectSampler:
                 y_21, y_21_std = self.gaussian_process_regression_torch(
                     y, V, kw, ind_train, avg_idx, elem_idx, avg_idx2, elem_idx2,
                     predict_mean=get_mean, predict_std=get_std, mean_op = mean_op, std_op = std_op,
-                    unsampled_field=unsampled_field
+                    unsampled_field=unsampled_field, noise=noise
                 )
 
                 # Store reconstructed values
@@ -1409,13 +1460,18 @@ class DirectSampler:
                                     ind_train: torch.Tensor, avg_idx: torch.Tensor, elem_idx: torch.Tensor,
                                     avg_idx2: torch.Tensor, elem_idx2: torch.Tensor, 
                                     freq: int = None, predict_mean: bool = True, predict_std: bool = True,
-                                    method = 'lu', mean_op = None, std_op = None, unsampled_field = None):
+                                    method = 'lu', mean_op = None, std_op = None, unsampled_field = None, noise = None):
         
         # Select the correct freq index:
         if freq is None:
             freq_idex = slice(None)
         else:
             freq_idex = slice(freq + 1)
+
+        # If updating the noise, remove the unsampled field
+        if not isinstance(noise, type(None)):
+            unsampled_field = None
+            predict_mean = True 
 
         # Select the current samples (using advanced indexing)
         y_11 = y[avg_idx, elem_idx, ind_train[avg_idx2, elem_idx2, freq_idex], :]
@@ -1462,7 +1518,12 @@ class DirectSampler:
             k22 = torch.matmul(_y, _y.transpose(-1, -2))
         
         # Create a small epsilon for numerical stability in inversion.
-        eps = 1e-7 * torch.eye(k11.shape[-1], device=k11.device, dtype=k11.dtype).reshape(1, 1, k11.shape[-1], k11.shape[-1])
+        if isinstance(noise, type(None)):
+            eps = 1e-7 * torch.eye(k11.shape[-1], device=k11.device, dtype=k11.dtype).reshape(1, 1, k11.shape[-1], k11.shape[-1])
+        else:
+            eps = noise[avg_idx2, elem_idx2]**2 * torch.eye(k11.shape[-1], device=k11.device).reshape(1, 1, k11.shape[-1], k11.shape[-1])
+        
+        print(eps)
 
         if method == 'naive':
             y_21 = None
