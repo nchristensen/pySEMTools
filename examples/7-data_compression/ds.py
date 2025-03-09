@@ -47,8 +47,8 @@ def main():
         prof.enable()
 
     ## Sample here
-    #ds.sample_field(field=fld.registry["u"], field_name="u", covariance_method="svd", compression_method="fixed_bitrate", bitrate = bitrate, covariance_keep_modes=1)
-    ds.sample_field(field=fld.registry["u"], field_name="u", covariance_method="average", covariance_elements_to_average=1, compression_method="fixed_bitrate", bitrate = bitrate)
+    ds.sample_field(field=fld.registry["u"], field_name="u", covariance_method="dlt", compression_method="fixed_bitrate", bitrate = bitrate, covariance_keep_modes=64)
+    #ds.sample_field(field=fld.registry["u"], field_name="u", covariance_method="average", covariance_elements_to_average=1, compression_method="fixed_bitrate", bitrate = bitrate)
 
     ## Compress
     ds.compress_samples(lossless_compressor="bzip2")
@@ -66,7 +66,7 @@ def main():
         prof.enable()
     
     ## Read
-    ds_read = DirectSampler(comm=comm, filename="test", bckend="numpy", max_elements_to_process=256)
+    ds_read = DirectSampler(comm=comm, filename="test", bckend="torch", max_elements_to_process=256)
     print(ds_read.uncompressed_data.keys())
     #predict
     rct, rct_std = ds_read.reconstruct_field(field_name="u", get_mean=True, get_std=True)
@@ -76,12 +76,12 @@ def main():
         prof.dump_stats('./decompression_cpu_%d.prof' %comm.Get_rank())
 
     # Get the error
-    error = np.linalg.norm(rct - fld.registry["u"].data)/np.linalg.norm(fld.registry["u"].data)
+    error = np.linalg.norm(rct - fld.registry["u"])/np.linalg.norm(fld.registry["u"])
     print("Error: ", error)
 
-#fname = '../data/mixlay0.f00001'
-fname = '../data/tc_channel0.f00001'
+fname = '../data/mixlay0.f00001'
+#fname = '../data/tc_channel0.f00001'
 #fname = '/home/adperez/Documents/gaussian_process/Gaussian Process_0823/data/turbPipe/turbPipe0.f00001'
-n_samples = 24
+n_samples = 2
 profile = True
 main()
