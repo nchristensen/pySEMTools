@@ -16,3 +16,4 @@ dependencies = [
 [project.scripts]
 pysemtools_index-files = "pysemtools.cli.index_files:main"
 pysemtools_visnek = "pysemtools.cli.visnek:main"
+pysemtools_extract_subdomain = "pysemtools.cli.extract_subdomain:main"
