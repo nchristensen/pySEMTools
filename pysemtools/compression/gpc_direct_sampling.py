@@ -449,13 +449,45 @@ class DirectSampler:
                                            "keep_modes": keep_modes,
                                            "kw_diag": self.kw_diag}
             
-            self.log.write("info", f"Estimating the covariance matrix using the SVD method. Keeping {keep_modes} modes")
+            self.log.write("info", f"Estimating the covariance matrix using the DLT method. Keeping {keep_modes} modes")
             fld_hat_truncated = self._estimate_covariance_dlt(field_hat, self.settings["covariance"])
 
             # Store the covariances in the data to be compressed:
             self.uncompressed_data[f"{field_name}"]["f_hat"] = fld_hat_truncated
 
             self.log.write("info", f"f_hat saved in field uncompressed_data[\"{field_name}\"][\"f_hat\"]")
+        
+        elif method.split("_")[0] == "ad":
+            # In this case, the kw will not be only the diagonal of the stored data but an approximation of the actual covariance
+            self.kw_diag = False
+            
+            try:
+                estimation = method.split("_")[1]
+            except:
+                estimation = ""
+
+            self.settings["covariance"] = {"method": "ad",
+                                           "estimation": estimation,
+                                           "averages" : self.nelv,
+                                           "elements_to_average": int(1),
+                                           "keep_modes": keep_modes,
+                                           "kw_diag": self.kw_diag}
+            
+            self.log.write("info", f"Estimating the covariance matrix using the AD method. Keeping {keep_modes} modes")
+            if (estimation == "rmse") or (estimation == ""):
+                self.field = field
+                fld_hat_truncated = self._estimate_covariance_ad_rmse(field_hat, self.settings["covariance"])
+            elif estimation == "ml":
+                self.field = field
+                fld_hat_truncated = self._estimate_covariance_ad_ml(field_hat, self.settings["covariance"])
+            else:
+                raise ValueError("Invalid estimation method for the AD method")
+
+            # Store the covariances in the data to be compressed:
+            self.uncompressed_data[f"{field_name}"]["f_hat"] = fld_hat_truncated
+
+            self.log.write("info", f"f_hat saved in field uncompressed_data[\"{field_name}\"][\"f_hat\"]")
+
 
         else:
             raise ValueError("Invalid method to estimate the covariance matrix")
@@ -767,7 +799,6 @@ class DirectSampler:
                             noise[start_a:end_a, start_e:end_e] = sigma_n
                             
                         else:
-                            print("updating noise")
                             y_ = y[avg_idx2, elem_idx2]
                             residuals = y_ - y_21
                             sigma_n = residuals.std(dim=2, keepdim=True)  # per-batch std across samples
@@ -1198,6 +1229,187 @@ class DirectSampler:
 
         # Reshape back to the original shape
         return y_truncated.reshape(field_hat.shape)
+    
+    
+    def _estimate_covariance_ad_rmse(self, field_hat : np.ndarray, settings: dict):
+
+        if self.bckend == "numpy":
+            raise NotImplementedError("The AD method is not implemented for the numpy backend")
+        elif self.bckend == "torch":
+
+            nelv = int(settings['averages'] * settings['elements_to_average'])
+            n_samples = settings["keep_modes"]
+            
+            # Reshape so that we have [nelv, -1]
+            y = self.field.reshape(self.field.shape[0], -1) 
+            y_hat = field_hat.reshape(field_hat.shape[0], -1) 
+            mass = self.b_d.reshape(self.b_d.shape[0], -1)
+
+            y_truncated = y_hat.clone().detach()
+
+            # Prepare chunking
+            chunk_size_e = self.max_elements_to_process
+            n_chunks_e = math.ceil(nelv / chunk_size_e)
+
+            for chunk_id_e in range(n_chunks_e):
+                start_e = chunk_id_e * chunk_size_e
+                end_e = min((chunk_id_e + 1) * chunk_size_e, nelv)
+
+                elem_idx = torch.arange(start_e, end_e, device=y_hat.device) 
+
+                y_real = y[elem_idx, :]
+                y_real = y_real.view(1, y_real.shape[0], y_real.shape[1], 1)
+                mass_real = mass[elem_idx, :]
+                mass_real = mass_real.view(1, mass_real.shape[0], mass_real.shape[1], 1)
+
+                y_samples = y[elem_idx, :]
+                y_samples = y_samples.view(1, y_samples.shape[0], y_samples.shape[1], 1)
+
+                y_h = y_hat[elem_idx, :].clone()
+                y_h = y_h.view(1, y_h.shape[0], y_h.shape[1], 1)
+
+                lamb = 0.01
+                y_ad = y_hat[elem_idx, :].clone().requires_grad_(True) * lamb
+                y_ad = y_ad.view(1, y_ad.shape[0], y_ad.shape[1], 1)
+                y_ad.retain_grad()  # Enable gradient storage for non-leaf tensor
+                
+                V = self.v_d.reshape(1, 1, self.v_d.shape[0], self.v_d.shape[1])
+
+                y_approx = torch.matmul(V, y_h + y_ad)
+
+                rmse = torch.sqrt(torch.sum((y_real - y_approx) ** 2 * mass_real, dim = (2,3), keepdim=False) / torch.sum(mass_real, dim=(2,3), keepdim=False))
+                rmse.backward(torch.ones_like(rmse), retain_graph=True)
+                grad = y_ad.grad.view(y_ad.shape[1], y_ad.shape[2])
+
+                # Sort indices by absolute value in descending order along dim=1
+                ind = torch.argsort(torch.abs(grad), dim=1, descending=True)
+
+                # Keep only the top n_samples indices
+                col_idx_to_zero = ind[:, n_samples:]
+
+                # Construct row indices (broadcasted) to match the shape of col_idx_to_zero
+                row_idx = elem_idx.unsqueeze(1).expand(-1, col_idx_to_zero.shape[1])
+
+                # Set those positions to zero
+                y_truncated[row_idx, col_idx_to_zero] = 0
+
+        # Reshape back to the original shape
+        return y_truncated.reshape(field_hat.shape)
+    
+    def _estimate_covariance_ad_ml(self, field_hat : np.ndarray, settings: dict):
+
+        if self.bckend == "numpy":
+            raise NotImplementedError("The AD method is not implemented for the numpy backend")
+        elif self.bckend == "torch":
+
+            nelv = int(settings['averages'] * settings['elements_to_average'])
+            interval = 1
+            n_coefficients = settings["keep_modes"]
+            
+            # Reshape so that we have [nelv, -1]
+            y = self.field.reshape(self.field.shape[0], -1) 
+            y_hat = field_hat.reshape(field_hat.shape[0], -1) 
+            mass = self.b_d.reshape(self.b_d.shape[0], -1)
+
+            y_truncated = y_hat.clone().detach()
+
+            # Prepare chunking
+            chunk_size_e = self.max_elements_to_process
+            n_chunks_e = math.ceil(nelv / chunk_size_e)
+
+            for chunk_id_e in range(n_chunks_e):
+                start_e = chunk_id_e * chunk_size_e
+                end_e = min((chunk_id_e + 1) * chunk_size_e, nelv)
+
+                elem_idx = torch.arange(start_e, end_e, device=y_hat.device) 
+
+                y_real = y[elem_idx, :]
+                y_real = y_real.view(1, y_real.shape[0], y_real.shape[1], 1)
+                
+                mass_real = mass[elem_idx, :]
+                mass_real = mass_real.view(1, mass_real.shape[0], mass_real.shape[1], 1)
+
+                y_samples = y[elem_idx, :-1:interval]
+                y_samples = y_samples.view(1, y_samples.shape[0], y_samples.shape[1], 1)
+
+                y_h = y_hat[elem_idx, :].clone().detach()
+                y_h = y_h.view(1, y_h.shape[0], y_h.shape[1], 1)
+                
+                y_ad = y_hat[elem_idx, :].clone().requires_grad_(True)
+                y_ad = y_ad.view(1, y_ad.shape[0], y_ad.shape[1], 1)
+                y_ad.retain_grad()  # Enable gradient storage for non-leaf tensor
+
+                # Create a non linear perturbation such that it does not cancel out in the regression
+                ## Note: Recall that the covariance is important for the structure, not the scale.
+                scaling = 0.1
+                y_ad_min = y_ad.min()
+                y_ad_max = y_ad.max()
+                minmax = 2 * (y_ad - y_ad_min) / (y_ad_max - y_ad_min) - 1
+                y_pert = torch.tanh(minmax) * scaling
+
+                V22 = self.v_d.reshape(1, 1, self.v_d.shape[0], self.v_d.shape[1])
+                V11 = V22[:, :, :-1:interval, :]
+
+                y_cov = y_h + y_pert * y_h
+
+                # Get the covariance matrix
+                kw = torch.einsum("aeik,aekj->aeij", y_cov, y_cov.permute(0, 1, 3, 2))
+                temp = torch.matmul(V11, kw)  
+                K11 = torch.matmul(temp, V11.permute(0,1, 3, 2))   
+                K12 = torch.matmul(temp, V22.permute(0,1, 3, 2))
+                K21 = K12.transpose(-1, -2)
+                eps = 1e-10 * torch.eye(K11.shape[-1], device=K11.device, dtype=K11.dtype).reshape(1, 1, K11.shape[-1], K11.shape[-1])
+
+                # Check if K11 is symetric
+                if not torch.allclose(K11, K11.permute(0, 1, 3, 2)):
+                    raise ValueError("K11 is not symmetric")
+
+                # From rasmussen 2006 - marginal likelihood
+                # Cholesky
+                L = torch.linalg.cholesky(K11 + eps)  # L (lower triangular) such that k11 + eps = LL^T
+
+                u = torch.linalg.solve_triangular(L, y_samples, upper=False)
+                alpha = torch.linalg.solve_triangular(L.transpose(-1, -2), u, upper=True)
+
+                # Calculate the gradient on the prediction or on the marginal likelihood
+                # Set it by defult on the marginal likelyhood
+                if 1 == 1:
+                    # marginal likelihood
+                    L_diag = torch.diagonal(L, dim1=-2, dim2=-1).clone() 
+                    #eps = 1e-7
+                    #L_diag = L_diag.clamp(min=eps)
+                    marginal_likelihood = (
+                        0.5 * torch.matmul(y_samples.transpose(-1, -2), alpha) +
+                        torch.sum(torch.log(L_diag)) + 
+                        0.5 * y_ad.shape[0] * y_ad.shape[1] * torch.log(torch.tensor(2 * np.pi, dtype=y_ad.dtype))
+                    )
+                    marginal_likelihood = torch.sum(marginal_likelihood, dim=(2,3))
+                    # Calculate the gradient
+                    marginal_likelihood.backward(torch.ones_like(marginal_likelihood), retain_graph=True)
+                else: 
+                    y_approx = torch.matmul(K21, alpha)
+                    
+                    rmse = torch.sqrt(torch.sum((y_real - y_approx) ** 2 * mass_real, dim = (2,3), keepdim=False) / torch.sum(mass_real, dim=(2,3), keepdim=False))
+                    rmse.backward(torch.ones_like(rmse), retain_graph=True)
+
+                grad = y_ad.grad.view(y_ad.shape[1], y_ad.shape[2])
+
+                # Sort indices by absolute value in descending order along dim=1
+                ind = torch.argsort(torch.abs(grad), dim=1, descending=True)
+
+                # Keep only the top n_samples indices
+                col_idx_to_zero = ind[:, n_coefficients:]
+
+                # Construct row indices (broadcasted) to match the shape of col_idx_to_zero
+                row_idx = elem_idx.unsqueeze(1).expand(-1, col_idx_to_zero.shape[1])
+
+                # Set those positions to zero
+                y_truncated[row_idx, col_idx_to_zero] = 0
+                
+                y_ad.grad.zero_()
+
+        # Reshape back to the original shape
+        return y_truncated.reshape(field_hat.shape)
  
     def transform_field(self, field: np.ndarray = None, to: str = "legendre") -> np.ndarray:
         """
@@ -1398,7 +1610,7 @@ class DirectSampler:
                 # Ensure a copy is made if needed (torch.clone() is used in place of np.copy)
                 kw = kw_.clone()
             
-            elif settings["covariance"]["method"] == "dlt":
+            elif (settings["covariance"]["method"] == "dlt") or (settings["covariance"]["method"] == "ad"):
 
                 self.log.write("debug", f"Obtaining the covariance matrix for the current chunk")
 
@@ -1548,7 +1760,6 @@ class DirectSampler:
         else:
             eps = noise[avg_idx2, elem_idx2]**2 * torch.eye(k11.shape[-1], device=k11.device).reshape(1, 1, k11.shape[-1], k11.shape[-1])
         
-        print(eps)
 
         if method == 'naive':
             y_21 = None
