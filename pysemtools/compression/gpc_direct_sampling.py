@@ -1365,35 +1365,33 @@ class DirectSampler:
                     raise ValueError("K11 is not symmetric")
 
                 # From rasmussen 2006 - marginal likelihood
-                # Cholesky
-                L = torch.linalg.cholesky(K11 + eps)  # L (lower triangular) such that k11 + eps = LL^T
+                LU, pivots = torch.linalg.lu_factor(K11 + eps)
 
-                u = torch.linalg.solve_triangular(L, y_samples, upper=False)
-                alpha = torch.linalg.solve_triangular(L.transpose(-1, -2), u, upper=True)
+                alpha = torch.linalg.lu_solve(LU, pivots, y_samples)
 
-                # Calculate the gradient on the prediction or on the marginal likelihood
-                # Set it by defult on the marginal likelyhood
                 if 1 == 1:
-                    # marginal likelihood
-                    L_diag = torch.diagonal(L, dim1=-2, dim2=-1).clone() 
-                    #eps = 1e-7
-                    #L_diag = L_diag.clamp(min=eps)
+                    U_diag = torch.diagonal(LU, dim1=-2, dim2=-1).clone()
+                    log_det = torch.sum(torch.log(torch.abs(U_diag)))
+                    
                     marginal_likelihood = (
                         0.5 * torch.matmul(y_samples.transpose(-1, -2), alpha) +
-                        torch.sum(torch.log(L_diag)) + 
-                        0.5 * y_ad.shape[0] * y_ad.shape[1] * torch.log(torch.tensor(2 * np.pi, dtype=y_ad.dtype))
+                        log_det +
+                        0.5 * y_ad.shape[0] * y_ad.shape[1] *
+                            torch.log(torch.tensor(2 * np.pi, dtype=y_ad.dtype))
                     )
-                    marginal_likelihood = torch.sum(marginal_likelihood, dim=(2,3))
-                    # Calculate the gradient
-                    marginal_likelihood.backward(torch.ones_like(marginal_likelihood), retain_graph=True)
-                else: 
-                    y_approx = torch.matmul(K21, alpha)
+                    marginal_likelihood = torch.sum(marginal_likelihood, dim=(2, 3))
                     
-                    rmse = torch.sqrt(torch.sum((y_real - y_approx) ** 2 * mass_real, dim = (2,3), keepdim=False) / torch.sum(mass_real, dim=(2,3), keepdim=False))
+                    marginal_likelihood.backward(torch.ones_like(marginal_likelihood), retain_graph=True)
+                else:
+                    y_approx = torch.matmul(K21, alpha)
+                    rmse = torch.sqrt(
+                        torch.sum((y_real - y_approx) ** 2 * mass_real, dim=(2, 3), keepdim=False) /
+                        torch.sum(mass_real, dim=(2, 3), keepdim=False)
+                    )
                     rmse.backward(torch.ones_like(rmse), retain_graph=True)
 
                 grad = y_ad.grad.view(y_ad.shape[1], y_ad.shape[2])
-
+                
                 # Sort indices by absolute value in descending order along dim=1
                 ind = torch.argsort(torch.abs(grad), dim=1, descending=True)
 
