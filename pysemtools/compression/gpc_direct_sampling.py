@@ -1277,11 +1277,8 @@ class DirectSampler:
 
                 y_approx = torch.matmul(V, y_h + y_ad)
 
-                print(y_approx.shape)
-
                 rmse = torch.sqrt(torch.sum((y_real - y_approx) ** 2 * mass_real, dim = (2,3), keepdim=False) / torch.sum(mass_real, dim=(2,3), keepdim=False))
                 rmse.backward(torch.ones_like(rmse), retain_graph=True)
-                print(rmse.shape)
                 grad = y_ad.grad.view(y_ad.shape[1], y_ad.shape[2])
 
                 # Sort indices by absolute value in descending order along dim=1
@@ -1337,47 +1334,31 @@ class DirectSampler:
 
                 y_h = y_hat[elem_idx, :].clone().detach()
                 y_h = y_h.view(1, y_h.shape[0], y_h.shape[1], 1)
-
-                lamb  = 1
-                scaling = 0.1
-                y_ad = y_hat[elem_idx, :].clone().requires_grad_(True) * lamb
+                
+                y_ad = y_hat[elem_idx, :].clone().requires_grad_(True)
                 y_ad = y_ad.view(1, y_ad.shape[0], y_ad.shape[1], 1)
                 y_ad.retain_grad()  # Enable gradient storage for non-leaf tensor
 
-                # Scale y_ad to tanh compatibale domain
-                x = y_ad
-                x_min = x.min()
-                x_max = x.max()
-                x_minmax = 2 * (x - x_min) / (x_max - x_min) - 1
-                y_transformed = torch.tanh(x_minmax) * scaling
+                # Create a non linear perturbation such that it does not cancel out in the regression
+                ## Note: Recall that the covariance is important for the structure, not the scale.
+                scaling = 0.1
+                y_ad_min = y_ad.min()
+                y_ad_max = y_ad.max()
+                minmax = 2 * (y_ad - y_ad_min) / (y_ad_max - y_ad_min) - 1
+                y_pert = torch.tanh(minmax) * scaling
 
+                V22 = self.v_d.reshape(1, 1, self.v_d.shape[0], self.v_d.shape[1])
+                V11 = V22[:, :, :-1:interval, :]
 
-                V = self.v_d.reshape(1, 1, self.v_d.shape[0], self.v_d.shape[1])
-                V11 = V[:, :, :-1:interval, :]
-
-
-                y_cov = y_h + y_transformed * y_h
-                #y_cov = y_h + y_ad
+                y_cov = y_h + y_pert * y_h
 
                 # Get the covariance matrix
-                kw_real = torch.einsum("aeik,aekj->aeij", y_h, y_h.permute(0, 1, 3, 2))
                 kw = torch.einsum("aeik,aekj->aeij", y_cov, y_cov.permute(0, 1, 3, 2))
-            
-                print(V.shape)
-                temp = torch.matmul(V11, kw)  # shape: (averages, elements_to_average, freq+1, n)
-                
-                
-                print(temp.shape)
-                K11 = torch.matmul(temp, V11.permute(0,1, 3, 2))  # shape: (averages, elements_to_average, freq+1, freq+1)
-                
-                
-                temp = torch.matmul(V11, kw)  # shape: (averages, elements_to_average, freq+1, n)
-                K12 = torch.matmul(temp, V.permute(0,1, 3, 2))  # shape: (averages, elements_to_average, freq+1, freq+1)
+                temp = torch.matmul(V11, kw)  
+                K11 = torch.matmul(temp, V11.permute(0,1, 3, 2))   
+                K12 = torch.matmul(temp, V22.permute(0,1, 3, 2))
                 K21 = K12.transpose(-1, -2)
                 eps = 1e-10 * torch.eye(K11.shape[-1], device=K11.device, dtype=K11.dtype).reshape(1, 1, K11.shape[-1], K11.shape[-1])
-
-                #print(K11)
-                #sys.exit(0)
 
                 # Check if K11 is symetric
                 if not torch.allclose(K11, K11.permute(0, 1, 3, 2)):
@@ -1390,32 +1371,27 @@ class DirectSampler:
                 u = torch.linalg.solve_triangular(L, y_samples, upper=False)
                 alpha = torch.linalg.solve_triangular(L.transpose(-1, -2), u, upper=True)
 
-                print(alpha.shape)
-                print(K21.shape)
-                y_approx = torch.matmul(K21, alpha)
+                # Calculate the gradient on the prediction or on the marginal likelihood
+                # Set it by defult on the marginal likelyhood
+                if 1 == 1:
+                    # marginal likelihood
+                    L_diag = torch.diagonal(L, dim1=-2, dim2=-1).clone() 
+                    #eps = 1e-7
+                    #L_diag = L_diag.clamp(min=eps)
+                    marginal_likelihood = (
+                        0.5 * torch.matmul(y_samples.transpose(-1, -2), alpha) +
+                        torch.sum(torch.log(L_diag)) + 
+                        0.5 * y_ad.shape[0] * y_ad.shape[1] * torch.log(torch.tensor(2 * np.pi, dtype=y_ad.dtype))
+                    )
+                    marginal_likelihood = torch.sum(marginal_likelihood, dim=(2,3))
+                    # Calculate the gradient
+                    marginal_likelihood.backward(torch.ones_like(marginal_likelihood), retain_graph=True)
+                else: 
+                    y_approx = torch.matmul(K21, alpha)
+                    
+                    rmse = torch.sqrt(torch.sum((y_real - y_approx) ** 2 * mass_real, dim = (2,3), keepdim=False) / torch.sum(mass_real, dim=(2,3), keepdim=False))
+                    rmse.backward(torch.ones_like(rmse), retain_graph=True)
 
-                # marginal likelihood
-                L_diag = torch.diagonal(L, dim1=-2, dim2=-1).clone() 
-                #eps = 1e-7
-                #L_diag = L_diag.clamp(min=eps)
-                marginal_likelihood = (
-                    0.5 * torch.matmul(y_samples.transpose(-1, -2), alpha) +
-                    torch.sum(torch.log(L_diag)) + 
-                    0.5 * y_ad.shape[0] * y_ad.shape[1] * torch.log(torch.tensor(2 * np.pi, dtype=y_ad.dtype))
-                )
-
-                marginal_likelihood = torch.sum(marginal_likelihood, dim=(2,3))
-                # Calculate the gradient
-                marginal_likelihood.backward(torch.ones_like(marginal_likelihood), retain_graph=True)
-                
-                
-                rmse = torch.sqrt(torch.sum((y_real - y_approx) ** 2 * mass_real, dim = (2,3), keepdim=False) / torch.sum(mass_real, dim=(2,3), keepdim=False))
-                #rmse = torch.sqrt(torch.mean((y_real - y_approx) ** 2, dim=(2,3), keepdim=False))
-                #rmse.backward(torch.ones_like(rmse), retain_graph=True)
-                print(rmse.shape)
-                print(rmse)
-
-                print(y_cov) 
                 grad = y_ad.grad.view(y_ad.shape[1], y_ad.shape[2])
 
                 # Sort indices by absolute value in descending order along dim=1
@@ -1430,19 +1406,7 @@ class DirectSampler:
                 # Set those positions to zero
                 y_truncated[row_idx, col_idx_to_zero] = 0
                 
-                print(L.shape)
-                print(y_samples.shape)
-                print(alpha.shape)
-                print(L_diag.shape)
-                print(marginal_likelihood.shape)
-
-                print(grad[0])
-                print(y_hat[0])
-                print(y_truncated[0])
-
                 y_ad.grad.zero_()
-                #sys.exit(0)
-
 
         # Reshape back to the original shape
         return y_truncated.reshape(field_hat.shape)
