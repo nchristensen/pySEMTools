@@ -19,7 +19,7 @@ class POD:
         global_updates=True,
         auto_expand=False,
         auto_expand_from_these_modes=1,
-        bckend = "torch",
+        bckend = "numpy",
     ):
 
         # Initialize parameters
