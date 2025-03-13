@@ -22,12 +22,16 @@ class SVD:
             "ifget_all_modes is hard coded to False. This parameter applies to lcl updates. It controls if one gets all modes in the global rotation, despite keeping less modes locally. I do not see a use for this in production runs. Thus it is set to false. If needed, activate in mpi_spSVD.py module",
         )
 
+        self.log.write('info', f"Using backend: {bckend}")
+
         self.bckend = bckend
         if bckend == 'torch':
 
             if sys.modules.get("torch") is None:
                 raise ImportError("torch is not installed. Please install it to use the torch backend.")
             self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+            self.log.write("info", f"Using device: {self.device}")
 
     def lcl_to_gbl_svd(self, uii, dii, vtii, k_set, comm):
         """Perform rotations to obtain global modes from local modes.
@@ -236,21 +240,24 @@ class SVD:
 
         if rank == 0:
             # Move gathered tensor back to the original device
-            y = torch.tensor(y_cpu, device=xi.device)
+            y = y_cpu.clone().detach().to(xi.device)
 
         self.log.write("debug", "Performing SVD of combined eigen matrix in rank 0")
         if rank == 0:
             uy, dy, vty = torch.linalg.svd(y, full_matrices=False)
+            uy = uy.cpu()
+            dy = dy.cpu()
+            vty = vty.cpu()
         else:
             # Prepare buffers for broadcast
-            uy = torch.empty((m * size, m), dtype=xi.dtype, device=xi.device)
-            dy = torch.empty((m,), dtype=torch.double, device=xi.device)
-            vty = torch.empty((m, m), dtype=xi.dtype, device=xi.device)
+            uy = torch.empty((m * size, m), dtype=xi.dtype, device='cpu')
+            dy = torch.empty((m,), dtype=torch.double, device='cpu')
+            vty = torch.empty((m, m), dtype=xi.dtype, device='cpu')
 
         self.log.write("debug", "Broadcasting SVD(y) results")
-        comm.Bcast(uy.cpu().numpy(), root=0)
-        comm.Bcast(dy.cpu().numpy(), root=0)
-        comm.Bcast(vty.cpu().numpy(), root=0)
+        comm.Bcast(uy.numpy(), root=0)
+        comm.Bcast(dy.numpy(), root=0)
+        comm.Bcast(vty.numpy(), root=0)
 
         # Move received tensors back to original device
         uy = torch.tensor(uy.numpy(), device=xi.device)
@@ -316,12 +323,14 @@ class SVD:
         # Check if xi is a torch tensor. If not, cast it and set a flag.
         input_was_numpy = False
         if not torch.is_tensor(xi):
-            self.log.write("debug", "Converting input xi from numpy to torch tensor")
+            self.log.write("info", f"Backend is {self.bckend} but input xi is not a torch tensor. Converting to torch tensor.")
+            self.log.write("info", "Converting input xi from numpy to torch tensor")
             input_was_numpy = True
             if isinstance(xi, np.ndarray):
                 xi = torch.from_numpy(xi)
             else:
                 xi = torch.tensor(xi)
+            self.log.write("info", f"Transfering to device {self.device}")
             xi = xi.to(device=self.device)
         
         # Also check if u_1t, d_1t, vt_1t are provided and are tensors. If not, convert them.
