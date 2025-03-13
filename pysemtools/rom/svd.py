@@ -2,6 +2,10 @@
 
 import numpy as np
 import scipy.optimize
+import importlib
+if importlib.util.find_spec('torch') is not None:
+    import torch
+import sys
 
 NoneType = type(None)
 
@@ -9,7 +13,7 @@ NoneType = type(None)
 class SVD:
     """Class used to obtain parallel and streaming SVD results"""
 
-    def __init__(self, logger):
+    def __init__(self, logger, bckend="numpy"):
 
         self.log = logger
         self.ifget_all_modes = False
@@ -17,6 +21,13 @@ class SVD:
             "debug",
             "ifget_all_modes is hard coded to False. This parameter applies to lcl updates. It controls if one gets all modes in the global rotation, despite keeping less modes locally. I do not see a use for this in production runs. Thus it is set to false. If needed, activate in mpi_spSVD.py module",
         )
+
+        self.bckend = bckend
+        if bckend == 'torch':
+
+            if sys.modules.get("torch") is None:
+                raise ImportError("torch is not installed. Please install it to use the torch backend.")
+            self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     def lcl_to_gbl_svd(self, uii, dii, vtii, k_set, comm):
         """Perform rotations to obtain global modes from local modes.
