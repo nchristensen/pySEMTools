@@ -19,6 +19,7 @@ class POD:
         global_updates=True,
         auto_expand=False,
         auto_expand_from_these_modes=1,
+        bckend = "numpy",
     ):
 
         # Initialize parameters
@@ -42,7 +43,8 @@ class POD:
 
         # Instant the math functions that will help
         self.log = logger_c(comm=comm, module_name="pod")
-        self.svd = spSVD_c(self.log)
+        self.bckend = bckend
+        self.svd = spSVD_c(self.log, self.bckend)
         self.math = math_ops_c()
 
         # Number of updates

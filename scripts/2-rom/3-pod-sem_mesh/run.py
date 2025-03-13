@@ -35,15 +35,21 @@ number_of_pod_fields = len(pod_fields)
 pod_batch_size = params_file["batch_size"]
 pod_keep_modes = params_file["keep_modes"]
 pod_write_modes = params_file["write_modes"]
+dtype_string = params_file.get("dtype", "double")
+backend = params_file.get("backend", "numpy")
+if dtype_string == "single":
+    dtype = np.float32
+else:
+    dtype = np.float64
 
 # Import IO helper functions
 from pysemtools.io.utils import get_fld_from_ndarray, IoPathData
 # Import modules for reading and writing
-from pysemtools.io.ppymech.neksuite import preadnek, pwritenek
+from pysemtools.io.ppymech.neksuite import pynekread, pynekwrite
 # Import the data types
 from pysemtools.datatypes.msh import Mesh
 from pysemtools.datatypes.coef import Coef
-from pysemtools.datatypes.field import Field
+from pysemtools.datatypes.field import Field, FieldRegistry
 from pysemtools.datatypes.utils import create_hexadata_from_msh_fld
 # Import types asociated with POD
 from pysemtools.rom.pod import POD
@@ -57,23 +63,22 @@ mesh_data = IoPathData(params_file["IO"]["mesh_data"])
 field_data = IoPathData(params_file["IO"]["field_data"])
 
 # Instance the POD object
-pod = POD(comm, number_of_modes_to_update = pod_keep_modes, global_updates = True, auto_expand = False)
+pod = POD(comm, number_of_modes_to_update = pod_keep_modes, global_updates = True, auto_expand = False, bckend = backend)
 
 # Initialize the mesh file
 path     = mesh_data.dataPath
 casename = mesh_data.casename
 index    = mesh_data.index
 fname    = path+casename+'0.f'+str(index).zfill(5)
-data     = preadnek(fname, comm)
-msh      = Mesh(comm, data = data)
-del data
+msh = Mesh(comm)
+pynekread(fname, comm, data_dtype=dtype, msh = msh)
 
 # Initialize coef to get the mass matrix
 coef = Coef(msh, comm)
 bm = coef.B
 
 # Instance io helper that will serve as buffer for the snapshots
-ioh = IoHelp(comm, number_of_fields = number_of_pod_fields, batch_size = pod_batch_size, field_size = bm.size)
+ioh = IoHelp(comm, number_of_fields = number_of_pod_fields, batch_size = pod_batch_size, field_size = bm.size, field_data_type=dtype, mass_matrix_data_type=dtype)
 
 # Put the mass matrix in the appropiate format (long 1d array)
 mass_list = []
@@ -90,15 +95,13 @@ while j < pod_number_of_snapshots:
     casename = field_data.casename
     index    = field_data.index
     fname=path+casename+'0.f'+str(index + j).zfill(5)
-    fld_data = preadnek(fname, comm)
-
-    # Get the data in field format
-    fld = Field(comm, data = fld_data)
+    fld = FieldRegistry(comm)
+    pynekread(fname, comm, data_dtype=dtype, fld = fld) 
 
     # Get the required fields
-    u = fld.fields["vel"][0]
-    v = fld.fields["vel"][1]
-    w = fld.fields["vel"][2]
+    u = fld.registry['u']
+    v = fld.registry['v']
+    w = fld.registry['w']
 
     # Put the snapshot data into a column array
     ioh.copy_fieldlist_to_xi([u, v, w])
