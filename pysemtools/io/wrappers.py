@@ -10,7 +10,7 @@ from .ppymech.neksuite import pynekread, pynekwrite
 import numpy as np
 from mpi4py import MPI
 
-def read_data(comm, fname: str, keys: list[str], parallel_io: bool = False, dtype = np.single):
+def read_data(comm, fname: str, keys: list[str], parallel_io: bool = False, dtype = np.single, distributed_axis: int = 0):
     """
     Read data from a file and return a dictionary with the names of the files and keys
 
@@ -52,7 +52,7 @@ def read_data(comm, fname: str, keys: list[str], parallel_io: bool = False, dtyp
                     # Determine how many axis zero elements to get locally
                     # This corresponds to a linearly load balanced partitioning
                     i_rank = comm.Get_rank()
-                    m = global_array_shape[0]
+                    m = global_array_shape[distributed_axis]
                     pe_rank = i_rank
                     pe_size = comm.Get_size()
                     ip = np.floor(
@@ -69,15 +69,19 @@ def read_data(comm, fname: str, keys: list[str], parallel_io: bool = False, dtyp
                     offset = comm.scan(local_axis_0_shape) - local_axis_0_shape
 
                     # Determine the local array shape
-                    temp1 = [local_axis_0_shape]
-                    temp2 = list(global_array_shape)
-                    local_array_shape = tuple(temp1 + temp2[1:])
+                    temp = list(global_array_shape)
+                    temp[distributed_axis] = local_axis_0_shape
+                    local_array_shape = tuple(temp)
                     
                     # Create the local array
                     local_data = np.empty(local_array_shape, dtype=dtype)
 
+                    # Get the slice of the data that should be read
+                    slices = [slice(None) for i in range(len(global_array_shape))]
+                    slices[distributed_axis] = slice(offset, offset + local_array_shape[distributed_axis])                    
+
                     # Read the data
-                    local_data[:] = f[key][offset:offset + local_array_shape[0]]
+                    local_data[:] = f[key][tuple(slices)]
 
                     # Store the data
                     data[key] = local_data
@@ -116,7 +120,7 @@ def read_data(comm, fname: str, keys: list[str], parallel_io: bool = False, dtyp
 
     return data 
 
-def write_data(comm, fname: str, data_dict: dict[str, np.ndarray], parallel_io: bool = False, dtype = np.single, msh: Mesh = None, write_mesh:bool=False):
+def write_data(comm, fname: str, data_dict: dict[str, np.ndarray], parallel_io: bool = False, dtype = np.single, msh: Mesh = None, write_mesh:bool=False, distributed_axis: int = 0):
     """
     Write data to a file
 
@@ -156,18 +160,23 @@ def write_data(comm, fname: str, data_dict: dict[str, np.ndarray], parallel_io: 
                     local_array_size = data.size
 
                     # Obtain the total number of entries in the array    
-                    global_axis_0_shape = np.array(comm.allreduce(local_array_shape[0], op=MPI.SUM))
+                    global_axis_0_shape = np.array(comm.allreduce(local_array_shape[distributed_axis], op=MPI.SUM))
                     # Obtain the offset in the file
-                    offset = comm.scan(local_array_shape[0]) - local_array_shape[0]
+                    offset = comm.scan(local_array_shape[distributed_axis]) - local_array_shape[distributed_axis]
                     
                     # Set the global size
-                    temp1 = [int(global_axis_0_shape)]
-                    temp2 = list(local_array_shape)
-                    global_array_shape = tuple(temp1 + temp2[1:])
+                    temp = list(local_array_shape)
+                    temp[distributed_axis] = global_axis_0_shape
+                    global_array_shape = tuple(temp)
+
+                    # Get the slice where the data should be written
+                    slices = [slice(None) for i in range(len(global_array_shape))]
+                    slices[distributed_axis] = slice(offset, offset + local_array_shape[distributed_axis])                    
+
                     
                     # Create the data set and assign the data
                     dset = f.create_dataset(key, global_array_shape, dtype=data.dtype)
-                    dset[offset:offset + local_array_shape[0]] = data
+                    dset[tuple(slices)] = data
         else:
             with h5py.File(fname, 'w') as f:
                 for key in data_dict.keys():
