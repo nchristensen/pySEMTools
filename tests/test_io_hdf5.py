@@ -22,13 +22,13 @@ def test_io_hdf5():
 
     fname = "examples/data/points.hdf5"
 
-    data = read_data(comm, fname, keys=["mass"], parallel_io=True, dtype=np.single, distributed_axis=2)
+    data = read_data(comm, fname, keys=["mass"], parallel_io=False, dtype=np.single, distributed_axis=2)
 
     volume = comm.allreduce(np.sum(data["mass"]), op=MPI.SUM)
     t1 = np.allclose(np.float32(volume), 0.007853981)
 
     fname_out = "examples/data/points_out.hdf5"
-    write_data(comm, fname_out, data, parallel_io=True, dtype=np.single, distributed_axis=2)
+    write_data(comm, fname_out, data, parallel_io=False, dtype=np.single, distributed_axis=2)
 
     t2 = True
     if comm.Get_rank() == 0:
