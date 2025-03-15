@@ -1,6 +1,7 @@
 """ Contains functions to wrap the ROM types to easily post process data """
 
 from .pod import POD
+from ..io.wrappers import read_data, write_data
 from .io_help import IoHelp
 import numpy as np
 import h5py
@@ -280,6 +281,7 @@ def pod_fourier_1_homogenous_direction(
     k: int,
     p: int,
     fft_axis: int,
+    distributed_axis: int = None
 ) -> tuple:
     """
     Perform POD on a sequence of snapshot while applying fft in an homogenous direction of choice.
@@ -331,8 +333,16 @@ def pod_fourier_1_homogenous_direction(
     number_of_pod_fields = len(pod_fields)
 
     # Load the mass matrix
-    with h5py.File(mass_matrix_fname, "r") as f:
-        bm = f[mass_matrix_key][:]
+    #with h5py.File(mass_matrix_fname, "r") as f:
+    #    bm = f[mass_matrix_key][:]
+    if distributed_axis is not None:
+        parallel_io = True
+    else:
+        parallel_io = False
+        distributed_axis = 0
+
+    dat = read_data(comm, fname= mass_matrix_fname, keys=[mass_matrix_key], parallel_io=parallel_io, distributed_axis=distributed_axis)
+    bm = dat[mass_matrix_key]
     bm[np.where(bm == 0)] = 1e-14
     field_3d_shape = bm.shape
 
@@ -382,10 +392,12 @@ def pod_fourier_1_homogenous_direction(
 
         # Load the snapshot data
         fname = file_sequence[j]
-        with h5py.File(fname, "r") as f:
-            fld_data = []
-            for field in pod_fields:
-                fld_data.append(f[field][:])
+        #with h5py.File(fname, "r") as f:
+        #   fld_data = []
+        #    for field in pod_fields:
+        #        fld_data.append(f[field][:])
+        fld_data_ = read_data(comm, fname=fname, keys=pod_fields, parallel_io=parallel_io, distributed_axis=distributed_axis)
+        fld_data = [fld_data_[field] for field in pod_fields]
 
         # Perform the fft
         for i in range(0, number_of_pod_fields):
@@ -477,6 +489,8 @@ def write_3dfield_to_file(
     field_names: list[str],
     N_samples: int,
     snapshots: list[int] = None,
+    distributed_axis: int = None,
+    comm = None,
 ):
     """
     Write 3D fields.
@@ -521,6 +535,12 @@ def write_3dfield_to_file(
     -------
     None
     """
+    
+    if distributed_axis is not None:
+        parallel_io = True
+    else:
+        parallel_io = False
+        distributed_axis = 0
 
     # Always iterate over the wavenumbers or snapshots to not be too harsh on memory
     # Write a reconstruction to vtk
@@ -578,7 +598,7 @@ def write_3dfield_to_file(
                 )
 
                 # Write 3D field
-                sufix = f"kappa_{kappa}_mode{mode}.vtk"
+                sufix = f"kappa_{kappa}_mode{mode}"
 
                 # Check the extension and path of the file
                 ## Path
@@ -591,9 +611,13 @@ def write_3dfield_to_file(
                 extension = os.path.basename(fname).split(".")[1]
 
                 if (extension == "vtk") or (extension == "vts"):
-                    outname = f"{path}/{prefix}_{sufix}"
+                    outname = f"{path}/{prefix}_{sufix}.vtk"
                     print(f"Writing {outname}")
                     gridToVTK(outname, x, y, z, pointData=mode_dict[kappa][mode])
+                elif extension == "hdf5":
+                    outname = f"{path}/{prefix}_{sufix}.hdf5"
+                    print(f"Writing {outname}")
+                    write_data(comm, fname=outname, data_dict = mode_dict[kappa][mode], parallel_io=parallel_io, distributed_axis=distributed_axis) 
 
 
 def save_pod_state(fname: str, pod: dict[int, POD]):
