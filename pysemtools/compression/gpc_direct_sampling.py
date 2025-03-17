@@ -358,6 +358,11 @@ class DirectSampler:
                 average = settings["covariance"]["averages"]
                 elements_to_average = settings["covariance"]["elements_to_average"]
                 keep_modes = settings["covariance"].get("keep_modes", 1)
+                
+                if dtype == "single":
+                    d_dtype = np.float32
+                elif dtype == "double":
+                    d_dtype = np.float64
 
                 if data_key == "field":    
                     shape = (nelv, lz, ly, lx)
@@ -373,13 +378,20 @@ class DirectSampler:
                     shape = (nelv, lz, ly, lx)
                 elif data_key == "noise":
                     shape = (nelv, 1)
+                elif data_key == "f_hat_packed":
+                    shape = (average*elements_to_average, keep_modes, 8)
+                    d_dtype = np.uint8
+                elif data_key == "f_hat_max":
+                    shape = (average*elements_to_average, 1)
+                elif data_key == "f_hat_min":
+                    shape = (average*elements_to_average, 1)
+                elif data_key == "f_hat_shape":
+                    shape = (2,)
+                    d_dtype = np.int64
                 else:
                     raise ValueError("Invalid data key")
 
-                if dtype == "single":
-                    temp = np.frombuffer(bz2.decompress(compressed_bytes), dtype=np.float32)
-                elif dtype == "double":
-                    temp = np.frombuffer(bz2.decompress(compressed_bytes), dtype=np.float64)
+                temp = np.frombuffer(bz2.decompress(compressed_bytes), dtype=d_dtype)
 
                 uncompressed_data[field][data_key] = temp.reshape(shape)
 
@@ -505,7 +517,7 @@ class DirectSampler:
             self.uncompressed_data[f"{field_name}"]["f_hat_packed"] = y_packed
             self.uncompressed_data[f"{field_name}"]["f_hat_max"] = y_max
             self.uncompressed_data[f"{field_name}"]["f_hat_min"] = y_min
-            self.uncompressed_data[f"{field_name}"]["f_hat_shape"] = y_shape
+            self.uncompressed_data[f"{field_name}"]["f_hat_shape"] = np.array(list(y_shape), dtype = np.int64)
 
             self.log.write("info", f"f_hat saved in field uncompressed_data[\"{field_name}\"][\"f_hat\"]")
 
@@ -1654,8 +1666,8 @@ class DirectSampler:
                 for i in range(initial, 64):
                     unpacked = np.unpackbits(y_batch_packed[:, i - initial], axis=1)
                     y_batch_quant_r += unpacked.astype(np.uint64) << i
-                
-                max_trunc = 2**64 - 2**initial
+
+                max_trunc = 2**64 - 2**int(initial)
                 y_batch_quant_r = y_batch_quant_r.astype(np.float64)/max_trunc
                 
                 f_hat = y_batch_quant_r * (y_batch_max - y_batch_min) + y_batch_min
