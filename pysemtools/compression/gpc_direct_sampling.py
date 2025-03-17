@@ -379,7 +379,8 @@ class DirectSampler:
                 elif data_key == "noise":
                     shape = (nelv, 1)
                 elif data_key == "f_hat_packed":
-                    shape = (average*elements_to_average, keep_modes, 8)
+                    packed_size = int(np.ceil(lx*ly*lz/8))
+                    shape = (average*elements_to_average, keep_modes, packed_size)
                     d_dtype = np.uint8
                 elif data_key == "f_hat_max":
                     shape = (average*elements_to_average, 1)
@@ -1269,6 +1270,7 @@ class DirectSampler:
             nelv = int(settings['averages'] * settings['elements_to_average'])
             n_samples = settings["keep_modes"]
             initial = 64 - n_samples
+            packed_size = int(np.ceil((field_hat.shape[1]*field_hat.shape[2]*field_hat.shape[3]) / 8))
 
             # Get needed information
             V = self.v
@@ -1278,7 +1280,7 @@ class DirectSampler:
             y = field_hat.reshape(field_hat.shape[0], -1)
 
             #allocation the truncated field
-            y_packed = np.empty((y.shape[0], n_samples, 8), dtype=np.uint8)
+            y_packed = np.empty((y.shape[0], n_samples, packed_size), dtype=np.uint8)
             y_min = np.empty((y.shape[0], 1), dtype=np.float64)
             y_max = np.empty((y.shape[0], 1), dtype=np.float64)
 
@@ -1308,7 +1310,7 @@ class DirectSampler:
                 max_uint64 = 2**64 - 1
                 y_batch_quant = np.floor(y_batch_norm * max_uint64).astype(np.uint64)
                 
-                y_batch_packed = np.empty((y_batch_quant.shape[0], n_samples, 8), dtype=np.uint8)
+                y_batch_packed = np.empty((y_batch_quant.shape[0], n_samples, packed_size), dtype=np.uint8)
                 for i in range(initial, 64):
                     # Extract the i-th bit plane as a uint8 array (each element is 0 or 1)
                     bit_plane = ((y_batch_quant >> i) & 1).astype(np.uint8)
