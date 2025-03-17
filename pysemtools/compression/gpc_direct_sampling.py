@@ -487,6 +487,24 @@ class DirectSampler:
             self.uncompressed_data[f"{field_name}"]["f_hat"] = fld_hat_truncated
 
             self.log.write("info", f"f_hat saved in field uncompressed_data[\"{field_name}\"][\"f_hat\"]")
+        
+        elif method == "bitplane":
+            # In this case, the kw will not be only the diagonal of the stored data but an approximation of the actual covariance
+            self.kw_diag = False
+            
+            self.settings["covariance"] = {"method": "bitplane",
+                                           "averages" : self.nelv,
+                                           "elements_to_average": int(1),
+                                           "keep_modes": keep_modes,
+                                           "kw_diag": self.kw_diag}
+            
+            self.log.write("info", f"Estimating the covariance matrix using the DLT method. Keeping {keep_modes} modes")
+            fld_hat_truncated = self._estimate_covariance_bitplane(field_hat, self.settings["covariance"])
+
+            # Store the covariances in the data to be compressed:
+            self.uncompressed_data[f"{field_name}"]["f_hat"] = fld_hat_truncated
+
+            self.log.write("info", f"f_hat saved in field uncompressed_data[\"{field_name}\"][\"f_hat\"]")
 
 
         else:
@@ -1226,6 +1244,108 @@ class DirectSampler:
 
                 # Set those positions to zero
                 y_truncated[row_idx, col_idx_to_zero] = 0
+
+        # Reshape back to the original shape
+        return y_truncated.reshape(field_hat.shape)
+    
+    def _estimate_covariance_bitplane(self, field_hat : np.ndarray, settings: dict):
+
+        if self.bckend == "numpy":
+            nelv = int(settings['averages'] * settings['elements_to_average'])
+            n_samples = settings["keep_modes"]
+            initial = 64 - n_samples
+
+            # Get needed information
+            V = self.v
+            numfreq = n_samples
+
+            # Now reshape the x, y elements into column vectors
+            y = field_hat.reshape(field_hat.shape[0], -1)
+
+            #allocation the truncated field
+            y_packed = np.empty((y.shape[0], n_samples, 8), dtype=np.uint8)
+            y_min = np.empty((y.shape[0], 1), dtype=np.float64)
+            y_max = np.empty((y.shape[0], 1), dtype=np.float64)
+
+            # Set up chunking parameters to avoid processing too many elements at once.
+            chunk_size_e = self.max_elements_to_process
+            n_chunks_e = math.ceil(nelv / chunk_size_e)
+                
+            # For reconstruction
+            shape_y = y.shape
+            y_reconstructed = np.zeros(shape_y)
+
+            # Loop over chunks along the element dimension.
+            for chunk_id_e in range(n_chunks_e):
+                start_e = chunk_id_e * chunk_size_e
+                end_e = min((chunk_id_e + 1) * chunk_size_e, nelv)
+
+                # Create chunk-specific index helpers.
+                elem_idx = np.arange(start_e, end_e)
+
+                y_batch = y[elem_idx, :]
+                #print("===========================")
+                #print("ybatch", y_batch[0])
+
+                y_batch_max = np.max(y_batch, axis=1)
+                y_batch_min = np.min(y_batch, axis=1)
+                y_batch_norm = (y_batch - y_batch_min[:, np.newaxis]) / (y_batch_max - y_batch_min)[:, np.newaxis]
+                y_batch_norm = np.clip(y_batch_norm, 0, 0.9999999999999999)
+                
+                max_uint64 = 2**64 - 1
+                y_batch_quant = np.floor(y_batch_norm * max_uint64).astype(np.uint64)
+                
+                y_batch_packed = np.empty((y_batch_quant.shape[0], n_samples, 8), dtype=np.uint8)
+                for i in range(initial, 64):
+                    # Extract the i-th bit plane as a uint8 array (each element is 0 or 1)
+                    bit_plane = ((y_batch_quant >> i) & 1).astype(np.uint8)
+                     
+                    # Pack the bits so that 8 bits are stored in one byte using np.packbits.
+                    packed = np.packbits(bit_plane, axis=1)
+                    y_batch_packed[:, i - initial] = packed
+
+                
+                y_packed[elem_idx] = y_batch_packed
+                y_min[elem_idx,0] = y_batch_min
+                y_max[elem_idx,0] = y_batch_max
+
+                #print("===========================")
+
+                # Inverse the process
+                y_batch_max = y_max[elem_idx]
+                y_batch_min = y_min[elem_idx]
+                y_batch_packed = y_packed[elem_idx]
+                y_batch_quant_r = np.zeros((y_batch_packed.shape[0], shape_y[1]), dtype=np.uint64)
+                for i in range(initial, 64):
+                    unpacked = np.unpackbits(y_batch_packed[:, i - initial], axis=1)
+                    y_batch_quant_r += unpacked.astype(np.uint64) << i
+                
+            
+
+                #max_trunc = 2**64 - 2**initial
+                max_trunc = max_uint64
+                y_batch_quant_r = y_batch_quant_r.astype(np.float64)/max_trunc
+                
+                #print("ybatch_norm", y_batch_quant_r[0])
+
+                y_batch_reconstructed = y_batch_quant_r * (y_batch_max - y_batch_min) + y_batch_min
+
+                y_reconstructed[elem_idx] = y_batch_reconstructed
+
+                
+                #print("ybatch", y_batch_reconstructed[0])
+
+
+            print(y_reconstructed[0])
+            print(y[0])
+            print(y_reconstructed[0]- y[0])
+
+
+            sys.exit(0)
+
+        elif self.bckend == "torch":
+
+            raise NotImplementedError("The bitplane method is not implemented for the torch backend")
 
         # Reshape back to the original shape
         return y_truncated.reshape(field_hat.shape)
