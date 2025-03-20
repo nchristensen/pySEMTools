@@ -411,8 +411,6 @@ class DirectSampler:
         # Create a dictionary to store the data that will be compressed
         self.uncompressed_data[f"{field_name}"] = {}
 
-        self.supporting_data[f"{field_name}"] = {}
-        self.supporting_data[f"{field_name}"]["unsampled_field"] = field
 
         self.log.write("info", "Transforming the field into to legendre space")
         field_hat = self.transform_field(field, to="legendre")
@@ -660,9 +658,6 @@ class DirectSampler:
         else:
             noise = None
 
-        unsampled_field = y
-        if settings["covariance"]["method"] != "dlt":
-            unsampled_field = None
 
         # Allocate the truncated field with the same type and device as y, filled with -50.
         y_truncated = torch.ones_like(y) * -50
@@ -729,7 +724,7 @@ class DirectSampler:
                     y_21, y_21_std = self.gaussian_process_regression_torch(
                         y, V, kw, ind_train,
                         avg_idx, elem_idx, avg_idx2, elem_idx2,
-                        freq, predict_mean=False, predict_std=True, unsampled_field=unsampled_field, noise=noise
+                        freq, predict_mean=False, predict_std=True, noise=noise
                     )
 
                     # Set the standard deviation to zero at indices that have already been sampled.
@@ -871,12 +866,12 @@ class DirectSampler:
         # Reshape the truncated field back to the original shape of "field"
         return y_truncated.reshape(field.shape)
 
-    def reconstruct_field(self, field_name: str = None, get_mean: bool = True, get_std: bool = False, mean_op = None, std_op = None, unsampled_field_available=False, use_coefficients: bool = False):
+    def reconstruct_field(self, field_name: str = None, get_mean: bool = True, get_std: bool = False, mean_op = None, std_op = None, use_coefficients: bool = False):
             if self.bckend == "numpy":
                 return self.reconstruct_field_numpy(field_name, get_mean, get_std)
             elif self.bckend == "torch":
                 if not use_coefficients:
-                    return self.reconstruct_field_torch(field_name, get_mean, get_std, mean_op = mean_op, std_op = std_op, unsampled_field_available=unsampled_field_available)
+                    return self.reconstruct_field_torch(field_name, get_mean, get_std, mean_op = mean_op, std_op = std_op)
                 else:
                     return self.reconstruct_field_torch_coefficients(field_name)
 
@@ -972,7 +967,7 @@ class DirectSampler:
         # Reshape the field back to its original shape
         return y_reconstructed, y_reconstructed_std
 
-    def reconstruct_field_torch(self, field_name: str = None, get_mean: bool = True, get_std: bool = False, mean_op = None, std_op = None, unsampled_field_available = False):
+    def reconstruct_field_torch(self, field_name: str = None, get_mean: bool = True, get_std: bool = False, mean_op = None, std_op = None):
         """
         Reconstructs the field using Gaussian Process Regression in PyTorch.
         """
@@ -997,12 +992,7 @@ class DirectSampler:
         if settings["covariance"]["method"] == "svd":
             V = self.uncompressed_data[field_name]["U"]
         numfreq = n_samples
-        
-        if unsampled_field_available:
-            unsampled_field = self.supporting_data[field_name]["unsampled_field"].view(averages, elements_to_average, -1, 1)
-        else:
-            unsampled_field = None
-        
+         
         noise_ = self.uncompressed_data[field_name].get("noise", None)
         if not isinstance(noise_, type(None)):
             noise = noise_.view(averages, elements_to_average, 1, 1)
@@ -1057,7 +1047,7 @@ class DirectSampler:
                 y_21, y_21_std = self.gaussian_process_regression_torch(
                     y, V, kw, ind_train, avg_idx, elem_idx, avg_idx2, elem_idx2,
                     predict_mean=get_mean, predict_std=get_std, mean_op = mean_op, std_op = std_op,
-                    unsampled_field=unsampled_field, noise=noise
+                    noise=noise
                 )
 
                 # Store reconstructed values
@@ -1759,7 +1749,7 @@ class DirectSampler:
                                     ind_train: torch.Tensor, avg_idx: torch.Tensor, elem_idx: torch.Tensor,
                                     avg_idx2: torch.Tensor, elem_idx2: torch.Tensor, 
                                     freq: int = None, predict_mean: bool = True, predict_std: bool = True,
-                                    method = 'lu', mean_op = None, std_op = None, unsampled_field = None, noise = None):
+                                    method = 'lu', mean_op = None, std_op = None, noise = None):
         
         # Select the correct freq index:
         if freq is None:
@@ -1769,7 +1759,6 @@ class DirectSampler:
 
         # If updating the noise, remove the unsampled field
         if not isinstance(noise, type(None)):
-            unsampled_field = None
             predict_mean = True 
 
         # Select the current samples (using advanced indexing)
@@ -1793,9 +1782,8 @@ class DirectSampler:
             k21 = k12.transpose(-2, -1)  # Shape: (b1, b2, n, freq+1)
 
             # Covariance of the real data
-            if isinstance(unsampled_field, type(None)):
-                temp = V_22 * kw_diag.unsqueeze(-2)  # Broadcasting (shape: (b1, b2, n, n))
-                k22 = torch.matmul(temp, V_22.transpose(-1, -2))  # Shape: (b1, b2, n, n)
+            temp = V_22 * kw_diag.unsqueeze(-2)  # Broadcasting (shape: (b1, b2, n, n))
+            k22 = torch.matmul(temp, V_22.transpose(-1, -2))  # Shape: (b1, b2, n, n)
 
         else:
 
@@ -1808,14 +1796,9 @@ class DirectSampler:
             k21 = k12.permute(0, 1, 3, 2)  # shape: (averages, elements_to_average, n, freq+1)
 
             # Covariance of the real data
-            if isinstance(unsampled_field, type(None)):
-                temp = torch.matmul(V_22, kw)  # shape: (averages, elements_to_average, n, n)
-                k22 = torch.matmul(temp, V_22.transpose(-1, -2))  # shape: (averages, elements_to_average, n, n)
-
-        if not isinstance(unsampled_field, type(None)):
-            _y = unsampled_field[avg_idx2, elem_idx2]    
-            k22 = torch.matmul(_y, _y.transpose(-1, -2))
-        
+            temp = torch.matmul(V_22, kw)  # shape: (averages, elements_to_average, n, n)
+            k22 = torch.matmul(temp, V_22.transpose(-1, -2))  # shape: (averages, elements_to_average, n, n)
+ 
         # Create a small epsilon for numerical stability in inversion.
         if isinstance(noise, type(None)):
             eps = 1e-10 * torch.eye(k11.shape[-1], device=k11.device, dtype=k11.dtype).reshape(1, 1, k11.shape[-1], k11.shape[-1])
