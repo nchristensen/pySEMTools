@@ -373,7 +373,7 @@ class DirectSampler:
                     else:
                         shape = (average, lx*ly*lz, lx*ly*lz)
                 elif data_key == "U":
-                    shape = (average*elements_to_average, keep_modes)
+                    shape = (lx*ly*lz, lx*ly*lz)
                 elif data_key == "s":
                     shape = (keep_modes)
                 elif data_key == "Vt":
@@ -420,7 +420,7 @@ class DirectSampler:
         if method == "average":
 
             # In this case, the kw should be taken as already the diagonal form
-            self.kw_diag = True
+            self.kw_diag = False
 
             self.settings["covariance"] = {"method": "average",
                                            "elements_to_average": elements_to_average,
@@ -436,25 +436,23 @@ class DirectSampler:
 
         elif method == "svd":
             # In this case, the kw will not be only the diagonal of the stored data but an approximation of the actual covariance
-            self.kw_diag = True
+            self.kw_diag = False
             
             self.settings["covariance"] = {"method": "svd",
-                                           "averages" : self.nelv,
-                                           "elements_to_average": int(1),
+                                           "averages" : int(1),
+                                           "elements_to_average": self.nelv,
                                            "keep_modes": keep_modes,
                                            "kw_diag": self.kw_diag}
             
             self.log.write("info", f"Estimating the covariance matrix using the SVD method. Keeping {keep_modes} modes")
-            U, s, Vt = self._estimate_covariance_svd(field_hat, self.settings["covariance"])
+            U, kw = self._estimate_covariance_svd(field, self.settings["covariance"])
 
             # Store the covariances in the data to be compressed:
             self.uncompressed_data[f"{field_name}"]["U"] = U
-            self.uncompressed_data[f"{field_name}"]["s"] = s
-            self.uncompressed_data[f"{field_name}"]["Vt"] = Vt
+            self.uncompressed_data[f"{field_name}"]["kw"] = kw
 
             self.log.write("info", f"U saved in field uncompressed_data[\"{field_name}\"][\"U\"]")
-            self.log.write("info", f"s saved in field uncompressed_data[\"{field_name}\"][\"s\"]")
-            self.log.write("info", f"Vt saved in field uncompressed_data[\"{field_name}\"][\"Vt\"]")
+            self.log.write("info", f"s saved in field uncompressed_data[\"{field_name}\"][\"kw\"]")
         
         elif method == "dlt":
             # In this case, the kw will not be only the diagonal of the stored data but an approximation of the actual covariance
@@ -647,6 +645,8 @@ class DirectSampler:
 
         # For KW routines, we first reshape into a five-dimensional tensor.
         V = self.v_d
+        if settings["covariance"]["method"] == "svd":
+            V = self.uncompressed_data[field_name]["U"]
         numfreq = n_samples
 
         # Reshape the spatial dimensions into column vectors:
@@ -994,6 +994,8 @@ class DirectSampler:
         # Reshape the fields into the KW-supported shapes
         y = sampled_field.reshape(averages, elements_to_average, -1, 1)  # Shape: (averages, elements_to_average, all_dim, 1)
         V = self.v_d
+        if settings["covariance"]["method"] == "svd":
+            V = self.uncompressed_data[field_name]["U"]
         numfreq = n_samples
         
         if unsampled_field_available:
@@ -1146,23 +1148,10 @@ class DirectSampler:
             
         return kw
     
-    def _estimate_covariance_svd(self, field_hat : np.ndarray, settings: dict):
+    def _estimate_covariance_svd(self, field : np.ndarray, settings: dict):
 
         if self.bckend == "numpy":
-            # Retrieve the settings
-            averages=settings["averages"] # In the case of SVD, this is 1
-            elements_to_average=settings["elements_to_average"] # In the case of SVD, this is the number of elements in the rank.
-
-            # Create a sort of snapshot matrix S = (Data in the element, element)
-            S = np.copy(field_hat.reshape( averages * elements_to_average , field_hat.shape[1] * field_hat.shape[2] * field_hat.shape[3]))
-
-            # Perform the SVD # It is likely that this should be done streaming / parallel
-            U, s, Vt = np.linalg.svd(S, full_matrices=False)
-
-            # Keep only the first keep_modes
-            U = U[:, :settings["keep_modes"]]
-            s = s[:settings["keep_modes"]]
-            Vt = Vt[:settings["keep_modes"], :]
+            raise NotImplementedError("SVD is not implemented in NumPy")
 
         elif self.bckend == "torch":
 
@@ -1171,19 +1160,35 @@ class DirectSampler:
             elements_to_average = settings["elements_to_average"]  # In the case of SVD, this is the number of elements in the rank.
 
             # Create a snapshot matrix S = (Data in the element, element)
-            S = field_hat.reshape(averages * elements_to_average,
-                                field_hat.shape[1] * field_hat.shape[2] * field_hat.shape[3]).clone()
+            S = field.reshape(averages * elements_to_average,
+                                field.shape[1] * field.shape[2] * field.shape[3]).clone()
+            S = S.permute(1, 0).clone()
 
             # Perform the SVD using torch.linalg.svd (set full_matrices=False to match NumPy's behavior)
             U, s, Vt = torch.linalg.svd(S, full_matrices=False)
 
             # Keep only the first keep_modes
-            keep_modes = settings["keep_modes"]
-            U = U[:, :keep_modes]
-            s = s[:keep_modes]
-            Vt = Vt[:keep_modes, :]            
 
-        return U, s, Vt
+            fh = torch.diag(s)@Vt
+            fh = fh.reshape(fh.shape[0], 1, fh.shape[1])
+            fh = fh.permute(2,0,1)
+            fh_bar = torch.mean(fh, dim=0, keepdim=True)
+            
+            fh_centered = fh - fh_bar
+            fh_star = torch.matmul(fh_centered, fh_centered.transpose(-1,-2))
+            kw = torch.sum(fh_star, dim=0) / (fh_star.shape[1] - 1)
+            
+            # Give it a shape conformant with averages
+            kw = kw.reshape(1, kw.shape[0], kw.shape[1])
+
+            # This is the way in which I calculate the covariance here and then get the diagonals
+            if self.kw_diag == True:
+                
+                # Extract only the diagonals
+                kw = torch.einsum("...ii->...i", kw)
+
+
+        return U, kw
     
     def _estimate_covariance_dlt(self, field_hat : np.ndarray, settings: dict):
 
@@ -1560,53 +1565,7 @@ class DirectSampler:
             
             elif settings["covariance"]["method"] == "svd":
 
-                self.log.write("debug", f"Obtaining the covariance matrix for the current chunk")
-
-                # Retrieve the SVD components
-                U = self.uncompressed_data[f"{field_name}"]["U"]
-                s = self.uncompressed_data[f"{field_name}"]["s"]
-                Vt = self.uncompressed_data[f"{field_name}"]["Vt"]
-
-                # Select only the relevant entries of U
-                ## Reshape to allow the indices to be broadcasted
-                averages = settings["covariance"]["averages"]
-                elements_to_average = settings["covariance"]["elements_to_average"]
-                U = U.reshape(averages, elements_to_average, 1, -1) # Here I need to have ALL!
-                ## Select the relevant entries
-                U = U[avg_idx2, elem_idx2, :, :]
-                #Reshape to original shape
-                U = U.reshape(averages2*elements_to_average2, -1) # Here use the size of avrg_index and elem_index instead, since it is reduced.
-
-                # Construct the f_hat
-                f_hat = np.einsum("ik,k,kj->ij", U, s, Vt)
-
-                # This is the way in which I calculate the covariance here and then get the diagonals
-                if self.kw_diag == True:
-                    # Get the covariances
-                    kw_ = np.einsum("eik,ekj->eij", f_hat.reshape(averages2*elements_to_average2,-1,1), f_hat.reshape(averages2*elements_to_average2,-1,1).transpose(0,2,1))
-                    
-                    # Extract only the diagonals
-                    kw_ = np.einsum("...ii->...i", kw_)
-                    
-                    # Transform it into an actual matrix, not simply a vector
-                    # Aditionally, add one axis to make it consistent with the rest of the arrays and enable broadcasting
-                    kw_ = np.copy(np.einsum('...i,ij->...ij', kw_, np.eye(kw_.shape[-1])))            
-
-                    #Make the shape consistent
-                    kw_ = kw_.reshape(averages2, elements_to_average2 ,  kw_.shape[-1], kw_.shape[-1])
-                    
-                else:
-                    # Reshape
-                    f_hat = f_hat.reshape(averages2*elements_to_average2,-1,1)
-            
-                    # Calculate the covariance matrix with f_hat@f_hat^T
-                    kw_ = np.einsum("eik,ekj->eij", f_hat, f_hat.transpose(0,2,1))
-            
-                    # Add an axis to make it consistent with the rest of the arrays and enable broadcasting
-                    kw_ = kw_.reshape(averages2, elements_to_average2, kw_.shape[1], kw_.shape[2])
-                
-                # Get the covariance matrix for the current chunk
-                kw = np.copy(kw_)
+                raise NotImplementedError("SVD is not implemented in NumPy")
             
             elif settings["covariance"]["method"] == "dlt":
 
@@ -1698,7 +1657,7 @@ class DirectSampler:
             averages2 = avg_idx2.shape[0]
             elements_to_average2 = elem_idx2.shape[1]
 
-            if settings["covariance"]["method"] == "average":
+            if settings["covariance"]["method"] == "average" or settings["covariance"]["method"] == "svd":
                 if self.kw_diag:
                     # Retrieve the diagonal of the covariance matrix
                     kw = self.uncompressed_data[f"{field_name}"]["kw"][avg_idx2[:, 0]]
@@ -1712,47 +1671,7 @@ class DirectSampler:
                     kw_ = kw.view(kw.shape[0], 1, kw.shape[1], kw.shape[2])
                 
                 kw = kw_
-
-            elif settings["covariance"]["method"] == "svd":
-                self.log.write("debug", f"Obtaining the covariance matrix for the current chunk")
-
-                # Retrieve the SVD components
-                U = self.uncompressed_data[f"{field_name}"]["U"]
-                s = self.uncompressed_data[f"{field_name}"]["s"]
-                Vt = self.uncompressed_data[f"{field_name}"]["Vt"]
-
-                # Reshape U to allow broadcasting and select the relevant entries
-                averages = settings["covariance"]["averages"]
-                elements_to_average = settings["covariance"]["elements_to_average"]
-                U = U.reshape(averages, elements_to_average, 1, -1)  # shape: (averages, elements_to_average, 1, -1)
-                U = U[avg_idx2, elem_idx2, :, :]  # shape: (averages2, elements_to_average2, 1, -1)
-                U = U.reshape(averages2 * elements_to_average2, -1)  # shape: (averages2*elements_to_average2, -1)
-
-                # Construct f_hat using einsum. This performs the equivalent of U * diag(s) * Vt.
-                f_hat = torch.einsum("ik,k,kj->ij", U, s, Vt)
-
-                if self.kw_diag:
-                    # Reshape f_hat so that each row becomes a matrix column vector
-                    f_hat_reshaped = f_hat.reshape(averages2 * elements_to_average2, -1, 1)
-                    # Compute the covariance matrices for each entry: f_hat @ f_hat^T
-                    kw_ = torch.einsum("eik,ekj->eij", f_hat_reshaped, f_hat_reshaped.permute(0, 2, 1))
-                    # Extract only the diagonals
-                    kw_diag = torch.einsum("...ii->...i", kw_)
-                    # Convert the diagonal vector into a full matrix by multiplying with an identity matrix
-                    eye = torch.eye(kw_diag.shape[-1], device=kw_diag.device, dtype=kw_diag.dtype)
-                    kw_ = torch.einsum("...i,ij->...ij", kw_diag, eye)
-                    # Reshape so that the result has shape (averages2, elements_to_average2, n, n)
-                    kw_ = kw_.reshape(averages2, elements_to_average2, kw_.shape[-2], kw_.shape[-1])
-                else:
-                    # Reshape f_hat and compute the covariance matrices
-                    f_hat_reshaped = f_hat.reshape(averages2 * elements_to_average2, -1, 1)
-                    kw_ = torch.einsum("eik,ekj->eij", f_hat_reshaped, f_hat_reshaped.permute(0, 2, 1))
-                    # Add an axis for broadcasting and reshape accordingly
-                    kw_ = kw_.reshape(averages2, elements_to_average2, kw_.shape[1], kw_.shape[2])
-                
-                # Ensure a copy is made if needed (torch.clone() is used in place of np.copy)
-                kw = kw_.clone()
-            
+ 
             elif (settings["covariance"]["method"] == "dlt") or (settings["covariance"]["method"] == "ad"):
 
                 self.log.write("debug", f"Obtaining the covariance matrix for the current chunk")
