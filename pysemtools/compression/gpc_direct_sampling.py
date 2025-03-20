@@ -358,6 +358,7 @@ class DirectSampler:
                 average = settings["covariance"]["averages"]
                 elements_to_average = settings["covariance"]["elements_to_average"]
                 keep_modes = settings["covariance"].get("keep_modes", 1)
+                kw_diag = settings["covariance"]["kw_diag"]
                 
                 if dtype == "single":
                     d_dtype = np.float32
@@ -367,7 +368,10 @@ class DirectSampler:
                 if data_key == "field":    
                     shape = (nelv, lz, ly, lx)
                 elif data_key == "kw":
-                    shape = (average, lx*ly*lz)
+                    if kw_diag:
+                        shape = (average, lx*ly*lz)
+                    else:
+                        shape = (average, lx*ly*lz, lx*ly*lz)
                 elif data_key == "U":
                     shape = (average*elements_to_average, keep_modes)
                 elif data_key == "s":
@@ -1128,26 +1132,17 @@ class DirectSampler:
             elements_to_average=settings["elements_to_average"]
 
             # Create an average of field_hat over the elements
-            temp_field = field_hat.reshape(averages, elements_to_average, field_hat.shape[1], field_hat.shape[2], field_hat.shape[3])
-            field_hat_mean = torch.mean(temp_field, dim=1)        
-
-            ### This block was to average with weights, but the coefficients do not really have that sort of mass matrix.
-            ##temp_mass = self.B.reshape(averages, elements_to_average, self.B.shape[1], self.B.shape[2], self.B.shape[3])
-            #
-            ## Perform a weighted average with the mass matrix
-            ##field_hat_mean = np.sum(temp_field * temp_mass, axis=1) / np.sum(temp_mass, axis=1)
-            ###
-
+            fh = field_hat.reshape(averages, elements_to_average, -1, 1)
+            fh_bar = torch.mean(fh, dim=1, keepdim=True)
+            fh_centered = fh - fh_bar
+            fh_star = torch.matmul(fh_centered, fh_centered.transpose(-1,-2))
+            kw = torch.sum(fh_star, dim=1) / (fh_star.shape[1] - 1)
             # This is the way in which I calculate the covariance here and then get the diagonals
             if self.kw_diag == True:
-                # Get the covariances
-                kw = torch.einsum("eik,ekj->eij", field_hat_mean.reshape(averages,-1,1), field_hat_mean.reshape(averages,-1,1).permute(0,2,1))
-
+                
                 # Extract only the diagonals
                 kw = torch.einsum("...ii->...i", kw)
-            else:
-                # But I can leave the calculation of the covariance itself for later and store here the average of field_hat
-                kw = field_hat_mean.reshape(averages,-1,1)
+
             
         return kw
     
@@ -1711,13 +1706,10 @@ class DirectSampler:
                     eye = torch.eye(kw.shape[-1], device=kw.device, dtype=kw.dtype)
                     kw_ = torch.einsum("...i,ij->...ij", kw, eye).reshape(averages2, 1, kw.shape[-1], kw.shape[-1])
                 else:
-                    # Retrieve the averaged hat fields
-                    f_hat = self.uncompressed_data[f"{field_name}"]["kw"][avg_idx2[:, 0]]
-                    f_hat = f_hat.view(averages2, -1, 1)
-                    # Calculate the covariance matrix as f_hat @ f_hat^T using einsum
-                    kw = torch.einsum("eik,ekj->eij", f_hat, f_hat.permute(0, 2, 1))
-                    # Add an axis to make it consistent for broadcasting
-                    kw_ = kw.reshape(kw.shape[0], 1, kw.shape[1], kw.shape[2])
+                    # Retrieve the full covariance matrix
+                    kw = self.uncompressed_data[f"{field_name}"]["kw"][avg_idx2[:, 0]]
+                    # Reshape it to expected shape
+                    kw_ = kw.view(kw.shape[0], 1, kw.shape[1], kw.shape[2])
                 
                 kw = kw_
 
