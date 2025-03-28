@@ -418,7 +418,7 @@ class DirectSampler:
         if method == "average":
 
             # In this case, the kw should be taken as already the diagonal form
-            self.kw_diag = False
+            self.kw_diag = True
 
             self.settings["covariance"] = {"method": "average",
                                            "elements_to_average": elements_to_average,
