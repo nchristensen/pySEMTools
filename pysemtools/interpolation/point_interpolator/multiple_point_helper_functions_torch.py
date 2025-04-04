@@ -8,7 +8,7 @@ import torch
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 
 
-def apply_operators_3d(dr, ds, dt, x):
+def apply_operators_3d_einsum(dr, ds, dt, x):
     """
 
     This function applies operators the same way as they are applied in NEK5000
@@ -64,6 +64,56 @@ def apply_operators_3d(dr, ds, dt, x):
 
     return temp.reshape((tempshape[0], tempshape[1], tempsize, 1))
 
+def apply_operators_3d(dr, ds, dt, x):
+    """
+    Applies operators in the r, s, and t directions (similar to NEK5000, but with a reversed order)
+    using torch.matmul instead of torch.einsum.
+    """
+    dshape = dr.shape  # expected shape: (I, J, dr_dim0, dr_dim1)
+    xshape = x.shape   # expected shape: (I, J, X, Y)
+    xsize = xshape[2] * xshape[3]
+
+    # --- r Direction ---
+    # Transpose dr so that the last two dims swap, shape becomes (I, J, dr_dim1, dr_dim0)
+    drt = dr.permute(0, 1, 3, 2)
+    drt_s0 = drt.shape[2]
+    # Reshape x so its last dimension matches drt's contracting dimension
+    # xreshape will have shape: (I, J, (xsize // drt_s0), drt_s0)
+    xreshape = x.reshape(xshape[0], xshape[1], int(xsize / drt_s0), drt_s0)
+    # Batched matrix multiply: (I, J, M, drt_s0) @ (I, J, drt_s0, drt_dim?) -> (I, J, M, drt_dim?)
+    temp = torch.matmul(xreshape, drt)
+
+    # --- s Direction ---
+    # Get dimensions from ds
+    ds_s0 = ds.shape[2]
+    ds_s1 = ds.shape[3]
+    # Current temp is (I, J, M, drt_dim?); combine the last two dims:
+    tempsize = temp.shape[2] * temp.shape[3]
+    # Reshape temp so that the two dimensions become (ds_s1, ds_s1, F)
+    temp = temp.reshape(xshape[0], xshape[1], ds_s1, ds_s1, int(tempsize / (ds_s1**2)))
+    # Reshape ds for broadcasting: from (I, J, ds_s0, ds_s1) to (I, J, 1, ds_s0, ds_s1)
+    ds_reshaped = ds.reshape(dshape[0], dshape[1], 1, ds_s0, ds_s1)
+    # Batched matrix multiplication:
+    #   ds_reshaped: (I, J, 1, ds_s0, ds_s1)
+    #   temp:        (I, J, ds_s1, ds_s1, F)
+    # matmul will contract over the last dim of ds_reshaped and the third dim of temp,
+    # giving a result of shape (I, J, ds_s1, ds_s0, F)
+    temp = torch.matmul(ds_reshaped, temp)
+
+    # --- t Direction ---
+    # Collapse the last three dimensions into two:
+    tempsize = temp.shape[2] * temp.shape[3] * temp.shape[4]
+    dt_s1 = dt.shape[3]
+    # Reshape temp to have shape (I, J, dt_s1, remaining)
+    temp = temp.reshape(xshape[0], xshape[1], dt_s1, int(tempsize / dt_s1))
+    # dt has shape (I, J, dt_dim0, dt_s1); perform batched matrix multiply:
+    #   (I, J, dt_dim0, dt_s1) @ (I, J, dt_s1, something) -> (I, J, dt_dim0, something)
+    temp = torch.matmul(dt, temp)
+
+    # Flatten the last two dimensions and add a singleton final dimension
+    tempshape = temp.shape
+    final_size = temp.shape[2] * temp.shape[3]
+    return temp.reshape(tempshape[0], tempshape[1], final_size, 1)
 
 def legendre_basis_at_xtest(n, xtest):
     """
@@ -128,7 +178,7 @@ def legendre_basis_derivative_at_xtest(legtest, xtest):
     for j in range(1, n - 1):
         for p in range(j, 0 - 1, -2):
             d_n[:, :, j + 1, 0] += (
-                2 * legtest[:, :, p, 0] / (np.sqrt(2 / (2 * p + 1)) ** 2)
+                2 * legtest[:, :, p, 0] / (torch.sqrt(torch.tensor(2 / (2 * p + 1))) ** 2)
             )
 
     return d_n
