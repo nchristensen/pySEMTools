@@ -196,7 +196,7 @@ def GLL_pwts(n, eps=10**-8, max_iter=1000):
     return xi, w
 
 
-def legendre_basis_at_xtest(n, xtest):
+def legendre_basis_at_xtest_slow_obsolete(n, xtest):
     """
     The legendre basis depends on the element order and the points
 
@@ -223,8 +223,41 @@ def legendre_basis_at_xtest(n, xtest):
 
     return leg
 
+def legendre_basis_at_xtest(n, xtest):
+    """
+    Compute the Legendre basis up to order n for a set of points.
+    
+    Parameters:
+      n : int
+          The number of Legendre polynomials to compute.
+      xtest : np.ndarray
+          Expected shape (m, m2, 1, 1) where the x-values are stored in xtest[:,:,0,0].
+    
+    Returns:
+      leg : np.ndarray
+          A tensor of shape (m, m2, n, 1) containing the Legendre polynomials.
+    """
+    m, m2 = xtest.shape[0], xtest.shape[1]
+    # Extract the x values (assumed to be in the first element of the last two dims)
+    x = xtest[:, :, 0, 0]
+    
+    # Preallocate array for Legendre polynomials
+    leg = np.empty((m, m2, n), dtype=np.float64)
+    
+    # P_0(x) = 1
+    leg[..., 0] = 1.0
+    if n > 1:
+        # P_1(x) = x
+        leg[..., 1] = x
+    
+    # Recurrence: P_{j+1}(x) = ((2*j+1)*x*P_j(x) - j*P_{j-1}(x)) / (j+1)
+    for j in range(1, n - 1):
+        leg[..., j+1] = ((2 * j + 1) * x * leg[..., j] - j * leg[..., j-1]) / (j + 1)
+    
+    # Add back the singleton dimension to match the expected output shape
+    return leg[..., np.newaxis]
 
-def legendre_basis_derivative_at_xtest(legtest, xtest):
+def legendre_basis_derivative_at_xtest_slow_obsolete(legtest, xtest):
     """
 
     This is a slow implementaiton with a slow recursion. It does not need
@@ -255,6 +288,58 @@ def legendre_basis_derivative_at_xtest(legtest, xtest):
 
     return d_n
 
+def legendre_basis_derivative_at_xtest(legtest, xtest):
+    """
+    Compute the derivative matrix D_N, where D_N[..., j] = (dP_j/dx)_at_x,
+    using a vectorized weighted sum over the Legendre basis values.
+    
+    Parameters:
+      legtest : np.ndarray
+          A tensor of shape (m, m2, n, 1) containing the Legendre polynomials.
+      xtest : np.ndarray
+          A tensor whose second dimension gives m2 (used only to get m2 here).
+    
+    Returns:
+      d_n : np.ndarray
+          A tensor of shape (m, m2, n, 1) containing the derivatives.
+    """
+    m, m2, n, _ = legtest.shape
+    
+    # Preallocate derivative array.
+    d_n = np.zeros((m, m2, n), dtype=np.float64)
+    
+    # Derivative of P_0 is 0 (already set) and of P_1 is 1.
+    if n > 1:
+        d_n[..., 1] = 1.0
+
+    if n <= 2:
+        return d_n[..., np.newaxis]
+    
+    # Build a weight matrix M for j = 1, ..., n-2.
+    # For a given j (which will fill d_n[..., j+1]),
+    # valid p indices are those satisfying: 0 <= p <= j and (j-p) even.
+    n_out = n - 2  # corresponds to orders 2 through n-1.
+    j_indices = np.arange(1, n - 1).reshape(n_out, 1)  # shape: (n_out, 1)
+    p_indices = np.arange(n).reshape(1, n)             # shape: (1, n)
+    valid_mask = (p_indices <= j_indices) & (((j_indices - p_indices) % 2) == 0)
+    # Compute weights (2p+1) for each valid p.
+    weights = (2 * p_indices + 1).astype(np.float64)
+    M = weights * valid_mask.astype(np.float64)  # shape: (n_out, n)
+    
+    # Remove the trailing singleton dimension from legtest.
+    legtest_squeezed = legtest[..., 0]  # shape: (m, m2, n)
+    # Flatten the first two dimensions to combine m and m2.
+    legtest_flat = legtest_squeezed.reshape(-1, n).T  # shape: (n, m*m2)
+    
+    # Compute the weighted sum: for each output order, sum_{p} M[j, p] * legtest[..., p]
+    # This yields an array of shape (n_out, m*m2)
+    d_result = M @ legtest_flat  
+    # Reshape back to (m, m2, n_out)
+    d_result = d_result.T.reshape(m, m2, n_out)
+    
+    # Place the computed derivative results into orders 2 to n-1.
+    d_n[..., 2:] = d_result
+    return d_n[..., np.newaxis]
 
 def lag_interp_matrix_at_xtest(x, xtest):
     """
