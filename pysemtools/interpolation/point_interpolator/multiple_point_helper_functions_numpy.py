@@ -4,7 +4,7 @@ from math import pi
 import numpy as np
 
 
-def apply_operators_3d(dr, ds, dt, x):
+def apply_operators_3d_einsum(dr, ds, dt, x):
     """
 
     This function applies operators the same way as they are applied in NEK5000
@@ -60,6 +60,67 @@ def apply_operators_3d(dr, ds, dt, x):
     tempsize = temp.shape[2] * temp.shape[3]
 
     return temp.reshape((tempshape[0], tempshape[1], tempsize, 1))
+
+def apply_operators_3d(dr, ds, dt, x):
+    """
+    Applies operators in the r, s, and t directions (similar to NEK5000, but with a reversed order).
+
+    Uses np.matmul for batched matrix multiplications in place of einsum.
+    """
+    # Save original shapes
+    dshape = dr.shape
+    xshape = x.shape
+    # Total number of “points” in the last two dimensions
+    xsize = xshape[2] * xshape[3]
+
+    # --- Apply operator in the r direction ---
+    # dr: shape (I, J, r0, r1) --> we need its transpose along the r matrix dims
+    drt = dr.transpose(0, 1, 3, 2)  # shape becomes (I, J, r1, r0)
+    drt_s0 = drt.shape[2]  # r1
+
+    # Reshape the field so the matrix dimension aligns with drt
+    # xreshape: (I, J, (xsize // r1), r1)
+    xreshape = x.reshape(xshape[0], xshape[1], xsize // drt_s0, drt_s0)
+
+    # Batched multiplication: for each (I, J) block,
+    # multiply (xsize//r1 x r1) with (r1 x ?)
+    temp = np.matmul(xreshape, drt)
+    # Now temp has shape (I, J, (xsize // r1), ?)
+
+    # --- Apply operator in the s direction ---
+    # Get ds dimensions
+    ds_s0 = ds.shape[2]
+    ds_s1 = ds.shape[3]
+    # Combine the remaining dimensions of temp into a 5D array so that:
+    #   axes 2 and 3 are reshaped to (ds_s1, ds_s1) and
+    #   the last axis is the remainder (call it F)
+    tempsize = temp.shape[2] * temp.shape[3]
+    temp = temp.reshape(xshape[0], xshape[1], ds_s1, ds_s1, tempsize // (ds_s1**2))
+
+    # ds needs to act on the “s” part.
+    # Reshape ds to (I, J, 1, ds_s0, ds_s1) so that its last two dims form the matrix
+    ds_reshaped = ds.reshape(dshape[0], dshape[1], 1, ds_s0, ds_s1)
+    # Here, for each (I,J) and for each of the ds_s1 batch copies,
+    # we multiply a matrix of shape (ds_s0, ds_s1) with one of shape (ds_s1, F)
+    # np.matmul automatically broadcasts the singleton axis (1 → ds_s1)
+    temp = np.matmul(ds_reshaped, temp)
+    # The result has shape (I, J, ds_s1, ds_s0, F)
+
+    # --- Apply operator in the t direction ---
+    # Collapse the last three dimensions into one
+    tempsize = temp.shape[2] * temp.shape[3] * temp.shape[4]
+    # dt is assumed to have shape (I, J, t0, t1) with t1 used for contraction.
+    dt_s1 = dt.shape[3]
+    # Reshape temp so that its third dimension equals dt_s1 and the last dimension is the remainder
+    temp = temp.reshape(xshape[0], xshape[1], dt_s1, tempsize // dt_s1)
+    # Multiply: dt (shape: (I, J, t0, t1)) multiplies temp (shape: (I, J, t1, something))
+    temp = np.matmul(dt, temp)
+    # Now temp has shape (I, J, t0, something)
+
+    # Flatten the last two dimensions and add a singleton fourth axis
+    tempshape = temp.shape
+    final_size = tempshape[2] * tempshape[3]
+    return temp.reshape(tempshape[0], tempshape[1], final_size, 1)
 
 
 def GLC_pwts(n):
