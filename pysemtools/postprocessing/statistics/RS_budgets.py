@@ -216,6 +216,68 @@ def convert_2Dstats_to_3D(stats2D_filename,stats3D_filename,datatype='single'):
     pynekwrite(stats3D_filename, comm, msh=msh3d, fld=fld3d, write_mesh=True, wdsz=wdsz)
 
 
+#%% convert nek5000 2D statistics to neko format for compatibility with rest of the scripts
+def convert_nek5000_2Dstats_to_neko(stats2D_nek5000_filename,stats2D_neko_filename,datatype='single'):
+    from mpi4py import MPI 
+    import numpy as np
+    import warnings
+    from pysemtools.io.ppymech.neksuite import pynekread,pynekwrite
+    from pysemtools.datatypes.msh import Mesh
+    from pysemtools.datatypes.field import FieldRegistry
+
+    # Get mpi info
+    comm = MPI.COMM_WORLD
+
+    # initialize fields
+    msh = Mesh(comm, create_connectivity=False)
+    fld = FieldRegistry(comm)
+    fld_neko = FieldRegistry(comm)
+
+    if datatype=='single':
+        data_type = np.single
+        wdsz = 4
+    else:
+        data_type = np.double
+        wdsz = 8
+
+    # read mesh and fields
+    pynekread(stats2D_nek5000_filename, comm, data_dtype=data_type, msh=msh, fld=fld)
+
+    # get the 
+    # field_names = return_list_of_vars_from_filename(stats2D_nek5000_filename)
+    # print('fields in the given file: ', field_names )
+
+    x_vel = fld.registry['s0']
+    y_vel = fld.registry['s1']
+    z_vel = fld.registry['s2']
+    pres = fld.registry['s3']
+    temp = fld.registry['s7']
+
+    inds_neko_s1_to_39 = [ 4,5,6,8,10,9 , \
+                           23,24,25,26,27,28,34,29,30,31 , \
+                           35,36,37 , \
+                           32,33 , \
+                           11,12,13 , \
+                           14,15,16,17,18,19,20,21,22 , \
+                           38,39,40,41,42,43 ]
+
+
+    fld_neko.add_field(comm, field_name="u", field=x_vel, dtype=data_type)
+    fld_neko.add_field(comm, field_name="v", field=y_vel, dtype=data_type)
+    fld_neko.add_field(comm, field_name="p", field=pres, dtype=data_type)
+    fld_neko.add_field(comm, field_name="t", field=temp, dtype=data_type)
+
+    for i in range(len(inds_neko_s1_to_39)):
+        # print(i, ("s"+str(inds_neko_s1_to_39[i])) )
+        tmp = fld.registry[("s"+str(inds_neko_s1_to_39[i]))]
+        fld_neko.add_field(comm, field_name=("s"+str(i)), field=tmp, dtype=data_type )
+        del tmp
+
+    fld_neko.add_field(comm, field_name="s39", field=z_vel, dtype=data_type)
+
+    pynekwrite(stats2D_neko_filename, comm, msh=msh, fld=fld_neko, write_mesh=True, wdsz=wdsz)
+
+
 
 
 ###########################################################################################
