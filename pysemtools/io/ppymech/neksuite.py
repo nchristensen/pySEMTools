@@ -909,6 +909,7 @@ def pwritenek(filename, data, comm):
 
     # ================== Metadata
     if ioh.gdim > 2:
+        meta_fld_data_size = np.int64(4) # Always in single precision
 
         # Write the coordinates
         if ioh.pos_variables > 0:
@@ -928,9 +929,9 @@ def pwritenek(filename, data, comm):
                 x[e, :, :, :] = data.elem[e].pos[0, :, :, :]
                 y[e, :, :, :] = data.elem[e].pos[1, :, :, :]
                 z[e, :, :, :] = data.elem[e].pos[2, :, :, :]
-            byte_offset = mpi_offset + ioh.offset_el * ioh.gdim * 2 * ioh.fld_data_size
+            byte_offset = mpi_offset + ioh.offset_el * ioh.gdim * 2 * meta_fld_data_size
             fld_file_write_vector_metadata(fh, byte_offset, x, y, z, ioh)
-            mpi_offset += ioh.glb_nelv * ioh.gdim * 2 * ioh.fld_data_size
+            mpi_offset += ioh.glb_nelv * ioh.gdim * 2 * meta_fld_data_size
 
         # Write the velocity
         if ioh.vel_variables > 0:
@@ -949,9 +950,9 @@ def pwritenek(filename, data, comm):
                 u[e, :, :, :] = data.elem[e].vel[0, :, :, :]
                 v[e, :, :, :] = data.elem[e].vel[1, :, :, :]
                 w[e, :, :, :] = data.elem[e].vel[2, :, :, :]
-            byte_offset = mpi_offset + ioh.offset_el * ioh.gdim * 2 * ioh.fld_data_size
+            byte_offset = mpi_offset + ioh.offset_el * ioh.gdim * 2 * meta_fld_data_size
             fld_file_write_vector_metadata(fh, byte_offset, u, v, w, ioh)
-            mpi_offset += ioh.glb_nelv * ioh.gdim * 2 * ioh.fld_data_size
+            mpi_offset += ioh.glb_nelv * ioh.gdim * 2 * meta_fld_data_size
 
         # Write pressure
         if ioh.pres_variables > 0:
@@ -962,9 +963,9 @@ def pwritenek(filename, data, comm):
             p = x.reshape(ioh.nelv, ioh.lz, ioh.ly, ioh.lx)
             for e in range(0, ioh.nelv):
                 p[e, :, :, :] = data.elem[e].pres[0, :, :, :]
-            byte_offset = mpi_offset + ioh.offset_el * 1 * 2 * ioh.fld_data_size
+            byte_offset = mpi_offset + ioh.offset_el * 1 * 2 * meta_fld_data_size
             fld_file_write_metadata(fh, byte_offset, p, ioh)
-            mpi_offset += ioh.glb_nelv * 1 * 2 * ioh.fld_data_size
+            mpi_offset += ioh.glb_nelv * 1 * 2 * meta_fld_data_size
 
         # Write Temperature
         if ioh.temp_variables > 0:
@@ -975,9 +976,9 @@ def pwritenek(filename, data, comm):
             t = x.reshape(ioh.nelv, ioh.lz, ioh.ly, ioh.lx)
             for e in range(0, ioh.nelv):
                 t[e, :, :, :] = data.elem[e].temp[0, :, :, :]
-            byte_offset = mpi_offset + ioh.offset_el * 1 * 2 * ioh.fld_data_size
+            byte_offset = mpi_offset + ioh.offset_el * 1 * 2 * meta_fld_data_size
             fld_file_write_metadata(fh, byte_offset, t, ioh)
-            mpi_offset += ioh.glb_nelv * 1 * 2 * ioh.fld_data_size
+            mpi_offset += ioh.glb_nelv * 1 * 2 * meta_fld_data_size
 
         # Write scalars
         for var in range(0, ioh.scalar_variables):
@@ -988,9 +989,9 @@ def pwritenek(filename, data, comm):
             s = x.reshape(ioh.nelv, ioh.lz, ioh.ly, ioh.lx)
             for e in range(0, ioh.nelv):
                 s[e, :, :, :] = data.elem[e].scal[var, :, :, :]
-            byte_offset = mpi_offset + ioh.offset_el * 1 * 2 * ioh.fld_data_size
+            byte_offset = mpi_offset + ioh.offset_el * 1 * 2 * meta_fld_data_size
             fld_file_write_metadata(fh, byte_offset, s, ioh)
-            mpi_offset += ioh.glb_nelv * 1 * 2 * ioh.fld_data_size
+            mpi_offset += ioh.glb_nelv * 1 * 2 * meta_fld_data_size
 
     fh.Close()
 
@@ -1198,6 +1199,7 @@ def pynekwrite(filename, comm, msh=None, fld=None, wdsz=4, istep=0, write_mesh=T
     if ioh.gdim > 2:
 
         log.write("debug", "Writing metadata")
+        meta_fld_data_size = np.int64(4) # Always in single precision
 
         # Write the coordinates
         if (ioh.pos_variables and write_mesh) > 0:
@@ -1206,9 +1208,9 @@ def pynekwrite(filename, comm, msh=None, fld=None, wdsz=4, istep=0, write_mesh=T
             y = msh.y
             z = msh.z
 
-            byte_offset = mpi_offset + ioh.offset_el * ioh.gdim * 2 * ioh.fld_data_size
+            byte_offset = mpi_offset + ioh.offset_el * ioh.gdim * 2 * meta_fld_data_size
             fld_file_write_vector_metadata(fh, byte_offset, x, y, z, ioh)
-            mpi_offset += ioh.glb_nelv * ioh.gdim * 2 * ioh.fld_data_size
+            mpi_offset += ioh.glb_nelv * ioh.gdim * 2 * meta_fld_data_size
 
         # Write the velocity
         if ioh.vel_variables > 0:
@@ -1216,34 +1218,34 @@ def pynekwrite(filename, comm, msh=None, fld=None, wdsz=4, istep=0, write_mesh=T
             u = fld.fields["vel"][0]
             v = fld.fields["vel"][1]
             w = fld.fields["vel"][2]
-            byte_offset = mpi_offset + ioh.offset_el * ioh.gdim * 2 * ioh.fld_data_size
+            byte_offset = mpi_offset + ioh.offset_el * ioh.gdim * 2 * meta_fld_data_size
             fld_file_write_vector_metadata(fh, byte_offset, u, v, w, ioh)
-            mpi_offset += ioh.glb_nelv * ioh.gdim * 2 * ioh.fld_data_size
+            mpi_offset += ioh.glb_nelv * ioh.gdim * 2 * meta_fld_data_size
 
         # Write pressure
         if ioh.pres_variables > 0:
 
             p = fld.fields["pres"][0]
 
-            byte_offset = mpi_offset + ioh.offset_el * 1 * 2 * ioh.fld_data_size
+            byte_offset = mpi_offset + ioh.offset_el * 1 * 2 * meta_fld_data_size
             fld_file_write_metadata(fh, byte_offset, p, ioh)
-            mpi_offset += ioh.glb_nelv * 1 * 2 * ioh.fld_data_size
+            mpi_offset += ioh.glb_nelv * 1 * 2 * meta_fld_data_size
 
         # Write Temperature
         if ioh.temp_variables > 0:
 
             t = fld.fields["temp"][0]
-            byte_offset = mpi_offset + ioh.offset_el * 1 * 2 * ioh.fld_data_size
+            byte_offset = mpi_offset + ioh.offset_el * 1 * 2 * meta_fld_data_size
             fld_file_write_metadata(fh, byte_offset, t, ioh)
-            mpi_offset += ioh.glb_nelv * 1 * 2 * ioh.fld_data_size
+            mpi_offset += ioh.glb_nelv * 1 * 2 * meta_fld_data_size
 
         # Write scalars
         for var in range(0, ioh.scalar_variables):
 
             s = fld.fields["scal"][var]
-            byte_offset = mpi_offset + ioh.offset_el * 1 * 2 * ioh.fld_data_size
+            byte_offset = mpi_offset + ioh.offset_el * 1 * 2 * meta_fld_data_size
             fld_file_write_metadata(fh, byte_offset, s, ioh)
-            mpi_offset += ioh.glb_nelv * 1 * 2 * ioh.fld_data_size
+            mpi_offset += ioh.glb_nelv * 1 * 2 * meta_fld_data_size
 
     # Reshape data
     msh.x.shape = field_shape
