@@ -1,6 +1,7 @@
 """ Contains the interpolator class"""
 
 import os
+import sys
 from itertools import combinations
 import numpy as np
 from scipy.spatial import KDTree
@@ -198,6 +199,28 @@ class Interpolator:
 
         self.log.toc()
 
+    def binning_hash(self, x, y, z):
+        """
+        """
+
+        x_min = self.domain_min_x
+        x_max = self.domain_max_x
+        y_min = self.domain_min_y
+        y_max = self.domain_max_y
+        z_min = self.domain_min_z
+        z_max = self.domain_max_z
+        n_bins_1d = self.bin_size_1d
+        max_bins_1d = n_bins_1d - 1
+
+        max_bins_1d = n_bins_1d - 1
+        bin_x = (np.floor((x - x_min) / ((x_max - x_min) / max_bins_1d))).astype(np.int32)
+        bin_y = (np.floor((y - y_min) / ((y_max - y_min) / max_bins_1d))).astype(np.int32)
+        bin_z = (np.floor((z - z_min) / ((z_max - z_min) / max_bins_1d))).astype(np.int32)
+
+        bin = bin_x + bin_y * n_bins_1d + bin_z * n_bins_1d**2
+
+        return bin
+
     def set_up_global_tree_domain_binning_(self, comm, global_tree_nbins=None):
 
         self.log.tic()
@@ -209,8 +232,17 @@ class Interpolator:
             )
 
         bin_size = global_tree_nbins
-
-        self.log.write("info", f"Using global bin mesh of size {bin_size}")
+        bin_size_1d = int(np.round(np.cbrt(bin_size))) 
+        bin_size = bin_size_1d**3
+        
+        bins_per_rank = int(np.ceil(bin_size / comm.Get_size()))
+            
+        self.log.write(
+            "info", f"Using {bin_size} as actual bin size"
+        )
+        self.log.write(
+            "info", f"Storing {bins_per_rank} in each rank"
+        )
 
         # Find the values that delimit a cubic boundin box
         # for the whole domain
@@ -222,78 +254,46 @@ class Interpolator:
         rank_bbox[0, 3] = np.max(self.y)
         rank_bbox[0, 4] = np.min(self.z)
         rank_bbox[0, 5] = np.max(self.z)
-        domain_min_x = comm.allreduce(rank_bbox[0, 0], op=MPI.MIN)
-        domain_min_y = comm.allreduce(rank_bbox[0, 2], op=MPI.MIN)
-        domain_min_z = comm.allreduce(rank_bbox[0, 4], op=MPI.MIN)
-        domain_max_x = comm.allreduce(rank_bbox[0, 1], op=MPI.MAX)
-        domain_max_y = comm.allreduce(rank_bbox[0, 3], op=MPI.MAX)
-        domain_max_z = comm.allreduce(rank_bbox[0, 5], op=MPI.MAX)
+        self.domain_min_x = comm.allreduce(rank_bbox[0, 0], op=MPI.MIN)
+        self.domain_min_y = comm.allreduce(rank_bbox[0, 2], op=MPI.MIN)
+        self.domain_min_z = comm.allreduce(rank_bbox[0, 4], op=MPI.MIN)
+        self.domain_max_x = comm.allreduce(rank_bbox[0, 1], op=MPI.MAX)
+        self.domain_max_y = comm.allreduce(rank_bbox[0, 3], op=MPI.MAX)
+        self.domain_max_z = comm.allreduce(rank_bbox[0, 5], op=MPI.MAX)
+        self.bin_size_1d = bin_size_1d
+        self.bins_per_rank = bins_per_rank
 
-        ## Find the ratio between ditances for domains that are
-        ## not well distributed
-        per_ = (
-            domain_max_x
-            - domain_min_x
-            + domain_max_y
-            - domain_min_y
-            + domain_max_z
-            - domain_min_z
-        )
-        ratiox = (domain_max_x - domain_min_x) / per_
-        ratioy = (domain_max_y - domain_min_y) / per_
-        ratioz = (domain_max_z - domain_min_z) / per_
+        # Check in which bins the points are and check wich are the rank owners of those bins
+        bins_of_points = self.binning_hash(self.x, self.y, self.z)
+        bin_owner = np.floor(bins_of_points / bins_per_rank).astype(np.int32)
 
-        ## Select the number of points trying to respect the
-        ## ratio constraints
-        nz = int(np.round(np.cbrt(bin_size * ratioz)))
-        remaining = bin_size / nz  # This is the product of nx and ny we aim for
-        sum_ratios = ratiox + ratioy
-        nx = int(np.round(np.sqrt((ratiox / sum_ratios) * remaining)))
-        ny = int(np.round(np.sqrt((ratioy / sum_ratios) * remaining)))
-        nz = int(bin_size / (nx * ny))
+        # Let the rank owner of the bins know that I have data in those bins
+        unique_ranks = np.unique(bin_owner)
+        destinations = unique_ranks.tolist()
+        bins_in_owner = [np.unique(bins_of_points[bin_owner == i]).astype(np.int32) for i in unique_ranks]
+        
+        sources, data_from_others = self.rt.send_recv(destination = destinations, data = bins_in_owner, dtype = np.int32, tag=0)
+        
+        # Create a hash table that contains the ranks that have data in the bins I own
+        my_bins_range = [np.floor(self.rt.comm.Get_rank() * bins_per_rank).astype(np.int32), np.floor((self.rt.comm.Get_rank() + 1) * bins_per_rank).astype(np.int32)]
+        bin_to_rank_map = {i : [] for i in range(my_bins_range[0], my_bins_range[1])}
 
-        self.log.write("info", "Creating global bin mesh")
-        # create bin linear mesh
-        bin_x = np.linspace(domain_min_x, domain_max_x, nx + 1)
-        bin_y = np.linspace(domain_min_y, domain_max_y, ny + 1)
-        bin_z = np.linspace(domain_min_z, domain_max_z, nz + 1)
-        # bin mesh spacing
-        dx = (domain_max_x - domain_min_x) / nx
-        dy = (domain_max_y - domain_min_y) / ny
-        dz = (domain_max_z - domain_min_z) / nz
-        search_radious = np.sqrt(dx**2 + dy**2 + dz**2) / 2
-        # Replace the bin mesh vertices with the centroids
-        bin_x = bin_x[:-1] + dx / 2
-        bin_y = bin_y[:-1] + dy / 2
-        bin_z = bin_z[:-1] + dz / 2
-        # create 3d bin 'mesh'. Using the centroids
-        xx, yy, zz = np.meshgrid(bin_x, bin_y, bin_z, indexing="ij")
-        bin_mesh_centroids = np.array([xx.flatten(), yy.flatten(), zz.flatten()]).T
+        # Fill the has table with data
+        ## Use sets to try to make it fast
+        my_set = set(bin_to_rank_map.keys())
+        # Iterate over the souces
+        for rankk, binss in zip(sources, data_from_others):
+            # Create a set with the bins in this rank
+            binss_set = set(binss)
+            # Check which are the bins that are in the intersection of the two sets
+            intersection = my_set.intersection(binss_set)
+            # If there are bins in the intersection, add the rank to the hash table
+            if len(intersection) > 0:
+                for i in intersection:
+                    bin_to_rank_map[i].append(rankk.astype(np.int32))
 
-        # Create the global tree to make searches in the bin mesh
-        self.log.write("info", "Creating global KD tree with bin mesh centroids")
-        self.global_tree = KDTree(bin_mesh_centroids)
-
-        # For this rank, determine which points are in which
-        # bin mesh cell
-        self.log.write("info", "Create map from sem mesh to bin mesh")
-        mesh_to_bin = self.global_tree.query_ball_point(
-            x=np.array([self.x.flatten(), self.y.flatten(), self.z.flatten()]).T,
-            r=(search_radious) * (1 + 1e-6),
-            p=2.0,
-            eps=1e-8,
-            workers=1,
-            return_sorted=False,
-            return_length=False,
-        )
-
-        self.log.write("info", "Create map from bin mesh to rank")
-        self.bin_to_rank_map = domain_binning_map_bin_to_rank(
-            mesh_to_bin, nx, ny, nz, comm
-        )
-        self.search_radious = search_radious
-
-        self.log.toc()
+        # Store the data
+        self.bin_to_rank_map = bin_to_rank_map
 
     def scatter_probes_from_io_rank(self, io_rank, comm):
         """Scatter the probes from the rank that is used to read them - rank0 by default"""
@@ -1987,7 +1987,7 @@ def get_candidate_ranks(self, comm):
 
             # Give it the same format that the kdtree search gives   
             candidate_ranks_per_point = np.array(candidate_ranks_per_point, dtype=object)
-        
+         
         # Obtain the unique candidates of this rank
         ## 1. flatten the list of lists
         flattened_list = [
@@ -2002,22 +2002,89 @@ def get_candidate_ranks(self, comm):
 
     elif self.global_tree_type == "domain_binning":
 
-        # Search in which global coarse mesh cell each probe in
-        # this rank resides
-        probe_to_bin_map = self.global_tree.query_ball_point(
-            x=self.probe_partition,
-            r=self.search_radious * (1 + 1e-6),
-            p=2.0,
-            eps=1e-8,
-            workers=1,
-            return_sorted=False,
-            return_length=False,
-        )
+        # Calculate the number of chunks once
+        chunk_size = self.max_pts
+        num_points = self.probe_partition.shape[0]
+        n_chunks = int(np.ceil(num_points / chunk_size))
 
-        # Now map from bins to ranks
-        candidate_ranks_per_point = domain_binning_map_probe_to_rank(
-            self, probe_to_bin_map
-        )
+        candidate_ranks_per_point = []
+        iferror = False
+
+        for chunk_id in range(n_chunks):
+            # Determine start and end indices for this chunk
+            start = chunk_id * chunk_size
+            end = min((chunk_id + 1) * chunk_size, num_points)
+            
+            # Extract coordinates for the current chunk in one go
+            chunk_pts = self.probe_partition[start:end]
+            xx, yy, zz = chunk_pts[:, 0], chunk_pts[:, 1], chunk_pts[:, 2]
+            
+            # Compute the bin for each probe point in this chunk
+            probe_to_bin = self.binning_hash(xx, yy, zz)
+            
+            # Compute unique bins from the probe points and then find their owners
+            unique_probe_to_bin = np.unique(probe_to_bin)
+            # Compute owner per unique bin (vectorized floor division)
+            owners = np.floor_divide(unique_probe_to_bin, self.bins_per_rank).astype(np.int32)
+            # Get unique owner values and preserve their order
+            unique_owners, _ = np.unique(owners, return_index=True)
+            unique_probe_to_bin_owner = unique_owners.tolist()  # Now a list of owner IDs
+            
+            # For each owner, group the bins that belong to it
+            bin_data = [
+                unique_probe_to_bin[owners == owner].astype(np.int32)
+                for owner in unique_probe_to_bin_owner
+            ]
+            
+            # Communicate: send unique bin information to remote processes
+            sources, data_from_others = self.rt.send_recv(
+                destination=unique_probe_to_bin_owner, data=bin_data, dtype=np.int32, tag=0
+            )
+            
+            # For each result from the remote call, build the candidate arrays:
+            return_data = []
+            for bins in data_from_others:
+                # Build rank arrays for each bin using the mapping, then create a companion bin array
+                rank_arrays = [np.array(self.bin_to_rank_map[b], dtype=np.int32) for b in bins]
+                bin_arrays = [
+                    np.full_like(rank, fill_value=b, dtype=np.int32)
+                    for b, rank in zip(bins, rank_arrays)
+                ]
+                # Concatenate across bins and stack into a 2D array: first column for bin, second for rank candidate
+                concatenated_ranks = np.concatenate(rank_arrays)
+                concatenated_bins = np.concatenate(bin_arrays)
+                return_data.append(np.stack((concatenated_bins, concatenated_ranks), axis=1))
+            
+            # Communicate: send back the return_data and receive the final candidate data from remote nodes
+            _, returned_data = self.rt.send_recv(
+                destination=sources, data=return_data, dtype=np.int32, tag=1
+            )
+            
+            # For efficiency, reshape each array only once and build a mapping from owner to candidate array
+            owner_to_data = {
+                owner: ret.reshape(-1, 2)
+                for owner, ret in zip(unique_probe_to_bin_owner, returned_data)
+            }
+            
+            try:
+                candidate_ranks_per_point_ = [
+                    ret_data[ret_data[:, 0] == b, 1].tolist()
+                    for b, ret_data in ((b, owner_to_data[int(b // self.bins_per_rank)]) for b in probe_to_bin)
+                ]
+            except KeyError:
+                iferror = True
+                self.log.write("error", f"Something is failing with the domain partitioning to interpolate. You have {self.bins_per_rank} bins per rank. Consider decreasing it first and then increasing it. If it does not work, change the global_tree_type to rank_bbox when initializing probes.")
+            
+            self.rt.comm.Barrier()
+            stopping = self.rt.comm.allreduce(iferror, op=MPI.SUM)
+            if stopping > 0:
+                self.log.write("error", "Error in domain partitioning. Exiting.")
+                sys.exit(1)
+
+            candidate_ranks_per_point.extend(candidate_ranks_per_point_)
+
+        # Format the candidate ranks to match the desired object array output
+        candidate_ranks_per_point = np.array(candidate_ranks_per_point, dtype=object)
 
         # Now, from the candidates per point, get the candidates
         # that this rank has.
