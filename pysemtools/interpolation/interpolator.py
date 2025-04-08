@@ -1,6 +1,7 @@
 """ Contains the interpolator class"""
 
 import os
+import sys
 from itertools import combinations
 import numpy as np
 from scipy.spatial import KDTree
@@ -2001,63 +2002,88 @@ def get_candidate_ranks(self, comm):
 
     elif self.global_tree_type == "domain_binning":
 
-        # Find the candidate ranks iteratively 
+        # Calculate the number of chunks once
         chunk_size = self.max_pts
-        n_chunks = int(np.ceil(self.probe_partition.shape[0] / chunk_size))
+        num_points = self.probe_partition.shape[0]
+        n_chunks = int(np.ceil(num_points / chunk_size))
 
-        # Attempting to optimize. Currently using the old version (the one in else.)
-        # Consider activating the one on top by setting 0==0. Maybe it is better for more ranks
         candidate_ranks_per_point = []
+        iferror = False
 
         for chunk_id in range(n_chunks):
+            # Determine start and end indices for this chunk
             start = chunk_id * chunk_size
-            end = (chunk_id + 1) * chunk_size
-            if end > self.probe_partition.shape[0]:
-                end = self.probe_partition.shape[0]
-
-            xx = self.probe_partition[start:end, 0]
-            yy = self.probe_partition[start:end, 1]
-            zz = self.probe_partition[start:end, 2]
+            end = min((chunk_id + 1) * chunk_size, num_points)
+            
+            # Extract coordinates for the current chunk in one go
+            chunk_pts = self.probe_partition[start:end]
+            xx, yy, zz = chunk_pts[:, 0], chunk_pts[:, 1], chunk_pts[:, 2]
+            
+            # Compute the bin for each probe point in this chunk
             probe_to_bin = self.binning_hash(xx, yy, zz)
+            
+            # Compute unique bins from the probe points and then find their owners
             unique_probe_to_bin = np.unique(probe_to_bin)
-            probe_to_bin_owner = np.floor(unique_probe_to_bin / self.bins_per_rank).astype(np.int32)
-            unique_probe_to_bin_owner = (np.unique(probe_to_bin_owner).astype(np.int32)).tolist()
-            bin_data = [np.unique(unique_probe_to_bin[probe_to_bin_owner == i]).astype(np.int32) for i in unique_probe_to_bin_owner]
-                    
-            sources, data_from_others = self.rt.send_recv(destination = unique_probe_to_bin_owner, data = bin_data, dtype = np.int32, tag=0)
-
+            # Compute owner per unique bin (vectorized floor division)
+            owners = np.floor_divide(unique_probe_to_bin, self.bins_per_rank).astype(np.int32)
+            # Get unique owner values and preserve their order
+            unique_owners, _ = np.unique(owners, return_index=True)
+            unique_probe_to_bin_owner = unique_owners.tolist()  # Now a list of owner IDs
+            
+            # For each owner, group the bins that belong to it
+            bin_data = [
+                unique_probe_to_bin[owners == owner].astype(np.int32)
+                for owner in unique_probe_to_bin_owner
+            ]
+            
+            # Communicate: send unique bin information to remote processes
+            sources, data_from_others = self.rt.send_recv(
+                destination=unique_probe_to_bin_owner, data=bin_data, dtype=np.int32, tag=0
+            )
+            
+            # For each result from the remote call, build the candidate arrays:
             return_data = []
             for bins in data_from_others:
-                # Create the rank arrays from the bin-to-rank mapping
+                # Build rank arrays for each bin using the mapping, then create a companion bin array
                 rank_arrays = [np.array(self.bin_to_rank_map[b], dtype=np.int32) for b in bins]
-                
-                # Create an array with the bins
-                bin_arrays = [np.full_like(r, fill_value=b, dtype=np.int32) for b, r in zip(bins, rank_arrays)]
-                
-                # Flatten the list
-                flattened_ranks = np.concatenate(rank_arrays)
-                flattened_bins = np.concatenate(bin_arrays)
-                
-                # create an array to be sent back
-                return_data.append(np.stack((flattened_bins, flattened_ranks), axis=1, dtype=np.int32))
-        
-            _, returned_data = self.rt.send_recv(destination = sources, data = return_data, dtype = np.int32, tag=1)
-
-            # Reshape the returned data
-            for i,_ in enumerate(returned_data):
-                returned_data[i] = returned_data[i].reshape(-1, 2)
-
-            candidate_ranks_per_point_ = [] 
-            for i, point in enumerate(self.probe_partition[start:end]):
-                probe_to_bin_i = probe_to_bin[i]
-                probe_to_bin_owner_i = np.floor(probe_to_bin_i / self.bins_per_rank).astype(np.int32)
-                j = np.where(unique_probe_to_bin_owner == probe_to_bin_owner_i)[0][0]
-                source_dat = returned_data[j]
-                candidate_ranks_per_point_.append(source_dat[source_dat[:, 0] == probe_to_bin_i][:, 1].tolist())
- 
-            candidate_ranks_per_point.extend(candidate_ranks_per_point_)
+                bin_arrays = [
+                    np.full_like(rank, fill_value=b, dtype=np.int32)
+                    for b, rank in zip(bins, rank_arrays)
+                ]
+                # Concatenate across bins and stack into a 2D array: first column for bin, second for rank candidate
+                concatenated_ranks = np.concatenate(rank_arrays)
+                concatenated_bins = np.concatenate(bin_arrays)
+                return_data.append(np.stack((concatenated_bins, concatenated_ranks), axis=1))
             
-        # Give it the same format that the kdtree search gives   
+            # Communicate: send back the return_data and receive the final candidate data from remote nodes
+            _, returned_data = self.rt.send_recv(
+                destination=sources, data=return_data, dtype=np.int32, tag=1
+            )
+            
+            # For efficiency, reshape each array only once and build a mapping from owner to candidate array
+            owner_to_data = {
+                owner: ret.reshape(-1, 2)
+                for owner, ret in zip(unique_probe_to_bin_owner, returned_data)
+            }
+            
+            try:
+                candidate_ranks_per_point_ = [
+                    ret_data[ret_data[:, 0] == b, 1].tolist()
+                    for b, ret_data in ((b, owner_to_data[int(b // self.bins_per_rank)]) for b in probe_to_bin)
+                ]
+            except KeyError:
+                iferror = True
+                self.log.write("error", f"Something is failing with the domain partitioning to interpolate. You have {self.bins_per_rank} bins per rank. Consider decreasing it first and then increasing it. If it does not work, change the global_tree_type to rank_bbox when initializing probes.")
+            
+            self.rt.comm.Barrier()
+            stopping = self.rt.comm.allreduce(iferror, op=MPI.SUM)
+            if stopping > 0:
+                self.log.write("error", "Error in domain partitioning. Exiting.")
+                sys.exit(1)
+
+            candidate_ranks_per_point.extend(candidate_ranks_per_point_)
+
+        # Format the candidate ranks to match the desired object array output
         candidate_ranks_per_point = np.array(candidate_ranks_per_point, dtype=object)
 
         # Now, from the candidates per point, get the candidates
