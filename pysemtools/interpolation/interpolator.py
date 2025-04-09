@@ -1303,34 +1303,26 @@ class Interpolator:
 
             # Send data to my candidates and recieve from ranks where I am candidate
             self.log.write("info", "Send data to candidates and recieve from sources")
-
-            my_source, buff_probes = self.rt.transfer_data( comm_pattern,
-                destination=my_it_dest, data=probe_not_found, dtype=np.double, tag=1
+            
+            # Pack and send/recv the probe data
+            p_probes = pack_data(array_list=[probe_not_found, probe_rst_not_found])
+            p_info = pack_data(array_list=[el_owner_not_found, glb_el_owner_not_found, rank_owner_not_found, err_code_not_found])
+            
+            ## Send and receive
+            my_source, buff_p_probes = self.rt.transfer_data( comm_pattern,
+                destination=my_it_dest, data=p_probes, dtype=np.double, tag=1
             )
-            _, buff_probes_rst = self.rt.transfer_data( comm_pattern,
-                destination=my_it_dest, data=probe_rst_not_found, dtype=np.double, tag=2
+            _, buff_p_info = self.rt.transfer_data(comm_pattern,
+                destination=my_it_dest, data=p_info, dtype=np.int64, tag=2
             )
-            _, buff_el_owner = self.rt.transfer_data( comm_pattern,
-                destination=my_it_dest, data=el_owner_not_found, dtype=np.int64, tag=3
-            )
-            _, buff_glb_el_owner = self.rt.transfer_data( comm_pattern,
-                destination=my_it_dest, data=glb_el_owner_not_found, dtype=np.int64, tag=4
-            )
-            _, buff_rank_owner = self.rt.transfer_data( comm_pattern,
-                destination=my_it_dest, data=rank_owner_not_found, dtype=np.int64, tag=5
-            )
-            _, buff_err_code = self.rt.transfer_data( comm_pattern,
-                destination=my_it_dest, data=err_code_not_found, dtype=np.int64, tag=6
-            )
-            _, buff_test_pattern = self.rt.transfer_data( comm_pattern,
-                destination=my_it_dest, data=test_pattern_not_found, dtype=np.double, tag=7
+            _, buff_test_pattern = self.rt.transfer_data(comm_pattern,
+                destination=my_it_dest, data=test_pattern_not_found, dtype=np.double, tag=3
             )
 
-            # Reshape the data from the probes
-            for source_index in range(0, len(my_source)):
-                buff_probes[source_index] = buff_probes[source_index].reshape(-1, 3)
-                buff_probes_rst[source_index] = buff_probes_rst[source_index].reshape(-1, 3)
-
+            # Unpack the data 
+            buff_probes, buff_probes_rst = unpack_source_data(packed_source_data=buff_p_probes, number_of_arrays=2, equal_length=True, final_shape=(-1, 3))
+            buff_el_owner, buff_glb_el_owner, buff_rank_owner, buff_err_code = unpack_source_data(packed_source_data=buff_p_info, number_of_arrays=4, equal_length=True)
+            
             # Set the information for the coordinate search in this rank
             self.log.write("info", "Find rst coordinates for the points")
             mesh_info = {}
@@ -1387,37 +1379,29 @@ class Interpolator:
             # Set the request to Recieve back the data that I have sent to my candidates
             self.log.write("info", "Send data to sources and recieve from candidates")
 
-            _, obuff_probes = self.rt.transfer_data( comm_pattern,
-                destination=my_source, data=buff_probes, dtype=np.double, tag=11
+            # Pack and send/recv the probe data
+            p_buff_probes = pack_destination_data(destination_data=[buff_probes, buff_probes_rst])
+            p_buff_info = pack_destination_data(destination_data=[buff_el_owner, buff_glb_el_owner, buff_rank_owner, buff_err_code])
+
+            # Send and recieve
+            _, obuff_p_probes = self.rt.transfer_data( comm_pattern,
+                destination=my_source, data=p_buff_probes, dtype=np.double, tag=11
             )
-            _, obuff_probes_rst = self.rt.transfer_data( comm_pattern,
-                destination=my_source, data=buff_probes_rst, dtype=np.double, tag=12
-            )
-            _, obuff_el_owner = self.rt.transfer_data( comm_pattern,
-                destination=my_source, data=buff_el_owner, dtype=np.int64, tag=13
-            )
-            _, obuff_glb_el_owner = self.rt.transfer_data( comm_pattern,
-                destination=my_source, data=buff_glb_el_owner, dtype=np.int64, tag=14
-            )
-            _, obuff_rank_owner = self.rt.transfer_data( comm_pattern,
-                destination=my_source, data=buff_rank_owner, dtype=np.int64, tag=15
-            )
-            _, obuff_err_code = self.rt.transfer_data( comm_pattern,
-                destination=my_source, data=buff_err_code, dtype=np.int64, tag=16
+            _, obuff_p_info = self.rt.transfer_data( comm_pattern,
+                destination=my_source, data=p_buff_info, dtype=np.int64, tag=12
             )
             _, obuff_test_pattern = self.rt.transfer_data( comm_pattern,
-                destination=my_source, data=buff_test_pattern, dtype=np.double, tag=17
+                destination=my_source, data=buff_test_pattern, dtype=np.double, tag=13
             )
 
             # If no point was sent from this rank, then all buffers will be empty
             # so skip the rest of the loop
             if n_not_found < 1:
                 continue
-
-            # Reshape the data from the probes
-            for dest_index in range(0, len(my_it_dest)):
-                obuff_probes[dest_index] = obuff_probes[dest_index].reshape(-1, 3)
-                obuff_probes_rst[dest_index] = obuff_probes_rst[dest_index].reshape(-1, 3)
+            
+            # Unpack the data
+            obuff_probes, obuff_probes_rst = unpack_source_data(packed_source_data=obuff_p_probes, number_of_arrays=2, equal_length=True, final_shape=(-1, 3))
+            obuff_el_owner, obuff_glb_el_owner, obuff_rank_owner, obuff_err_code = unpack_source_data(packed_source_data=obuff_p_info, number_of_arrays=4, equal_length=True)
 
             # Free resources from previous buffers if possible
             del (
@@ -2183,3 +2167,74 @@ def fp_it_tolist(self, value):
         self.log.write("warning", "Setting comm batch size to 5000. Only used if find_points_iterative is True")
         return [value, 5000]
     return value
+
+def pack_data(array_list: list = None):
+
+    """
+    Pack data into a single array for sending over MPI.
+    
+    Parameters:
+        array_list : list of np.ndarray
+            List of arrays to be packed.
+    
+    Returns:
+        packed_data : np.ndarray
+            Single packed array.
+    """
+    if array_list is None:
+        return None
+
+    # Concatenate all arrays into a single array
+    packed_data = np.concatenate([arr.flatten() for arr in array_list])
+    return packed_data
+
+def unpack_data(packed_data: np.ndarray = None, number_of_arrays: int = None, equal_length: bool = True, final_shape: tuple = None):
+    """
+    """
+    if packed_data is None:
+        return []
+
+    unpacked_data = []
+
+    if equal_length:
+        array_size = packed_data.size // number_of_arrays
+        for i in range(number_of_arrays):
+            start_index = i * array_size
+            end_index = (i + 1) * array_size
+            upacked = packed_data[start_index:end_index]
+            if final_shape is not None:
+                unpacked_data.append(upacked.reshape(final_shape))
+            else:   
+                unpacked_data.append(upacked)
+    else:
+        raise NotImplementedError("Unpacking with different sizes is not implemented yet")
+        # Calculate the size of each array
+    return unpacked_data
+
+def pack_destination_data(destination_data: list =  None):
+    """
+    """
+
+    number_of_arrays =  len(destination_data)
+    number_of_destinations = len(destination_data[0])
+    output_buffers = []
+    for destination_index in range(0, number_of_destinations):
+        arrays_to_pack = [destination_data[i][destination_index] for i in range(0, number_of_arrays)]
+        packed_destination_data = pack_data(arrays_to_pack)
+        output_buffers.append(packed_destination_data)
+    return output_buffers
+
+def unpack_source_data(packed_source_data: list = None, number_of_arrays: int = 1, equal_length: bool = True, final_shape: tuple = None):
+    """
+    """
+
+    # Allocate
+    output_buffers = [[] for _ in range(number_of_arrays)]
+    number_of_sources = len(packed_source_data)
+    
+    for source_index in range(0, number_of_sources):
+        unpacked_source_data = unpack_data(packed_source_data[source_index], number_of_arrays=number_of_arrays, equal_length=equal_length, final_shape=final_shape)
+        for arrays_index in range(0, number_of_arrays):
+            output_buffers[arrays_index].append(unpacked_source_data[arrays_index])
+
+    return output_buffers
