@@ -219,6 +219,9 @@ class Interpolator:
 
         bin = bin_x + bin_y * n_bins_1d + bin_z * n_bins_1d**2
 
+        # Since the borders might be extended, make sure to clip the domain.
+        bin = np.clip(bin, 0, n_bins_1d**3 - 1)
+
         return bin
 
     def set_up_global_tree_domain_binning_(self, comm, global_tree_nbins=None):
@@ -517,6 +520,7 @@ class Interpolator:
                 tol=tol,
                 batch_size=find_points_iterative[1],
                 max_iter=max_iter,
+                comm_pattern= find_points_comm_pattern
             )
 
     def find_points_broadcast(
@@ -998,7 +1002,7 @@ class Interpolator:
         # Get candidate ranks from a global kd tree
         # These are the destination ranks
         self.log.write("info", "Obtaining candidate ranks and sources")
-        my_dest = get_candidate_ranks(self, comm)
+        my_dest, _ = get_candidate_ranks(self, comm)
 
         # Create temporary arrays that store the points that have not been found
         not_found = np.where(self.err_code_partition != 1)[0]
@@ -1236,7 +1240,16 @@ class Interpolator:
         # Get candidate ranks from a global kd tree
         # These are the destination ranks
         self.log.write("info", "Obtaining candidate ranks and sources")
-        my_dest = get_candidate_ranks(self, comm)
+        my_dest, candidate_ranks_list = get_candidate_ranks(self, comm)
+        
+        if batch_size == 1:
+            # Obtain the number of columns corresponding to the maximum number of candidates among all points
+            # Then create a numpy array padding for points that have less candidates
+            num_rows = len(candidate_ranks_list)
+            max_col = max(len(row) for row in candidate_ranks_list)
+            candidates_per_point = np.full((num_rows, max_col), -1, dtype=np.int32)
+            for i, row in enumerate(candidate_ranks_list):
+                candidates_per_point[i, :len(row)] = row
 
         self.log.write("info", "Determining maximun number of candidates")
         max_candidates = np.ones((1), dtype=np.int64) * len(my_dest)
@@ -1263,8 +1276,20 @@ class Interpolator:
                 self.log.write("warning", "my_it_dest is not a list, making it one")
                 my_it_dest = [my_it_dest]
 
-            # Create temporary arrays that store the points that have not been found
-            not_found = np.where(self.err_code_partition != 1)[0]
+            # If batch size is 1, only send the actual points that said are in candidate.
+            # This should always be done, currently it is not to simplify keeping track of things
+            if batch_size == 1:
+                self.log.write("warning", "With batch size = 1, we have noticed that domain binning might fail due to non overlapping of bins. If it does fail, select batch size = 2 or higher")
+                mask = (self.err_code_partition != 1)
+                if len(my_it_dest) > 0:
+                    candidate_mask = np.any(candidates_per_point == my_it_dest[0], axis=1)
+                    combined_mask = mask & candidate_mask
+                else:
+                    combined_mask = mask
+                not_found = np.flatnonzero(combined_mask)
+            else:
+                not_found = np.flatnonzero(self.err_code_partition != 1)
+
             n_not_found = not_found.size
             probe_not_found = self.probe_partition[not_found]
             probe_rst_not_found = self.probe_rst_partition[not_found]
@@ -2101,7 +2126,7 @@ def get_candidate_ranks(self, comm):
     else:
         raise ValueError("Global tree has not been set up")
 
-    return candidate_ranks
+    return candidate_ranks, candidate_ranks_per_point
 
 
 def domain_binning_map_probe_to_rank(self, probe_to_bin_map):
