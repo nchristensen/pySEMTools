@@ -212,16 +212,17 @@ class Interpolator:
         n_bins_1d = self.bin_size_1d
         max_bins_1d = n_bins_1d - 1
 
-        max_bins_1d = n_bins_1d - 1
         bin_x = (np.floor((x - x_min) / ((x_max - x_min) / max_bins_1d))).astype(np.int32)
         bin_y = (np.floor((y - y_min) / ((y_max - y_min) / max_bins_1d))).astype(np.int32)
         bin_z = (np.floor((z - z_min) / ((z_max - z_min) / max_bins_1d))).astype(np.int32)
 
+        # Clip the bins to be in the range [0, n_bins_1d - 1]
+        bin_x = np.clip(bin_x, 0, max_bins_1d)
+        bin_y = np.clip(bin_y, 0, max_bins_1d)
+        bin_z = np.clip(bin_z, 0, max_bins_1d)
+
         bin = bin_x + bin_y * n_bins_1d + bin_z * n_bins_1d**2
-
-        # Since the borders might be extended, make sure to clip the domain.
-        bin = np.clip(bin, 0, n_bins_1d**3 - 1)
-
+        
         return bin
 
     def set_up_global_tree_domain_binning_(self, comm, global_tree_nbins=None):
@@ -1279,7 +1280,8 @@ class Interpolator:
             # If batch size is 1, only send the actual points that said are in candidate.
             # This should always be done, currently it is not to simplify keeping track of things
             if batch_size == 1:
-                self.log.write("warning", "With batch size = 1, we have noticed that domain binning might fail due to non overlapping of bins. If it does fail, select batch size = 2 or higher")
+                if self.global_tree_type == "domain_binning":
+                    self.log.write("warning", "With batch size = 1, we have noticed that domain binning might fail due to non overlapping of bins. If it does fail, select batch size = 2 or higher")
                 mask = (self.err_code_partition != 1)
                 if len(my_it_dest) > 0:
                     candidate_mask = np.any(candidates_per_point == my_it_dest[0], axis=1)
