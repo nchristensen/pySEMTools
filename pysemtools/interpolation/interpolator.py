@@ -2422,7 +2422,8 @@ class dstructure_hashtable(dstructure):
 
         # See wich element has points in which bin
         self.log.write("info", "Creating bin mesh for the rank")
-        bins_of_points = self.binning_hash(x, y, z)
+        x_r, y_r, z_r, self.my_bbox = linearize_elements(x, y, z, factor=2, rel_tol=self.elem_percent_expansion)
+        bins_of_points = self.binning_hash(x_r, y_r, z_r)
         
         # Create the empty bin to rank map
         approach = 1
@@ -2491,6 +2492,8 @@ class dstructure_hashtable(dstructure):
 
         element_candidates = [self.bin_to_elem_map[probe_to_bin[i]] for i in range(0, probes.shape[0])]
 
+        element_candidates = refine_candidates(probes, element_candidates, self.my_bbox, rel_tol=self.elem_percent_expansion)
+
         return element_candidates
 
 def refine_candidates(probes, candidate_elements, bboxes, rel_tol):
@@ -2526,3 +2529,74 @@ def refine_candidates(probes, candidate_elements, bboxes, rel_tol):
         else:
             refined_candidates.append([])
     return refined_candidates
+
+def expand_elements(arrays: list = None, rel_tol = 0.01):
+    '''Scale the elements to an expanded range'''
+    
+    rescaled_arrays = []
+    for x in arrays:
+        # Calculate scaling parameters
+        element_min = np.min(x, axis=(1, 2, 3), keepdims=True)
+        element_max = np.max(x, axis=(1, 2, 3), keepdims=True)
+        delta = element_max - element_min
+        new_min = element_min - delta * rel_tol / 2
+        new_max = element_max + delta * rel_tol / 2
+
+        # Rescale
+        rescaled_arrays.append(new_min + (x - element_min) * (new_max - new_min) / delta)
+
+    return rescaled_arrays
+
+def linearize_elements(x, y, z, factor: int = 2, rel_tol = 0.01):
+    '''Scale the elements to an expanded range'''
+    
+    # Calculate scaling parameters
+    min_x = np.min(x, axis=(1, 2, 3))
+    max_x = np.max(x, axis=(1, 2, 3))
+    dx = max_x - min_x
+
+    min_y = np.min(y, axis=(1, 2, 3))
+    max_y = np.max(y, axis=(1, 2, 3))
+    dy = max_y - min_y
+
+    min_z = np.min(z, axis=(1, 2, 3))
+    max_z = np.max(z, axis=(1, 2, 3))
+    dz = max_z - min_z
+
+    # Calculate the new min and max values
+    new_min_x = min_x - dx * rel_tol / 2
+    new_max_x = max_x + dx * rel_tol / 2
+    new_min_y = min_y - dy * rel_tol / 2
+    new_max_y = max_y + dy * rel_tol / 2
+    new_min_z = min_z - dz * rel_tol / 2
+    new_max_z = max_z + dz * rel_tol / 2
+
+    # Create new linear grid over the elements
+    nelv = x.shape[0]
+    lz = x.shape[1]
+    ly = x.shape[2]
+    lx = x.shape[3]
+    x_r = np.empty((nelv, factor*lz, factor*ly, factor*lx), dtype=x.dtype)
+    y_r = np.empty((nelv, factor*lz, factor*ly, factor*lx), dtype=y.dtype)
+    z_r = np.empty((nelv, factor*lz, factor*ly, factor*lx), dtype=z.dtype)
+    for e in range(nelv):
+        x_1d = np.linspace(new_min_x[e], new_max_x[e], lx*factor)
+        y_1d = np.linspace(new_min_y[e], new_max_y[e], ly*factor)
+        z_1d = np.linspace(new_min_z[e], new_max_z[e], lz*factor)
+
+        zz, yy, xx = np.meshgrid(z_1d, y_1d, x_1d, indexing='ij')
+
+        x_r[e] = xx
+        y_r[e] = yy
+        z_r[e] = zz
+
+    bbox = np.zeros((nelv, 6))
+    bbox[:,0] = min_x
+    bbox[:,1] = max_x
+    bbox[:,2] = min_y
+    bbox[:,3] = max_y
+    bbox[:,4] = min_z
+    bbox[:,5] = max_z
+    
+
+    return x_r, y_r, z_r, bbox
