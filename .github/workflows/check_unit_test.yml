@@ -45,6 +45,7 @@ jobs:
           pip install pympler
           pip install memory_profiler
           pip install h5py
+          pip install rtree
           pip install .
           
       - name: Run unit tests
