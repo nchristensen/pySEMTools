@@ -493,7 +493,6 @@ class Interpolator:
             "info",
             "using communication pattern: {}".format(find_points_comm_pattern),
         )
-        
         # Check that the inputs are in the correct format 
         if not isinstance(find_points_iterative, (list, tuple)):
             find_points_iterative = fp_it_tolist(self, find_points_iterative)
@@ -546,39 +545,17 @@ class Interpolator:
         rank = comm.Get_rank()
         size = comm.Get_size()
         self.rank = rank
- 
+        
         if local_data_structure == "kdtree":
-            # First each rank finds their bounding box
-            self.log.write("info", "Finding bounding box of sem mesh")
-            self.my_bbox = get_bbox_from_coordinates(self.x, self.y, self.z)
+            self.my_tree = dstructure_kdtree(self.log, self.x, self.y, self.z, elem_percent_expansion = elem_percent_expansion)    
         
-            # Get bbox centroids and max radius from center to corner
-            self.my_bbox_centroids, self.my_bbox_maxdist = (
-                get_bbox_centroids_and_max_dist(self.my_bbox)
-            )
-
-            # Build a KDtree with my information
-            self.log.write("info", "Creating KD tree with local bbox centroids")
-            self.my_tree = KDTree(self.my_bbox_centroids)
-        
-        elif local_data_structure == "bounding_boxes":
-            
+        elif local_data_structure == "bounding_boxes":            
             # First each rank finds their bounding box
             self.log.write("info", "Finding bounding box of sem mesh")
             self.my_bbox = get_bbox_from_coordinates(self.x, self.y, self.z)
 
         elif local_data_structure == "rtree":
-
-            if rtree_index is None:
-                raise ImportError(
-                    "Rtree is not installed, please install it with pip install rtree to use this feature"
-                )
-                
-            self.log.write("info", "Finding bounding box of sem mesh")
-            self.my_bbox = get_bbox_from_coordinates_rtree(self.x, self.y, self.z, rel_tol=elem_percent_expansion)
-
-            self.log.write("info", "Creating Rtree with local bbox centroids")
-            self.my_tree = create_rtee(self.my_bbox)             
+            self.my_tree = dstructure_rtree(self.log, self.x, self.y, self.z, elem_percent_expansion = elem_percent_expansion)
 
         nelv = self.x.shape[0]
         self.ranks_ive_checked = []
@@ -1015,39 +992,17 @@ class Interpolator:
         self.log.write("info", "Finding points - start")
         self.log.tic()
         start_time = MPI.Wtime()
-
+        
         if local_data_structure == "kdtree":
-            # First each rank finds their bounding box
-            self.log.write("info", "Finding bounding box of sem mesh")
-            self.my_bbox = get_bbox_from_coordinates(self.x, self.y, self.z)
+            self.my_tree = dstructure_kdtree(self.log, self.x, self.y, self.z, elem_percent_expansion = elem_percent_expansion)    
         
-            # Get bbox centroids and max radius from center to corner
-            self.my_bbox_centroids, self.my_bbox_maxdist = (
-                get_bbox_centroids_and_max_dist(self.my_bbox)
-            )
-
-            # Build a KDtree with my information
-            self.log.write("info", "Creating KD tree with local bbox centroids")
-            self.my_tree = KDTree(self.my_bbox_centroids)
-        
-        elif local_data_structure == "bounding_boxes":
-            
+        elif local_data_structure == "bounding_boxes":            
             # First each rank finds their bounding box
             self.log.write("info", "Finding bounding box of sem mesh")
             self.my_bbox = get_bbox_from_coordinates(self.x, self.y, self.z)
 
         elif local_data_structure == "rtree":
-
-            if rtree_index is None:
-                raise ImportError(
-                    "Rtree is not installed, please install it with pip install rtree to use this feature"
-                )
-                
-            self.log.write("info", "Finding bounding box of sem mesh")
-            self.my_bbox = get_bbox_from_coordinates_rtree(self.x, self.y, self.z, rel_tol=elem_percent_expansion)
-
-            self.log.write("info", "Creating Rtree with local bbox centroids")
-            self.my_tree = create_rtee(self.my_bbox)             
+            self.my_tree = dstructure_rtree(self.log, self.x, self.y, self.z, elem_percent_expansion = elem_percent_expansion)
 
         # nelv = self.x.shape[0]
         self.ranks_ive_checked = []
@@ -1261,37 +1216,15 @@ class Interpolator:
         start_time = MPI.Wtime()
 
         if local_data_structure == "kdtree":
-            # First each rank finds their bounding box
-            self.log.write("info", "Finding bounding box of sem mesh")
-            self.my_bbox = get_bbox_from_coordinates(self.x, self.y, self.z)
+            self.my_tree = dstructure_kdtree(self.log, self.x, self.y, self.z, elem_percent_expansion = elem_percent_expansion)    
         
-            # Get bbox centroids and max radius from center to corner
-            self.my_bbox_centroids, self.my_bbox_maxdist = (
-                get_bbox_centroids_and_max_dist(self.my_bbox)
-            )
-
-            # Build a KDtree with my information
-            self.log.write("info", "Creating KD tree with local bbox centroids")
-            self.my_tree = KDTree(self.my_bbox_centroids)
-        
-        elif local_data_structure == "bounding_boxes":
-            
+        elif local_data_structure == "bounding_boxes":            
             # First each rank finds their bounding box
             self.log.write("info", "Finding bounding box of sem mesh")
             self.my_bbox = get_bbox_from_coordinates(self.x, self.y, self.z)
 
         elif local_data_structure == "rtree":
-
-            if rtree_index is None:
-                raise ImportError(
-                    "Rtree is not installed, please install it with pip install rtree to use this feature"
-                )
-                
-            self.log.write("info", "Finding bounding box of sem mesh")
-            self.my_bbox = get_bbox_from_coordinates_rtree(self.x, self.y, self.z, rel_tol=elem_percent_expansion)
-
-            self.log.write("info", "Creating Rtree with local bbox centroids")
-            self.my_tree = create_rtee(self.my_bbox)             
+            self.my_tree = dstructure_rtree(self.log, self.x, self.y, self.z, elem_percent_expansion = elem_percent_expansion)
 
         # nelv = self.x.shape[0]
         self.ranks_ive_checked = []
@@ -2347,3 +2280,140 @@ def unpack_source_data(packed_source_data: list = None, number_of_arrays: int = 
             output_buffers[arrays_index].append(unpacked_source_data[arrays_index])
 
     return output_buffers
+
+
+from abc import ABC, abstractmethod
+
+
+class dstructure(ABC):
+    """Interface for multiple point interpolators"""
+
+    def __init__(self):
+        """Initialize"""
+
+    @abstractmethod
+    def search(self):
+        """search the points"""
+
+class dstructure_kdtree(dstructure):
+    """
+    """
+
+    def __init__(self, logger, x: np.ndarray, y: np.ndarray, z: np.ndarray, **kwargs):
+        """Initialize"""
+        super().__init__()
+
+        self.log = logger
+        self.elem_percent_expansion = kwargs.get("elem_percent_expansion", 0.01)
+ 
+        # First each rank finds their bounding box
+        self.log.write("info", "Finding bounding box of sem mesh")
+        self.my_bbox = get_bbox_from_coordinates(x, y, z)
+    
+        # Get bbox centroids and max radius from center to corner
+        self.my_bbox_centroids, self.my_bbox_maxdist = (
+            get_bbox_centroids_and_max_dist(self.my_bbox)
+        )
+
+        # Build a KDtree with my information
+        self.log.write("info", "Creating KD tree with local bbox centroids") 
+        self.my_tree = KDTree(self.my_bbox_centroids)
+
+    def search(self, probes: np.ndarray, progress_bar = False):
+        
+        candidate_elements = self.my_tree.query_ball_point(
+            x=probes,
+            r=self.my_bbox_maxdist * (1 + 1e-6),
+            p=2.0,
+            eps=self.elem_percent_expansion,
+            workers=1,
+            return_sorted=False,
+            return_length=False,
+        )
+
+        # New way of checking as of april 4 2025
+        if 0==0:
+            element_candidates = refine_candidates(probes, candidate_elements, self.my_bbox, rel_tol=self.elem_percent_expansion)
+        else:
+            element_candidates = []
+            i = 0
+            if progress_bar:
+                pbar = tqdm(total=probes.shape[0])
+            for pt in probes:
+                element_candidates.append([])
+                for e in candidate_elements[i]:
+                    if pt_in_bbox(pt, self.my_bbox[e], rel_tol=self.elem_percent_expansion):
+                        element_candidates[i].append(e)
+                i = i + 1
+                if progress_bar:
+                    pbar.update(1)
+            if progress_bar:
+                pbar.close()
+
+        return element_candidates
+
+class dstructure_rtree(dstructure):
+    """
+    """
+
+    def __init__(self, logger, x: np.ndarray, y: np.ndarray, z: np.ndarray, **kwargs):
+        """Initialize"""
+        super().__init__()
+
+        self.log = logger
+        self.elem_percent_expansion = kwargs.get("elem_percent_expansion", 0.01)
+
+        if rtree_index is None:
+            raise ImportError(
+                "Rtree is not installed, please install it with pip install rtree to use this feature"
+            )
+            
+        self.log.write("info", "Finding bounding box of sem mesh")
+        self.my_bbox = get_bbox_from_coordinates_rtree(x, y, z, rel_tol=self.elem_percent_expansion)
+
+        self.log.write("info", "Creating Rtree with local bbox centroids")
+        self.my_tree = create_rtee(self.my_bbox) 
+            
+    def search(self, probes: np.ndarray, **kwargs):
+
+        element_candidates = []
+        for pt in range(probes.shape[0]):
+            query_point_ = (probes[pt, 0], probes[pt, 1], probes[pt, 2])
+            query_point = query_point_ + query_point_
+            element_candidates.append(list(self.my_tree.intersection(query_point)))
+
+        return element_candidates
+    
+def refine_candidates(probes, candidate_elements, bboxes, rel_tol):
+    """
+    Refine candidate elements for each probe by keeping only those where the probe 
+    lies within the corresponding expanded bounding box.
+    
+    Parameters:
+        probes : ndarray of shape (N, 3)
+            The (x, y, z) coordinates of each probe.
+        candidate_elements : list of lists
+            Each inner list contains candidate bbox indices (from a kd-tree query) for a probe.
+        bboxes : ndarray of shape (M, 6)
+            All bounding boxes, each row is [xmin, xmax, ymin, ymax, zmin, zmax].
+        rel_tol : float
+            Relative tolerance (expansion factor) for the bbox check.
+    
+    Returns:
+        refined_candidates : list of lists
+            For each probe, a list of candidate indices for which the point lies inside the bbox.
+    """
+    refined_candidates = []
+    for i, pt in enumerate(probes):
+        cands = candidate_elements[i]
+        if cands:  # if non-empty
+            # Convert candidate indices to a numpy array
+            cands = np.array(cands, dtype=int)
+            # Get the corresponding bounding boxes
+            candidate_bboxes = bboxes[cands]
+            # Vectorized check: get a boolean mask for candidates that pass the bbox test
+            mask = pt_in_bbox_vectorized(pt, candidate_bboxes, rel_tol)
+            refined_candidates.append(cands[mask].tolist())
+        else:
+            refined_candidates.append([])
+    return refined_candidates
