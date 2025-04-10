@@ -1225,6 +1225,9 @@ class Interpolator:
 
         elif local_data_structure == "rtree":
             self.my_tree = dstructure_rtree(self.log, self.x, self.y, self.z, elem_percent_expansion = elem_percent_expansion)
+        
+        elif local_data_structure == "binmesh":
+            self.my_tree = dstructure_binmesh(self.log, self.x, self.y, self.z, elem_percent_expansion = elem_percent_expansion)
 
         # nelv = self.x.shape[0]
         self.ranks_ive_checked = []
@@ -2383,7 +2386,84 @@ class dstructure_rtree(dstructure):
             element_candidates.append(list(self.my_tree.intersection(query_point)))
 
         return element_candidates
-    
+
+class dstructure_binmesh(dstructure):
+    """
+    """
+
+    def __init__(self, logger, x: np.ndarray, y: np.ndarray, z: np.ndarray, **kwargs):
+        """Initialize"""
+        super().__init__()
+
+        self.log = logger
+        self.elem_percent_expansion = kwargs.get("elem_percent_expansion", 0.01)
+
+        bin_size = np.prod(x.shape)
+        bin_size_1d = int(np.round(np.cbrt(bin_size))) 
+        bin_size = bin_size_1d**3
+
+        # Find the values that delimit a cubic boundin box
+        # for the whole domain
+        self.log.write("info", "Finding bounding box tha delimits the ranks")
+        rank_bbox = np.zeros((1, 6), dtype=np.double)
+        rank_bbox[0, 0] = np.min(x)
+        rank_bbox[0, 1] = np.max(x)
+        rank_bbox[0, 2] = np.min(y)
+        rank_bbox[0, 3] = np.max(y)
+        rank_bbox[0, 4] = np.min(z)
+        rank_bbox[0, 5] = np.max(z)
+        
+        self.domain_min_x = rank_bbox[0, 0]
+        self.domain_min_y = rank_bbox[0, 2]
+        self.domain_min_z = rank_bbox[0, 4]
+        self.domain_max_x = rank_bbox[0, 1]
+        self.domain_max_y = rank_bbox[0, 3]
+        self.domain_max_z = rank_bbox[0, 5]
+        self.bin_size_1d = bin_size_1d
+
+        # See wich element has points in which bin
+        self.log.write("info", "Creating bin mesh for the rank")
+        bins_of_points = self.binning_hash(x, y, z)
+        
+        # Create the empty bin to rank map
+        self.bin_to_elem_map = {i : (np.unique(np.where(bins_of_points == i)[0]).astype(np.int32)).tolist() for i in range(0, bin_size)}
+
+
+    def binning_hash(self, x, y, z):
+        """
+        """
+
+        x_min = self.domain_min_x
+        x_max = self.domain_max_x
+        y_min = self.domain_min_y
+        y_max = self.domain_max_y
+        z_min = self.domain_min_z
+        z_max = self.domain_max_z
+        n_bins_1d = self.bin_size_1d
+        max_bins_1d = n_bins_1d - 1
+
+        bin_x = (np.floor((x - x_min) / ((x_max - x_min) / max_bins_1d))).astype(np.int32)
+        bin_y = (np.floor((y - y_min) / ((y_max - y_min) / max_bins_1d))).astype(np.int32)
+        bin_z = (np.floor((z - z_min) / ((z_max - z_min) / max_bins_1d))).astype(np.int32)
+
+        # Clip the bins to be in the range [0, n_bins_1d - 1]
+        bin_x = np.clip(bin_x, 0, max_bins_1d)
+        bin_y = np.clip(bin_y, 0, max_bins_1d)
+        bin_z = np.clip(bin_z, 0, max_bins_1d)
+
+        bin = bin_x + bin_y * n_bins_1d + bin_z * n_bins_1d**2
+        
+        return bin
+
+            
+    def search(self, probes: np.ndarray, **kwargs):
+
+        probe_to_bin = self.binning_hash(probes[:, 0], probes[:, 1], probes[:, 2])
+
+        element_candidates = [self.bin_to_elem_map[probe_to_bin[i]] for i in range(0, probes.shape[0])]
+
+        return element_candidates
+
 def refine_candidates(probes, candidate_elements, bboxes, rel_tol):
     """
     Refine candidate elements for each probe by keeping only those where the probe 
