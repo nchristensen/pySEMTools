@@ -138,6 +138,7 @@ class Probes:
         use_autograd: bool = False,
         find_points_tol: float = np.finfo(np.double).eps * 10,
         find_points_max_iter: int = 50,
+        local_data_structure: str = "kdtree"
     ):
 
         rank = comm.Get_rank()
@@ -159,6 +160,7 @@ class Probes:
         self.log.write("info", f"use_autograd: {use_autograd}")
         self.log.write("info", f"find_points_tol: {find_points_tol}")
         self.log.write("info", f"find_points_max_iter: {find_points_max_iter}")
+        self.log.write("info", f"local_data_structure: {local_data_structure}")
         self.log.write("info", f" ========================")
 
         # Assign probes
@@ -241,6 +243,7 @@ class Probes:
             point_interpolator_type=point_interpolator_type,
             max_pts=max_pts,
             use_autograd=use_autograd,
+            local_data_structure=local_data_structure,
         )
 
         # Set up the global tree
@@ -269,6 +272,7 @@ class Probes:
             elem_percent_expansion=elem_percent_expansion,
             tol=find_points_tol,
             max_iter=find_points_max_iter,
+            local_data_structure=local_data_structure,
         )
 
         # Send points to the owners

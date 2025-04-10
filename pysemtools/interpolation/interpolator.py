@@ -12,6 +12,12 @@ from ..monitoring.logger import Logger
 from ..comm.router import Router
 from collections import Counter as collections_counter
 
+# check if we have rtree installed
+try :
+    from rtree import index as rtree_index
+except ImportError:
+    rtee_index = None
+
 NoneType = type(None)
 
 DEBUG = os.getenv("PYSEMTOOLS_DEBUG", "False").lower() in ("true", "1", "t")
@@ -32,6 +38,7 @@ class Interpolator:
         max_pts=128,
         max_elems=1,
         use_autograd=False,
+        local_data_structure="kdtree",
     ):
         self.log = Logger(comm=comm, module_name="Interpolator")
         self.log.write("info", "Initializing Interpolator object")
@@ -48,6 +55,8 @@ class Interpolator:
         self.point_interpolator_type = point_interpolator_type
         self.max_pts = max_pts
         self.max_elems = max_elems
+
+        self.local_data_structure = local_data_structure
 
         # Determine which point interpolator to use
         self.log.write(
@@ -212,13 +221,17 @@ class Interpolator:
         n_bins_1d = self.bin_size_1d
         max_bins_1d = n_bins_1d - 1
 
-        max_bins_1d = n_bins_1d - 1
         bin_x = (np.floor((x - x_min) / ((x_max - x_min) / max_bins_1d))).astype(np.int32)
         bin_y = (np.floor((y - y_min) / ((y_max - y_min) / max_bins_1d))).astype(np.int32)
         bin_z = (np.floor((z - z_min) / ((z_max - z_min) / max_bins_1d))).astype(np.int32)
 
-        bin = bin_x + bin_y * n_bins_1d + bin_z * n_bins_1d**2
+        # Clip the bins to be in the range [0, n_bins_1d - 1]
+        bin_x = np.clip(bin_x, 0, max_bins_1d)
+        bin_y = np.clip(bin_y, 0, max_bins_1d)
+        bin_z = np.clip(bin_z, 0, max_bins_1d)
 
+        bin = bin_x + bin_y * n_bins_1d + bin_z * n_bins_1d**2
+        
         return bin
 
     def set_up_global_tree_domain_binning_(self, comm, global_tree_nbins=None):
@@ -469,7 +482,7 @@ class Interpolator:
         comm,
         find_points_iterative: list =[False, 5000],
         find_points_comm_pattern="point_to_point",
-        use_kdtree=True,
+        local_data_structure: str = "kdtree",
         test_tol=1e-4,
         elem_percent_expansion=0.01,
         tol=np.finfo(np.double).eps * 10,
@@ -480,7 +493,6 @@ class Interpolator:
             "info",
             "using communication pattern: {}".format(find_points_comm_pattern),
         )
-        
         # Check that the inputs are in the correct format 
         if not isinstance(find_points_iterative, (list, tuple)):
             find_points_iterative = fp_it_tolist(self, find_points_iterative)
@@ -492,7 +504,7 @@ class Interpolator:
         if find_points_comm_pattern == "broadcast":
             self.find_points_broadcast(
                 comm,
-                use_kdtree=use_kdtree,
+                local_data_structure=local_data_structure,
                 test_tol=test_tol,
                 elem_percent_expansion=elem_percent_expansion,
                 tol=tol,
@@ -501,7 +513,7 @@ class Interpolator:
         elif ((find_points_comm_pattern == "point_to_point") or (find_points_comm_pattern == "collective")) and not find_points_iterative[0]:
             self.find_points_(
                 comm,
-                use_kdtree=use_kdtree,
+                local_data_structure=local_data_structure,
                 test_tol=test_tol,
                 elem_percent_expansion=elem_percent_expansion,
                 tol=tol,
@@ -511,18 +523,19 @@ class Interpolator:
         elif ((find_points_comm_pattern == "point_to_point") or (find_points_comm_pattern == "collective")) and find_points_iterative[0]:
             self.find_points_iterative(
                 comm,
-                use_kdtree=use_kdtree,
+                local_data_structure = local_data_structure,
                 test_tol=test_tol,
                 elem_percent_expansion=elem_percent_expansion,
                 tol=tol,
                 batch_size=find_points_iterative[1],
                 max_iter=max_iter,
+                comm_pattern= find_points_comm_pattern
             )
 
     def find_points_broadcast(
         self,
         comm,
-        use_kdtree=True,
+        local_data_structure: str = "kdtree",
         test_tol=1e-4,
         elem_percent_expansion=0.01,
         tol=np.finfo(np.double).eps * 10,
@@ -532,18 +545,17 @@ class Interpolator:
         rank = comm.Get_rank()
         size = comm.Get_size()
         self.rank = rank
+        
+        if local_data_structure == "kdtree":
+            self.my_tree = dstructure_kdtree(self.log, self.x, self.y, self.z, elem_percent_expansion = elem_percent_expansion)    
+        
+        elif local_data_structure == "bounding_boxes":            
+            # First each rank finds their bounding box
+            self.log.write("info", "Finding bounding box of sem mesh")
+            self.my_bbox = get_bbox_from_coordinates(self.x, self.y, self.z)
 
-        # First each rank finds their bounding box
-        self.my_bbox = get_bbox_from_coordinates(self.x, self.y, self.z)
-
-        if use_kdtree:
-            # Get bbox centroids and max radius from center to corner
-            self.my_bbox_centroids, self.my_bbox_maxdist = (
-                get_bbox_centroids_and_max_dist(self.my_bbox)
-            )
-
-            # Build a KDtree with my information
-            self.my_tree = KDTree(self.my_bbox_centroids)
+        elif local_data_structure == "rtree":
+            self.my_tree = dstructure_rtree(self.log, self.x, self.y, self.z, elem_percent_expansion = elem_percent_expansion)
 
         nelv = self.x.shape[0]
         self.ranks_ive_checked = []
@@ -609,7 +621,7 @@ class Interpolator:
                 # Only do the search, if my rank has not already searched the broadcaster
                 if broadcaster_global_rank not in self.ranks_ive_checked:
 
-                    if not use_kdtree:
+                    if local_data_structure == "bounding_boxes":
                         # Find a candidate rank to check
                         i = 0
                         if self.progress_bar:
@@ -635,7 +647,7 @@ class Interpolator:
                                 pbar.update(1)
                         if self.progress_bar:
                             pbar.close()
-                    elif use_kdtree:
+                    elif local_data_structure == "kdtree":
 
                         # Get bbox centroids and max radius from center to
                         #  corner for the broadcaster
@@ -779,7 +791,10 @@ class Interpolator:
                     mesh_info["bbox"] = self.my_bbox
                     if hasattr(self, "my_tree"):
                         mesh_info["kd_tree"] = self.my_tree
+                    if hasattr(self, "my_bbox_centroids"):
                         mesh_info["bbox_max_dist"] = self.my_bbox_maxdist
+                    if hasattr(self, "local_data_structure"):
+                        mesh_info["local_data_structure"] = self.local_data_structure
 
                     settings = {}
                     settings["not_found_code"] = -10
@@ -963,7 +978,7 @@ class Interpolator:
     def find_points_(
         self,
         comm,
-        use_kdtree=True,
+        local_data_structure: str = "kdtree",
         test_tol=1e-4,
         elem_percent_expansion=0.01,
         tol=np.finfo(np.double).eps * 10,
@@ -977,20 +992,17 @@ class Interpolator:
         self.log.write("info", "Finding points - start")
         self.log.tic()
         start_time = MPI.Wtime()
+        
+        if local_data_structure == "kdtree":
+            self.my_tree = dstructure_kdtree(self.log, self.x, self.y, self.z, elem_percent_expansion = elem_percent_expansion)    
+        
+        elif local_data_structure == "bounding_boxes":            
+            # First each rank finds their bounding box
+            self.log.write("info", "Finding bounding box of sem mesh")
+            self.my_bbox = get_bbox_from_coordinates(self.x, self.y, self.z)
 
-        # First each rank finds their bounding box
-        self.log.write("info", "Finding bounding box of sem mesh")
-        self.my_bbox = get_bbox_from_coordinates(self.x, self.y, self.z)
-
-        if use_kdtree:
-            # Get bbox centroids and max radius from center to corner
-            self.my_bbox_centroids, self.my_bbox_maxdist = (
-                get_bbox_centroids_and_max_dist(self.my_bbox)
-            )
-
-            # Build a KDtree with my information
-            self.log.write("info", "Creating KD tree with local bbox centroids")
-            self.my_tree = KDTree(self.my_bbox_centroids)
+        elif local_data_structure == "rtree":
+            self.my_tree = dstructure_rtree(self.log, self.x, self.y, self.z, elem_percent_expansion = elem_percent_expansion)
 
         # nelv = self.x.shape[0]
         self.ranks_ive_checked = []
@@ -998,7 +1010,7 @@ class Interpolator:
         # Get candidate ranks from a global kd tree
         # These are the destination ranks
         self.log.write("info", "Obtaining candidate ranks and sources")
-        my_dest = get_candidate_ranks(self, comm)
+        my_dest, _ = get_candidate_ranks(self, comm)
 
         # Create temporary arrays that store the points that have not been found
         not_found = np.where(self.err_code_partition != 1)[0]
@@ -1014,33 +1026,25 @@ class Interpolator:
         # Send data to my candidates and recieve from ranks where I am candidate
         self.log.write("info", "Send data to candidates and recieve from sources")
 
-        my_source, buff_probes = self.rt.transfer_data( comm_pattern,
-            destination=my_dest, data=probe_not_found, dtype=np.double, tag=1
+        # Pack and send/recv the probe data
+        p_probes = pack_data(array_list=[probe_not_found, probe_rst_not_found])
+        p_info = pack_data(array_list=[el_owner_not_found, glb_el_owner_not_found, rank_owner_not_found, err_code_not_found])
+        
+        ## Send and receive
+        my_source, buff_p_probes = self.rt.transfer_data( comm_pattern,
+            destination=my_dest, data=p_probes, dtype=np.double, tag=1
         )
-        _, buff_probes_rst = self.rt.transfer_data( comm_pattern,
-            destination=my_dest, data=probe_rst_not_found, dtype=np.double, tag=2
+        _, buff_p_info = self.rt.transfer_data(comm_pattern,
+            destination=my_dest, data=p_info, dtype=np.int64, tag=2
         )
-        _, buff_el_owner = self.rt.transfer_data( comm_pattern,
-            destination=my_dest, data=el_owner_not_found, dtype=np.int64, tag=3
-        )
-        _, buff_glb_el_owner = self.rt.transfer_data( comm_pattern,
-            destination=my_dest, data=glb_el_owner_not_found, dtype=np.int64, tag=4
-        )
-        _, buff_rank_owner = self.rt.transfer_data( comm_pattern,
-            destination=my_dest, data=rank_owner_not_found, dtype=np.int64, tag=5
-        )
-        _, buff_err_code = self.rt.transfer_data( comm_pattern,
-            destination=my_dest, data=err_code_not_found, dtype=np.int64, tag=6
-        )
-        _, buff_test_pattern = self.rt.transfer_data( comm_pattern,
-            destination=my_dest, data=test_pattern_not_found, dtype=np.double, tag=7
+        _, buff_test_pattern = self.rt.transfer_data(comm_pattern,
+            destination=my_dest, data=test_pattern_not_found, dtype=np.double, tag=3
         )
 
-        # Reshape the data from the probes
-        for source_index in range(0, len(my_source)):
-            buff_probes[source_index] = buff_probes[source_index].reshape(-1, 3)
-            buff_probes_rst[source_index] = buff_probes_rst[source_index].reshape(-1, 3)
-
+        # Unpack the data 
+        buff_probes, buff_probes_rst = unpack_source_data(packed_source_data=buff_p_probes, number_of_arrays=2, equal_length=True, final_shape=(-1, 3))
+        buff_el_owner, buff_glb_el_owner, buff_rank_owner, buff_err_code = unpack_source_data(packed_source_data=buff_p_info, number_of_arrays=4, equal_length=True)
+        
         # Set the information for the coordinate search in this rank
         self.log.write("info", "Find rst coordinates for the points")
         mesh_info = {}
@@ -1050,7 +1054,10 @@ class Interpolator:
         mesh_info["bbox"] = self.my_bbox
         if hasattr(self, "my_tree"):
             mesh_info["kd_tree"] = self.my_tree
+        if hasattr(self, "my_bbox_maxdist"):
             mesh_info["bbox_max_dist"] = self.my_bbox_maxdist
+        if hasattr(self, "local_data_structure"):
+            mesh_info["local_data_structure"] = self.local_data_structure
 
         settings = {}
         settings["not_found_code"] = -10
@@ -1097,32 +1104,24 @@ class Interpolator:
         # Set the request to Recieve back the data that I have sent to my candidates
         self.log.write("info", "Send data to sources and recieve from candidates")
 
-        _, obuff_probes = self.rt.transfer_data( comm_pattern,
-            destination=my_source, data=buff_probes, dtype=np.double, tag=11
+        # Pack and send/recv the probe data
+        p_buff_probes = pack_destination_data(destination_data=[buff_probes, buff_probes_rst])
+        p_buff_info = pack_destination_data(destination_data=[buff_el_owner, buff_glb_el_owner, buff_rank_owner, buff_err_code])
+
+        # Send and recieve
+        _, obuff_p_probes = self.rt.transfer_data( comm_pattern,
+            destination=my_source, data=p_buff_probes, dtype=np.double, tag=11
         )
-        _, obuff_probes_rst = self.rt.transfer_data( comm_pattern,
-            destination=my_source, data=buff_probes_rst, dtype=np.double, tag=12
-        )
-        _, obuff_el_owner = self.rt.transfer_data( comm_pattern,
-            destination=my_source, data=buff_el_owner, dtype=np.int64, tag=13
-        )
-        _, obuff_glb_el_owner = self.rt.transfer_data( comm_pattern,
-            destination=my_source, data=buff_glb_el_owner, dtype=np.int64, tag=14
-        )
-        _, obuff_rank_owner = self.rt.transfer_data( comm_pattern,
-            destination=my_source, data=buff_rank_owner, dtype=np.int64, tag=15
-        )
-        _, obuff_err_code = self.rt.transfer_data( comm_pattern,
-            destination=my_source, data=buff_err_code, dtype=np.int64, tag=16
+        _, obuff_p_info = self.rt.transfer_data( comm_pattern,
+            destination=my_source, data=p_buff_info, dtype=np.int64, tag=12
         )
         _, obuff_test_pattern = self.rt.transfer_data( comm_pattern,
-            destination=my_source, data=buff_test_pattern, dtype=np.double, tag=17
+            destination=my_source, data=buff_test_pattern, dtype=np.double, tag=13
         )
-
-        # Reshape the data from the probes
-        for dest_index in range(0, len(my_dest)):
-            obuff_probes[dest_index] = obuff_probes[dest_index].reshape(-1, 3)
-            obuff_probes_rst[dest_index] = obuff_probes_rst[dest_index].reshape(-1, 3)
+ 
+        # Unpack the data
+        obuff_probes, obuff_probes_rst = unpack_source_data(packed_source_data=obuff_p_probes, number_of_arrays=2, equal_length=True, final_shape=(-1, 3))
+        obuff_el_owner, obuff_glb_el_owner, obuff_rank_owner, obuff_err_code = unpack_source_data(packed_source_data=obuff_p_info, number_of_arrays=4, equal_length=True)
 
         # Free resources from previous buffers if possible
         del (
@@ -1200,7 +1199,7 @@ class Interpolator:
     def find_points_iterative(
         self,
         comm,
-        use_kdtree=True,
+        local_data_structure: str = "kdtree",
         test_tol=1e-4,
         elem_percent_expansion=0.01,
         tol=np.finfo(np.double).eps * 10,
@@ -1216,19 +1215,16 @@ class Interpolator:
         self.log.tic()
         start_time = MPI.Wtime()
 
-        # First each rank finds their bounding box
-        self.log.write("info", "Finding bounding box of sem mesh")
-        self.my_bbox = get_bbox_from_coordinates(self.x, self.y, self.z)
+        if local_data_structure == "kdtree":
+            self.my_tree = dstructure_kdtree(self.log, self.x, self.y, self.z, elem_percent_expansion = elem_percent_expansion)    
+        
+        elif local_data_structure == "bounding_boxes":            
+            # First each rank finds their bounding box
+            self.log.write("info", "Finding bounding box of sem mesh")
+            self.my_bbox = get_bbox_from_coordinates(self.x, self.y, self.z)
 
-        if use_kdtree:
-            # Get bbox centroids and max radius from center to corner
-            self.my_bbox_centroids, self.my_bbox_maxdist = (
-                get_bbox_centroids_and_max_dist(self.my_bbox)
-            )
-
-            # Build a KDtree with my information
-            self.log.write("info", "Creating KD tree with local bbox centroids")
-            self.my_tree = KDTree(self.my_bbox_centroids)
+        elif local_data_structure == "rtree":
+            self.my_tree = dstructure_rtree(self.log, self.x, self.y, self.z, elem_percent_expansion = elem_percent_expansion)
 
         # nelv = self.x.shape[0]
         self.ranks_ive_checked = []
@@ -1236,12 +1232,22 @@ class Interpolator:
         # Get candidate ranks from a global kd tree
         # These are the destination ranks
         self.log.write("info", "Obtaining candidate ranks and sources")
-        my_dest = get_candidate_ranks(self, comm)
-
+        my_dest, candidate_ranks_list = get_candidate_ranks(self, comm)
+        
         self.log.write("info", "Determining maximun number of candidates")
         max_candidates = np.ones((1), dtype=np.int64) * len(my_dest)
         max_candidates = comm.allreduce(max_candidates, op=MPI.MAX)
         if batch_size > max_candidates[0]: batch_size = max_candidates[0]
+         
+        if batch_size == 1:
+            # Obtain the number of columns corresponding to the maximum number of candidates among all points
+            # Then create a numpy array padding for points that have less candidates
+            num_rows = len(candidate_ranks_list)
+            max_col = max(len(row) for row in candidate_ranks_list)
+            candidates_per_point = np.full((num_rows, max_col), -1, dtype=np.int32)
+            for i, row in enumerate(candidate_ranks_list):
+                candidates_per_point[i, :len(row)] = row
+
         number_of_batches = int(np.ceil(max_candidates[0] / batch_size))
         self.log.write("info", f"Perfoming {number_of_batches} search iterations processing max {batch_size} candidates per iteration")
 
@@ -1263,8 +1269,21 @@ class Interpolator:
                 self.log.write("warning", "my_it_dest is not a list, making it one")
                 my_it_dest = [my_it_dest]
 
-            # Create temporary arrays that store the points that have not been found
-            not_found = np.where(self.err_code_partition != 1)[0]
+            # If batch size is 1, only send the actual points that said are in candidate.
+            # This should always be done, currently it is not to simplify keeping track of things
+            if batch_size == 1:
+                if self.global_tree_type == "domain_binning":
+                    self.log.write("warning", "With batch size = 1, we have noticed that domain binning might fail due to non overlapping of bins. If it does fail, select batch size = 2 or higher")
+                mask = (self.err_code_partition != 1)
+                if len(my_it_dest) > 0:
+                    candidate_mask = np.any(candidates_per_point == my_it_dest[0], axis=1)
+                    combined_mask = mask & candidate_mask
+                else:
+                    combined_mask = mask
+                not_found = np.flatnonzero(combined_mask)
+            else:
+                not_found = np.flatnonzero(self.err_code_partition != 1)
+
             n_not_found = not_found.size
             probe_not_found = self.probe_partition[not_found]
             probe_rst_not_found = self.probe_rst_partition[not_found]
@@ -1276,34 +1295,26 @@ class Interpolator:
 
             # Send data to my candidates and recieve from ranks where I am candidate
             self.log.write("info", "Send data to candidates and recieve from sources")
-
-            my_source, buff_probes = self.rt.transfer_data( comm_pattern,
-                destination=my_it_dest, data=probe_not_found, dtype=np.double, tag=1
+            
+            # Pack and send/recv the probe data
+            p_probes = pack_data(array_list=[probe_not_found, probe_rst_not_found])
+            p_info = pack_data(array_list=[el_owner_not_found, glb_el_owner_not_found, rank_owner_not_found, err_code_not_found])
+            
+            ## Send and receive
+            my_source, buff_p_probes = self.rt.transfer_data( comm_pattern,
+                destination=my_it_dest, data=p_probes, dtype=np.double, tag=1
             )
-            _, buff_probes_rst = self.rt.transfer_data( comm_pattern,
-                destination=my_it_dest, data=probe_rst_not_found, dtype=np.double, tag=2
+            _, buff_p_info = self.rt.transfer_data(comm_pattern,
+                destination=my_it_dest, data=p_info, dtype=np.int64, tag=2
             )
-            _, buff_el_owner = self.rt.transfer_data( comm_pattern,
-                destination=my_it_dest, data=el_owner_not_found, dtype=np.int64, tag=3
-            )
-            _, buff_glb_el_owner = self.rt.transfer_data( comm_pattern,
-                destination=my_it_dest, data=glb_el_owner_not_found, dtype=np.int64, tag=4
-            )
-            _, buff_rank_owner = self.rt.transfer_data( comm_pattern,
-                destination=my_it_dest, data=rank_owner_not_found, dtype=np.int64, tag=5
-            )
-            _, buff_err_code = self.rt.transfer_data( comm_pattern,
-                destination=my_it_dest, data=err_code_not_found, dtype=np.int64, tag=6
-            )
-            _, buff_test_pattern = self.rt.transfer_data( comm_pattern,
-                destination=my_it_dest, data=test_pattern_not_found, dtype=np.double, tag=7
+            _, buff_test_pattern = self.rt.transfer_data(comm_pattern,
+                destination=my_it_dest, data=test_pattern_not_found, dtype=np.double, tag=3
             )
 
-            # Reshape the data from the probes
-            for source_index in range(0, len(my_source)):
-                buff_probes[source_index] = buff_probes[source_index].reshape(-1, 3)
-                buff_probes_rst[source_index] = buff_probes_rst[source_index].reshape(-1, 3)
-
+            # Unpack the data 
+            buff_probes, buff_probes_rst = unpack_source_data(packed_source_data=buff_p_probes, number_of_arrays=2, equal_length=True, final_shape=(-1, 3))
+            buff_el_owner, buff_glb_el_owner, buff_rank_owner, buff_err_code = unpack_source_data(packed_source_data=buff_p_info, number_of_arrays=4, equal_length=True)
+            
             # Set the information for the coordinate search in this rank
             self.log.write("info", "Find rst coordinates for the points")
             mesh_info = {}
@@ -1313,7 +1324,10 @@ class Interpolator:
             mesh_info["bbox"] = self.my_bbox
             if hasattr(self, "my_tree"):
                 mesh_info["kd_tree"] = self.my_tree
+            if hasattr(self, "my_bbox_maxdist"):
                 mesh_info["bbox_max_dist"] = self.my_bbox_maxdist
+            if hasattr(self, "local_data_structure"):
+                mesh_info["local_data_structure"] = self.local_data_structure
 
             settings = {}
             settings["not_found_code"] = -10
@@ -1360,37 +1374,29 @@ class Interpolator:
             # Set the request to Recieve back the data that I have sent to my candidates
             self.log.write("info", "Send data to sources and recieve from candidates")
 
-            _, obuff_probes = self.rt.transfer_data( comm_pattern,
-                destination=my_source, data=buff_probes, dtype=np.double, tag=11
+            # Pack and send/recv the probe data
+            p_buff_probes = pack_destination_data(destination_data=[buff_probes, buff_probes_rst])
+            p_buff_info = pack_destination_data(destination_data=[buff_el_owner, buff_glb_el_owner, buff_rank_owner, buff_err_code])
+
+            # Send and recieve
+            _, obuff_p_probes = self.rt.transfer_data( comm_pattern,
+                destination=my_source, data=p_buff_probes, dtype=np.double, tag=11
             )
-            _, obuff_probes_rst = self.rt.transfer_data( comm_pattern,
-                destination=my_source, data=buff_probes_rst, dtype=np.double, tag=12
-            )
-            _, obuff_el_owner = self.rt.transfer_data( comm_pattern,
-                destination=my_source, data=buff_el_owner, dtype=np.int64, tag=13
-            )
-            _, obuff_glb_el_owner = self.rt.transfer_data( comm_pattern,
-                destination=my_source, data=buff_glb_el_owner, dtype=np.int64, tag=14
-            )
-            _, obuff_rank_owner = self.rt.transfer_data( comm_pattern,
-                destination=my_source, data=buff_rank_owner, dtype=np.int64, tag=15
-            )
-            _, obuff_err_code = self.rt.transfer_data( comm_pattern,
-                destination=my_source, data=buff_err_code, dtype=np.int64, tag=16
+            _, obuff_p_info = self.rt.transfer_data( comm_pattern,
+                destination=my_source, data=p_buff_info, dtype=np.int64, tag=12
             )
             _, obuff_test_pattern = self.rt.transfer_data( comm_pattern,
-                destination=my_source, data=buff_test_pattern, dtype=np.double, tag=17
+                destination=my_source, data=buff_test_pattern, dtype=np.double, tag=13
             )
 
             # If no point was sent from this rank, then all buffers will be empty
             # so skip the rest of the loop
             if n_not_found < 1:
                 continue
-
-            # Reshape the data from the probes
-            for dest_index in range(0, len(my_it_dest)):
-                obuff_probes[dest_index] = obuff_probes[dest_index].reshape(-1, 3)
-                obuff_probes_rst[dest_index] = obuff_probes_rst[dest_index].reshape(-1, 3)
+            
+            # Unpack the data
+            obuff_probes, obuff_probes_rst = unpack_source_data(packed_source_data=obuff_p_probes, number_of_arrays=2, equal_length=True, final_shape=(-1, 3))
+            obuff_el_owner, obuff_glb_el_owner, obuff_rank_owner, obuff_err_code = unpack_source_data(packed_source_data=obuff_p_info, number_of_arrays=4, equal_length=True)
 
             # Free resources from previous buffers if possible
             del (
@@ -1815,6 +1821,53 @@ def get_bbox_from_coordinates(x, y, z):
 
     return bbox
 
+def get_bbox_from_coordinates_rtree(x, y, z, rel_tol=0.01):
+
+    nelv = x.shape[0]
+    # lx = x.shape[3]  # This is not a mistake. This is how the data is read
+    # ly = x.shape[2]
+    # lz = x.shape[1]
+
+    bbox = np.zeros((nelv, 6), dtype=np.double)
+
+    bbox[:, 0] = np.min(x, axis=(1, 2, 3))
+    bbox[:, 1] = np.min(y, axis=(1, 2, 3))
+    bbox[:, 2] = np.min(z, axis=(1, 2, 3))
+    bbox[:, 3] = np.max(x, axis=(1, 2, 3))
+    bbox[:, 4] = np.max(y, axis=(1, 2, 3))
+    bbox[:, 5] = np.max(z, axis=(1, 2, 3))
+
+    dx = bbox[:, 3] - bbox[:, 0]
+    tol_x = dx * rel_tol / 2.0
+
+    dy = bbox[:, 4] - bbox[:, 1]
+    tol_y = dy * rel_tol / 2.0
+
+    dz = bbox[:, 5] - bbox[:, 2]
+    tol_z = dz * rel_tol / 2.0
+
+    bbox[:, 0] -= tol_x
+    bbox[:, 1] -= tol_y
+    bbox[:, 2] -= tol_z
+    bbox[:, 3] += tol_x
+    bbox[:, 4] += tol_y
+    bbox[:, 5] += tol_z
+
+    return bbox
+    
+def create_rtee(bbox):
+    """
+    """
+    # Create 3D rtree index
+    prop = rtree_index.Property()
+    prop.dimension = 3
+    idx = rtree_index.Index(properties=prop)
+
+    for e in range(bbox.shape[0]):
+        bbox_e = bbox[e, :]
+        idx.insert(e, (bbox_e[0], bbox_e[1], bbox_e[2], bbox_e[3], bbox_e[4], bbox_e[5]))
+
+    return idx
 
 def get_bbox_centroids_and_max_dist(bbox):
     """
@@ -2101,7 +2154,7 @@ def get_candidate_ranks(self, comm):
     else:
         raise ValueError("Global tree has not been set up")
 
-    return candidate_ranks
+    return candidate_ranks, candidate_ranks_per_point
 
 
 def domain_binning_map_probe_to_rank(self, probe_to_bin_map):
@@ -2156,3 +2209,211 @@ def fp_it_tolist(self, value):
         self.log.write("warning", "Setting comm batch size to 5000. Only used if find_points_iterative is True")
         return [value, 5000]
     return value
+
+def pack_data(array_list: list = None):
+
+    """
+    Pack data into a single array for sending over MPI.
+    
+    Parameters:
+        array_list : list of np.ndarray
+            List of arrays to be packed.
+    
+    Returns:
+        packed_data : np.ndarray
+            Single packed array.
+    """
+    if array_list is None:
+        return None
+
+    # Concatenate all arrays into a single array
+    packed_data = np.concatenate([arr.flatten() for arr in array_list])
+    return packed_data
+
+def unpack_data(packed_data: np.ndarray = None, number_of_arrays: int = None, equal_length: bool = True, final_shape: tuple = None):
+    """
+    """
+    if packed_data is None:
+        return []
+
+    unpacked_data = []
+
+    if equal_length:
+        array_size = packed_data.size // number_of_arrays
+        for i in range(number_of_arrays):
+            start_index = i * array_size
+            end_index = (i + 1) * array_size
+            upacked = packed_data[start_index:end_index]
+            if final_shape is not None:
+                unpacked_data.append(upacked.reshape(final_shape))
+            else:   
+                unpacked_data.append(upacked)
+    else:
+        raise NotImplementedError("Unpacking with different sizes is not implemented yet")
+        # Calculate the size of each array
+    return unpacked_data
+
+def pack_destination_data(destination_data: list =  None):
+    """
+    """
+
+    number_of_arrays =  len(destination_data)
+    number_of_destinations = len(destination_data[0])
+    output_buffers = []
+    for destination_index in range(0, number_of_destinations):
+        arrays_to_pack = [destination_data[i][destination_index] for i in range(0, number_of_arrays)]
+        packed_destination_data = pack_data(arrays_to_pack)
+        output_buffers.append(packed_destination_data)
+    return output_buffers
+
+def unpack_source_data(packed_source_data: list = None, number_of_arrays: int = 1, equal_length: bool = True, final_shape: tuple = None):
+    """
+    """
+
+    # Allocate
+    output_buffers = [[] for _ in range(number_of_arrays)]
+    number_of_sources = len(packed_source_data)
+    
+    for source_index in range(0, number_of_sources):
+        unpacked_source_data = unpack_data(packed_source_data[source_index], number_of_arrays=number_of_arrays, equal_length=equal_length, final_shape=final_shape)
+        for arrays_index in range(0, number_of_arrays):
+            output_buffers[arrays_index].append(unpacked_source_data[arrays_index])
+
+    return output_buffers
+
+
+from abc import ABC, abstractmethod
+
+
+class dstructure(ABC):
+    """Interface for multiple point interpolators"""
+
+    def __init__(self):
+        """Initialize"""
+
+    @abstractmethod
+    def search(self):
+        """search the points"""
+
+class dstructure_kdtree(dstructure):
+    """
+    """
+
+    def __init__(self, logger, x: np.ndarray, y: np.ndarray, z: np.ndarray, **kwargs):
+        """Initialize"""
+        super().__init__()
+
+        self.log = logger
+        self.elem_percent_expansion = kwargs.get("elem_percent_expansion", 0.01)
+ 
+        # First each rank finds their bounding box
+        self.log.write("info", "Finding bounding box of sem mesh")
+        self.my_bbox = get_bbox_from_coordinates(x, y, z)
+    
+        # Get bbox centroids and max radius from center to corner
+        self.my_bbox_centroids, self.my_bbox_maxdist = (
+            get_bbox_centroids_and_max_dist(self.my_bbox)
+        )
+
+        # Build a KDtree with my information
+        self.log.write("info", "Creating KD tree with local bbox centroids") 
+        self.my_tree = KDTree(self.my_bbox_centroids)
+
+    def search(self, probes: np.ndarray, progress_bar = False):
+        
+        candidate_elements = self.my_tree.query_ball_point(
+            x=probes,
+            r=self.my_bbox_maxdist * (1 + 1e-6),
+            p=2.0,
+            eps=self.elem_percent_expansion,
+            workers=1,
+            return_sorted=False,
+            return_length=False,
+        )
+
+        # New way of checking as of april 4 2025
+        if 0==0:
+            element_candidates = refine_candidates(probes, candidate_elements, self.my_bbox, rel_tol=self.elem_percent_expansion)
+        else:
+            element_candidates = []
+            i = 0
+            if progress_bar:
+                pbar = tqdm(total=probes.shape[0])
+            for pt in probes:
+                element_candidates.append([])
+                for e in candidate_elements[i]:
+                    if pt_in_bbox(pt, self.my_bbox[e], rel_tol=self.elem_percent_expansion):
+                        element_candidates[i].append(e)
+                i = i + 1
+                if progress_bar:
+                    pbar.update(1)
+            if progress_bar:
+                pbar.close()
+
+        return element_candidates
+
+class dstructure_rtree(dstructure):
+    """
+    """
+
+    def __init__(self, logger, x: np.ndarray, y: np.ndarray, z: np.ndarray, **kwargs):
+        """Initialize"""
+        super().__init__()
+
+        self.log = logger
+        self.elem_percent_expansion = kwargs.get("elem_percent_expansion", 0.01)
+
+        if rtree_index is None:
+            raise ImportError(
+                "Rtree is not installed, please install it with pip install rtree to use this feature"
+            )
+            
+        self.log.write("info", "Finding bounding box of sem mesh")
+        self.my_bbox = get_bbox_from_coordinates_rtree(x, y, z, rel_tol=self.elem_percent_expansion)
+
+        self.log.write("info", "Creating Rtree with local bbox centroids")
+        self.my_tree = create_rtee(self.my_bbox) 
+            
+    def search(self, probes: np.ndarray, **kwargs):
+
+        element_candidates = []
+        for pt in range(probes.shape[0]):
+            query_point_ = (probes[pt, 0], probes[pt, 1], probes[pt, 2])
+            query_point = query_point_ + query_point_
+            element_candidates.append(list(self.my_tree.intersection(query_point)))
+
+        return element_candidates
+    
+def refine_candidates(probes, candidate_elements, bboxes, rel_tol):
+    """
+    Refine candidate elements for each probe by keeping only those where the probe 
+    lies within the corresponding expanded bounding box.
+    
+    Parameters:
+        probes : ndarray of shape (N, 3)
+            The (x, y, z) coordinates of each probe.
+        candidate_elements : list of lists
+            Each inner list contains candidate bbox indices (from a kd-tree query) for a probe.
+        bboxes : ndarray of shape (M, 6)
+            All bounding boxes, each row is [xmin, xmax, ymin, ymax, zmin, zmax].
+        rel_tol : float
+            Relative tolerance (expansion factor) for the bbox check.
+    
+    Returns:
+        refined_candidates : list of lists
+            For each probe, a list of candidate indices for which the point lies inside the bbox.
+    """
+    refined_candidates = []
+    for i, pt in enumerate(probes):
+        cands = candidate_elements[i]
+        if cands:  # if non-empty
+            # Convert candidate indices to a numpy array
+            cands = np.array(cands, dtype=int)
+            # Get the corresponding bounding boxes
+            candidate_bboxes = bboxes[cands]
+            # Vectorized check: get a boolean mask for candidates that pass the bbox test
+            mask = pt_in_bbox_vectorized(pt, candidate_bboxes, rel_tol)
+            refined_candidates.append(cands[mask].tolist())
+        else:
+            refined_candidates.append([])
+    return refined_candidates
