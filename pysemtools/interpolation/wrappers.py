@@ -24,7 +24,8 @@ def interpolate_fields_from_disk(comm: MPI.Comm,
                                 global_tree_nbins: int = 1024,
                                 use_autograd: bool = False,
                                 find_points_tol: float = np.finfo(np.double).eps * 10,
-                                find_points_max_iter: int = 50 
+                                find_points_max_iter: int = 50,
+                                local_data_structure: str = "kdtree", 
                                 ) -> None:
     """
     Interpolates fields from disk using the probes object.
@@ -92,6 +93,7 @@ def interpolate_fields_from_disk(comm: MPI.Comm,
         use_autograd = use_autograd,
         find_points_tol = find_points_tol,
         find_points_max_iter = find_points_max_iter,
+        local_data_structure = local_data_structure,
     )
 
     # Prepare a list with the inputs
