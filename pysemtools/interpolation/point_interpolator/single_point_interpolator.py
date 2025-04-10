@@ -212,31 +212,7 @@ class SinglePointInterpolator(ABC):
                 pbar.close()
         else:
 
-            # Query the tree with the probes to reduce the bbox search
-            candidate_elements = kd_tree.query_ball_point(
-                x=probes,
-                r=bbox_max_dist * (1 + 1e-6),
-                p=2.0,
-                eps=elem_percent_expansion,
-                workers=1,
-                return_sorted=False,
-                return_length=False,
-            )
-
-            element_candidates = []
-            i = 0
-            if progress_bar:
-                pbar = tqdm(total=probes.shape[0])
-            for pt in probes:
-                element_candidates.append([])
-                for e in candidate_elements[i]:
-                    if pt_in_bbox(pt, bbox[e], rel_tol=elem_percent_expansion):
-                        element_candidates[i].append(e)
-                i = i + 1
-                if progress_bar:
-                    pbar.update(1)
-            if progress_bar:
-                pbar.close()
+            element_candidates = kd_tree.search(probes) 
 
         if progress_bar:
             pbar = tqdm(total=probes.shape[0])
