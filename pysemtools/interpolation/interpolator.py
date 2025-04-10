@@ -1019,33 +1019,25 @@ class Interpolator:
         # Send data to my candidates and recieve from ranks where I am candidate
         self.log.write("info", "Send data to candidates and recieve from sources")
 
-        my_source, buff_probes = self.rt.transfer_data( comm_pattern,
-            destination=my_dest, data=probe_not_found, dtype=np.double, tag=1
+        # Pack and send/recv the probe data
+        p_probes = pack_data(array_list=[probe_not_found, probe_rst_not_found])
+        p_info = pack_data(array_list=[el_owner_not_found, glb_el_owner_not_found, rank_owner_not_found, err_code_not_found])
+        
+        ## Send and receive
+        my_source, buff_p_probes = self.rt.transfer_data( comm_pattern,
+            destination=my_dest, data=p_probes, dtype=np.double, tag=1
         )
-        _, buff_probes_rst = self.rt.transfer_data( comm_pattern,
-            destination=my_dest, data=probe_rst_not_found, dtype=np.double, tag=2
+        _, buff_p_info = self.rt.transfer_data(comm_pattern,
+            destination=my_dest, data=p_info, dtype=np.int64, tag=2
         )
-        _, buff_el_owner = self.rt.transfer_data( comm_pattern,
-            destination=my_dest, data=el_owner_not_found, dtype=np.int64, tag=3
-        )
-        _, buff_glb_el_owner = self.rt.transfer_data( comm_pattern,
-            destination=my_dest, data=glb_el_owner_not_found, dtype=np.int64, tag=4
-        )
-        _, buff_rank_owner = self.rt.transfer_data( comm_pattern,
-            destination=my_dest, data=rank_owner_not_found, dtype=np.int64, tag=5
-        )
-        _, buff_err_code = self.rt.transfer_data( comm_pattern,
-            destination=my_dest, data=err_code_not_found, dtype=np.int64, tag=6
-        )
-        _, buff_test_pattern = self.rt.transfer_data( comm_pattern,
-            destination=my_dest, data=test_pattern_not_found, dtype=np.double, tag=7
+        _, buff_test_pattern = self.rt.transfer_data(comm_pattern,
+            destination=my_dest, data=test_pattern_not_found, dtype=np.double, tag=3
         )
 
-        # Reshape the data from the probes
-        for source_index in range(0, len(my_source)):
-            buff_probes[source_index] = buff_probes[source_index].reshape(-1, 3)
-            buff_probes_rst[source_index] = buff_probes_rst[source_index].reshape(-1, 3)
-
+        # Unpack the data 
+        buff_probes, buff_probes_rst = unpack_source_data(packed_source_data=buff_p_probes, number_of_arrays=2, equal_length=True, final_shape=(-1, 3))
+        buff_el_owner, buff_glb_el_owner, buff_rank_owner, buff_err_code = unpack_source_data(packed_source_data=buff_p_info, number_of_arrays=4, equal_length=True)
+        
         # Set the information for the coordinate search in this rank
         self.log.write("info", "Find rst coordinates for the points")
         mesh_info = {}
@@ -1102,32 +1094,24 @@ class Interpolator:
         # Set the request to Recieve back the data that I have sent to my candidates
         self.log.write("info", "Send data to sources and recieve from candidates")
 
-        _, obuff_probes = self.rt.transfer_data( comm_pattern,
-            destination=my_source, data=buff_probes, dtype=np.double, tag=11
+        # Pack and send/recv the probe data
+        p_buff_probes = pack_destination_data(destination_data=[buff_probes, buff_probes_rst])
+        p_buff_info = pack_destination_data(destination_data=[buff_el_owner, buff_glb_el_owner, buff_rank_owner, buff_err_code])
+
+        # Send and recieve
+        _, obuff_p_probes = self.rt.transfer_data( comm_pattern,
+            destination=my_source, data=p_buff_probes, dtype=np.double, tag=11
         )
-        _, obuff_probes_rst = self.rt.transfer_data( comm_pattern,
-            destination=my_source, data=buff_probes_rst, dtype=np.double, tag=12
-        )
-        _, obuff_el_owner = self.rt.transfer_data( comm_pattern,
-            destination=my_source, data=buff_el_owner, dtype=np.int64, tag=13
-        )
-        _, obuff_glb_el_owner = self.rt.transfer_data( comm_pattern,
-            destination=my_source, data=buff_glb_el_owner, dtype=np.int64, tag=14
-        )
-        _, obuff_rank_owner = self.rt.transfer_data( comm_pattern,
-            destination=my_source, data=buff_rank_owner, dtype=np.int64, tag=15
-        )
-        _, obuff_err_code = self.rt.transfer_data( comm_pattern,
-            destination=my_source, data=buff_err_code, dtype=np.int64, tag=16
+        _, obuff_p_info = self.rt.transfer_data( comm_pattern,
+            destination=my_source, data=p_buff_info, dtype=np.int64, tag=12
         )
         _, obuff_test_pattern = self.rt.transfer_data( comm_pattern,
-            destination=my_source, data=buff_test_pattern, dtype=np.double, tag=17
+            destination=my_source, data=buff_test_pattern, dtype=np.double, tag=13
         )
-
-        # Reshape the data from the probes
-        for dest_index in range(0, len(my_dest)):
-            obuff_probes[dest_index] = obuff_probes[dest_index].reshape(-1, 3)
-            obuff_probes_rst[dest_index] = obuff_probes_rst[dest_index].reshape(-1, 3)
+ 
+        # Unpack the data
+        obuff_probes, obuff_probes_rst = unpack_source_data(packed_source_data=obuff_p_probes, number_of_arrays=2, equal_length=True, final_shape=(-1, 3))
+        obuff_el_owner, obuff_glb_el_owner, obuff_rank_owner, obuff_err_code = unpack_source_data(packed_source_data=obuff_p_info, number_of_arrays=4, equal_length=True)
 
         # Free resources from previous buffers if possible
         del (
