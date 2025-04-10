@@ -272,6 +272,7 @@ class Probes:
             elem_percent_expansion=elem_percent_expansion,
             tol=find_points_tol,
             max_iter=find_points_max_iter,
+            local_data_structure=local_data_structure,
         )
 
         # Send points to the owners
