@@ -556,6 +556,9 @@ class Interpolator:
 
         elif local_data_structure == "rtree":
             self.my_tree = dstructure_rtree(self.log, self.x, self.y, self.z, elem_percent_expansion = elem_percent_expansion)
+        
+        elif local_data_structure == "hashtable":
+            self.my_tree = dstructure_hashtable(self.log, self.x, self.y, self.z, elem_percent_expansion = elem_percent_expansion)
 
         nelv = self.x.shape[0]
         self.ranks_ive_checked = []
@@ -1003,6 +1006,9 @@ class Interpolator:
 
         elif local_data_structure == "rtree":
             self.my_tree = dstructure_rtree(self.log, self.x, self.y, self.z, elem_percent_expansion = elem_percent_expansion)
+        
+        elif local_data_structure == "hashtable":
+            self.my_tree = dstructure_hashtable(self.log, self.x, self.y, self.z, elem_percent_expansion = elem_percent_expansion)
 
         # nelv = self.x.shape[0]
         self.ranks_ive_checked = []
@@ -1226,8 +1232,8 @@ class Interpolator:
         elif local_data_structure == "rtree":
             self.my_tree = dstructure_rtree(self.log, self.x, self.y, self.z, elem_percent_expansion = elem_percent_expansion)
         
-        elif local_data_structure == "binmesh":
-            self.my_tree = dstructure_binmesh(self.log, self.x, self.y, self.z, elem_percent_expansion = elem_percent_expansion)
+        elif local_data_structure == "hashtable":
+            self.my_tree = dstructure_hashtable(self.log, self.x, self.y, self.z, elem_percent_expansion = elem_percent_expansion)
 
         # nelv = self.x.shape[0]
         self.ranks_ive_checked = []
@@ -2387,7 +2393,7 @@ class dstructure_rtree(dstructure):
 
         return element_candidates
 
-class dstructure_binmesh(dstructure):
+class dstructure_hashtable(dstructure):
     """
     """
 
@@ -2405,20 +2411,13 @@ class dstructure_binmesh(dstructure):
         # Find the values that delimit a cubic boundin box
         # for the whole domain
         self.log.write("info", "Finding bounding box tha delimits the ranks")
-        rank_bbox = np.zeros((1, 6), dtype=np.double)
-        rank_bbox[0, 0] = np.min(x)
-        rank_bbox[0, 1] = np.max(x)
-        rank_bbox[0, 2] = np.min(y)
-        rank_bbox[0, 3] = np.max(y)
-        rank_bbox[0, 4] = np.min(z)
-        rank_bbox[0, 5] = np.max(z)
         
-        self.domain_min_x = rank_bbox[0, 0]
-        self.domain_min_y = rank_bbox[0, 2]
-        self.domain_min_z = rank_bbox[0, 4]
-        self.domain_max_x = rank_bbox[0, 1]
-        self.domain_max_y = rank_bbox[0, 3]
-        self.domain_max_z = rank_bbox[0, 5]
+        self.domain_min_x = np.min(x)
+        self.domain_min_y = np.min(y)
+        self.domain_min_z = np.min(z)
+        self.domain_max_x = np.max(x)
+        self.domain_max_y = np.max(y)
+        self.domain_max_z = np.max(z) 
         self.bin_size_1d = bin_size_1d
 
         # See wich element has points in which bin
@@ -2426,7 +2425,37 @@ class dstructure_binmesh(dstructure):
         bins_of_points = self.binning_hash(x, y, z)
         
         # Create the empty bin to rank map
-        self.bin_to_elem_map = {i : (np.unique(np.where(bins_of_points == i)[0]).astype(np.int32)).tolist() for i in range(0, bin_size)}
+        approach = 1
+        if approach == 0:
+        
+            self.bin_to_elem_map = {i : (np.unique(np.where(bins_of_points == i)[0]).astype(np.int32)).tolist() for i in range(0, bin_size)}
+
+        # Optimized 
+        elif approach == 1:
+
+            nelv = bins_of_points.shape[0]
+            bin_size = bin_size_1d ** 3
+
+            # Initialize an empty dictionary
+            bin_to_elem_map = {}
+
+            # Fill the bins
+            for el in range(nelv):
+                
+                unique_bins = np.unique(bins_of_points[el])
+                for b in unique_bins:
+                    if b not in bin_to_elem_map:
+                        bin_to_elem_map[b] = []
+                    
+                    if el not in bin_to_elem_map[b]:
+                        bin_to_elem_map[b].append(el)
+
+            # Fill the empty bins for completion
+            for i in range(bin_size):
+                if i not in bin_to_elem_map:
+                    bin_to_elem_map[i] = []
+
+            self.bin_to_elem_map = bin_to_elem_map
 
 
     def binning_hash(self, x, y, z):
