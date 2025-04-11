@@ -547,7 +547,7 @@ class Interpolator:
         self.rank = rank
         
         if local_data_structure == "kdtree":
-            self.my_tree = dstructure_kdtree(self.log, self.x, self.y, self.z, elem_percent_expansion = elem_percent_expansion)    
+            self.my_tree = dstructure_kdtree(self.log, self.x, self.y, self.z, elem_percent_expansion = elem_percent_expansion, max_pts = self.max_pts)    
         
         elif local_data_structure == "bounding_boxes":            
             # First each rank finds their bounding box
@@ -558,7 +558,7 @@ class Interpolator:
             self.my_tree = dstructure_rtree(self.log, self.x, self.y, self.z, elem_percent_expansion = elem_percent_expansion)
         
         elif local_data_structure == "hashtable":
-            self.my_tree = dstructure_hashtable(self.log, self.x, self.y, self.z, elem_percent_expansion = elem_percent_expansion)
+            self.my_tree = dstructure_hashtable(self.log, self.x, self.y, self.z, elem_percent_expansion = elem_percent_expansion, max_pts = self.max_pts)
 
         nelv = self.x.shape[0]
         self.ranks_ive_checked = []
@@ -2314,10 +2314,30 @@ class dstructure_kdtree(dstructure):
 
         self.log = logger
         self.elem_percent_expansion = kwargs.get("elem_percent_expansion", 0.01)
+        self.max_pts = kwargs.get("max_pts", 128)
  
         # First each rank finds their bounding box
         self.log.write("info", "Finding bounding box of sem mesh")
         self.my_bbox = get_bbox_from_coordinates(x, y, z)
+
+        # Expand the bounding boxes just once to make it faster later
+        self.expanded_bbox = np.empty_like(self.my_bbox) 
+        rel_tol = self.elem_percent_expansion
+        # For x
+        dx = self.my_bbox[:, 1] - self.my_bbox[:, 0]
+        tol_x = dx * rel_tol / 2.0
+        self.expanded_bbox[:, 0] = self.my_bbox[:, 0] - tol_x
+        self.expanded_bbox[:, 1] = self.my_bbox[:, 1] + tol_x
+        # For y
+        dy = self.my_bbox[:, 3] - self.my_bbox[:, 2]
+        tol_y = dy * rel_tol / 2.0
+        self.expanded_bbox[:, 2] = self.my_bbox[:, 2] - tol_y
+        self.expanded_bbox[:, 3] = self.my_bbox[:, 3] + tol_y
+        # For z
+        dz = self.my_bbox[:, 5] - self.my_bbox[:, 4]
+        tol_z = dz * rel_tol / 2.0
+        self.expanded_bbox[:, 4] = self.my_bbox[:, 4] - tol_z
+        self.expanded_bbox[:, 5] = self.my_bbox[:, 5] + tol_z
     
         # Get bbox centroids and max radius from center to corner
         self.my_bbox_centroids, self.my_bbox_maxdist = (
@@ -2330,34 +2350,32 @@ class dstructure_kdtree(dstructure):
 
     def search(self, probes: np.ndarray, progress_bar = False):
         
-        candidate_elements = self.my_tree.query_ball_point(
-            x=probes,
-            r=self.my_bbox_maxdist * (1 + 1e-6),
-            p=2.0,
-            eps=self.elem_percent_expansion,
-            workers=1,
-            return_sorted=False,
-            return_length=False,
-        )
+        chunk_size = self.max_pts*1000
+        n_chunks = int(np.ceil(probes.shape[0] / chunk_size))
+        element_candidates = []
 
-        # New way of checking as of april 4 2025
-        if 0==0:
-            element_candidates = refine_candidates(probes, candidate_elements, self.my_bbox, rel_tol=self.elem_percent_expansion)
-        else:
-            element_candidates = []
-            i = 0
-            if progress_bar:
-                pbar = tqdm(total=probes.shape[0])
-            for pt in probes:
-                element_candidates.append([])
-                for e in candidate_elements[i]:
-                    if pt_in_bbox(pt, self.my_bbox[e], rel_tol=self.elem_percent_expansion):
-                        element_candidates[i].append(e)
-                i = i + 1
-                if progress_bar:
-                    pbar.update(1)
-            if progress_bar:
-                pbar.close()
+        for chunk_id in range(n_chunks):
+            start = chunk_id * chunk_size
+            end = (chunk_id + 1) * chunk_size
+            if end > probes.shape[0]:
+                end = probes.shape[0]
+
+            candidate_elements = self.my_tree.query_ball_point(
+                x=probes[start:end],
+                r=self.my_bbox_maxdist * (1 + 1e-6),
+                p=2.0,
+                eps=self.elem_percent_expansion,
+                workers=1,
+                return_sorted=False,
+                return_length=False,
+            )
+
+            # New way of checking as of april 4 2025
+            # I am already passing the expanded bounding box, so I take relative tolerance = 0
+            element_candidates_ = refine_candidates(probes[start:end], candidate_elements, self.expanded_bbox, rel_tol=0)
+
+            # Extend with the chunked data
+            element_candidates.extend(element_candidates_)
 
         return element_candidates
 
@@ -2403,6 +2421,7 @@ class dstructure_hashtable(dstructure):
 
         self.log = logger
         self.elem_percent_expansion = kwargs.get("elem_percent_expansion", 0.01)
+        self.max_pts = kwargs.get("max_pts", 128)
         
         # First each rank finds their bounding box
         self.log.write("info", "Finding bounding box of sem mesh")
@@ -2499,7 +2518,7 @@ class dstructure_hashtable(dstructure):
 
         return element_candidates
 
-def refine_candidates(probes, candidate_elements, bboxes, rel_tol):
+def refine_candidates(probes, candidate_elements, bboxes, rel_tol = 0.01):
     """
     Refine candidate elements for each probe by keeping only those where the probe 
     lies within the corresponding expanded bounding box.
@@ -2527,23 +2546,32 @@ def refine_candidates(probes, candidate_elements, bboxes, rel_tol):
     candidate_bboxes = bboxes[candidate_indices]  # shape: (total_num_candidates, 6)
     
     # Compute the expanded boundaries for each candidate bbox.
-    # For x dimension:
-    dx = candidate_bboxes[:, 1] - candidate_bboxes[:, 0]
-    tol_x = dx * rel_tol / 2.0
-    lower_x = candidate_bboxes[:, 0] - tol_x
-    upper_x = candidate_bboxes[:, 1] + tol_x
+    if rel_tol > 1e-6:
+        # For x dimension:
+        dx = candidate_bboxes[:, 1] - candidate_bboxes[:, 0]
+        tol_x = dx * rel_tol / 2.0
+        lower_x = candidate_bboxes[:, 0] - tol_x
+        upper_x = candidate_bboxes[:, 1] + tol_x
 
-    # For y dimension:
-    dy = candidate_bboxes[:, 3] - candidate_bboxes[:, 2]
-    tol_y = dy * rel_tol / 2.0
-    lower_y = candidate_bboxes[:, 2] - tol_y
-    upper_y = candidate_bboxes[:, 3] + tol_y
+        # For y dimension:
+        dy = candidate_bboxes[:, 3] - candidate_bboxes[:, 2]
+        tol_y = dy * rel_tol / 2.0
+        lower_y = candidate_bboxes[:, 2] - tol_y
+        upper_y = candidate_bboxes[:, 3] + tol_y
 
-    # For z dimension:
-    dz = candidate_bboxes[:, 5] - candidate_bboxes[:, 4]
-    tol_z = dz * rel_tol / 2.0
-    lower_z = candidate_bboxes[:, 4] - tol_z
-    upper_z = candidate_bboxes[:, 5] + tol_z
+        # For z dimension:
+        dz = candidate_bboxes[:, 5] - candidate_bboxes[:, 4]
+        tol_z = dz * rel_tol / 2.0
+        lower_z = candidate_bboxes[:, 4] - tol_z
+        upper_z = candidate_bboxes[:, 5] + tol_z
+    else:
+        # No expansion needed, use original boundaries
+        lower_x = candidate_bboxes[:, 0]
+        upper_x = candidate_bboxes[:, 1]
+        lower_y = candidate_bboxes[:, 2]
+        upper_y = candidate_bboxes[:, 3]
+        lower_z = candidate_bboxes[:, 4]
+        upper_z = candidate_bboxes[:, 5]
     
     # Vectorized check: create a boolean mask indicating which candidate pair passes
     valid_mask = ((pts[:, 0] >= lower_x) & (pts[:, 0] <= upper_x) &
