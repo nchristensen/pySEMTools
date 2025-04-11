@@ -674,46 +674,34 @@ class LegendreInterpolator(MultiplePointInterpolator):
         max_pts = self.max_pts
         num_probes = probes.shape[0]
 
-        # --- Precompute and Initialize ---
-        valid_err = (err_code != 0)
-        # Create an index array for all probes
-        all_indices = np.arange(num_probes)
-        # Only consider probes with err_code != 0
-        remaining = all_indices[valid_err].copy()
+        # --- Precompute valid indices once ---
+        valid_idx = np.nonzero(err_code != 0)[0]  # valid indices only
+        n_valid = valid_idx.size
 
-        # Prepare output arrays
-        sampled_field_at_probe = np.empty(num_probes)
-        # Use a boolean mask to mark interpolated probes
-        interpolated_mask = np.zeros(num_probes, dtype=bool)
+        # Prepare output array
+        sampled_field_at_probe = np.zeros(num_probes)
 
-        # --- Main Loop ---
-        while remaining.size > 0:
-            # Select a batch of up to max_pts indices
-            current = remaining[:max_pts]
-            npoints = current.shape[0]
-            
-            # Immediately mark these indices as processed
-            interpolated_mask[current] = True
+        # --- Process valid indices in batches ---
+        for start in range(0, n_valid, max_pts):
+            # Select the current batch from the valid indices
+            current = valid_idx[start:start + max_pts]
+            npoints = current.size
 
-            # Calculate new shapes based on npoints (assumes nelems == 1)
-            # Adjust these shapes as needed based on the actual dimensions of your arrays.
+            # Compute new shapes based on npoints (assumes nelems == 1)
             rst_new_shape   = (npoints, 1, 1, 1)
             field_new_shape = (npoints, 1) + sampled_field.shape[1:]
             
-            # Call the interpolation routine on the current set of probes
+            # Call the interpolation routine on the current batch
             interpolation_buffer[:npoints, :1] = self.interpolate_field_at_rst(
                 probes_rst[current, 0].reshape(rst_new_shape),
                 probes_rst[current, 1].reshape(rst_new_shape),
                 probes_rst[current, 2].reshape(rst_new_shape),
                 sampled_field[el_owner[current]].reshape(field_new_shape)
             )
-            
+                
             # Store the interpolated values back into the result array
             sampled_field_at_probe[current] = interpolation_buffer[:npoints, 0].reshape(npoints)
-            
-            # Update the remaining indices: only those that have valid errors and were not processed
-            remaining = all_indices[valid_err & (~interpolated_mask)]
-
+                
         return sampled_field_at_probe
 
 def determine_initial_guess(self, npoints=1, nelems=1):
