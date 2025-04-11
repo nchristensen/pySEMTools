@@ -375,6 +375,46 @@ def lag_interp_matrix_at_xtest(x, xtest):
 
     return lk
 
+def bar_interp_matrix_at_xtest_barycentric(x, xtest):
+    """
+    Compute the Lagrange interpolation matrix using the barycentric interpolation formula. 
+    """
+    # Remove singleton dimensions so that x becomes a 1D array of nodes.
+    x_vec = x[:, 0, 0, 0]
+    xtest_mat = xtest[..., 0, 0]
+    n = x_vec.shape[0]
+    
+    # Compute the barycentric weights - maybe have them as an input
+    # For each k, compute: w[k] = 1 / ∏_{j ≠ k} (x_vec[k] - x_vec[j])
+    diff = x_vec[:, None] - x_vec[None, :]  # shape: (n, n)
+    np.fill_diagonal(diff, 1.0)
+    w = 1.0 / np.prod(diff, axis=1)  # shape: (n,)
+    
+    # Compute differences between each test point and every node.
+    diff_xtest = xtest_mat[..., None] - x_vec[None, None, :]
+
+    # If the point to interpolate coincides with one of the nodes, it will 
+    # proruce an error. Use this to supress it 
+    with np.errstate(divide='ignore', invalid='ignore'):
+ 
+        # Apply the barycentric formula
+        num = w / diff_xtest 
+        denom = np.sum(num, axis=-1, keepdims=True)
+        L = num / denom
+
+    # Handle the points that coincide
+    exact_match = np.isclose(diff_xtest, 0)  # shape: (npts, nelems, n)
+    has_exact = np.any(exact_match, axis=-1)   # shape: (npts, nelems)
+    if np.any(has_exact):
+        idx_exact = np.argmax(exact_match, axis=-1)
+        # Identify the points that match
+        I, J = np.nonzero(has_exact)
+        # Only for those points set the basis to 0 except at the matching node
+        L[I, J, :] = 0
+        L[I, J, idx_exact[I, J]] = 1.0
+
+    # Expand the last dimension for consistency
+    return L[..., None]
 
 def get_reference_element(self):
     """
