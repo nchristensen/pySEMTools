@@ -2069,6 +2069,9 @@ def get_candidate_ranks(self, comm):
         num_points = self.probe_partition.shape[0]
         n_chunks = int(np.ceil(num_points / chunk_size))
 
+        # Check for the maximun number of chunks across ranks
+        n_chunks = comm.allreduce(n_chunks, op=MPI.MAX)
+
         candidate_ranks_per_point = []
         iferror = False
 
