@@ -375,7 +375,7 @@ def lag_interp_matrix_at_xtest(x, xtest):
 
     return lk
 
-def bar_interp_matrix_at_xtest(x, xtest):
+def bar_interp_matrix_at_xtest(x, xtest, w = None):
     """
     Compute the Lagrange interpolation matrix using the barycentric interpolation formula. 
     """
@@ -384,11 +384,13 @@ def bar_interp_matrix_at_xtest(x, xtest):
     xtest_mat = xtest[..., 0, 0]
     n = x_vec.shape[0]
     
-    # Compute the barycentric weights - maybe have them as an input
-    # For each k, compute: w[k] = 1 / ∏_{j ≠ k} (x_vec[k] - x_vec[j])
-    diff = x_vec[:, None] - x_vec[None, :]  # shape: (n, n)
-    np.fill_diagonal(diff, 1.0)
-    w = 1.0 / np.prod(diff, axis=1)  # shape: (n,)
+    # Compute the barycentric weights if they are not provided only
+    if w is None:
+        # Compute the barycentric weights - maybe have them as an input
+        # For each k, compute: w[k] = 1 / ∏_{j ≠ k} (x_vec[k] - x_vec[j])
+        diff = x_vec[:, None] - x_vec[None, :]  # shape: (n, n)
+        np.fill_diagonal(diff, 1.0)
+        w = 1.0 / np.prod(diff, axis=1)  # shape: (n,)
     
     # Compute differences between each test point and every node.
     diff_xtest = xtest_mat[..., None] - x_vec[None, None, :]
@@ -402,16 +404,22 @@ def bar_interp_matrix_at_xtest(x, xtest):
         denom = np.sum(num, axis=-1, keepdims=True)
         L = num / denom
 
-    # Handle the points that coincide
-    exact_match = np.isclose(diff_xtest, 0)  # shape: (npts, nelems, n)
-    has_exact = np.any(exact_match, axis=-1)   # shape: (npts, nelems)
-    if np.any(has_exact):
-        idx_exact = np.argmax(exact_match, axis=-1)
-        # Identify the points that match
-        I, J = np.nonzero(has_exact)
-        # Only for those points set the basis to 0 except at the matching node
-        L[I, J, :] = 0
-        L[I, J, idx_exact[I, J]] = 1.0
+    # This is risky. If you see interpolation errors in the future,
+    # the use the actual check in the else bloc. Otherwise use the full
+    # lagrange matrix construction in the typical way
+    if 1 == 1:
+        L[np.isnan(L)] = 1.0
+    else:
+        # Handle the points that coincide
+        exact_match = np.isclose(diff_xtest, 0)  # shape: (npts, nelems, n)
+        has_exact = np.any(exact_match, axis=-1)   # shape: (npts, nelems)
+        if np.any(has_exact):
+            idx_exact = np.argmax(exact_match, axis=-1)
+            # Identify the points that match
+            I, J = np.nonzero(has_exact)
+            # Only for those points set the basis to 0 except at the matching node
+            L[I, J, :] = 0
+            L[I, J, idx_exact[I, J]] = 1.0
 
     # Expand the last dimension for consistency
     return L[..., None]

@@ -35,6 +35,15 @@ class LegendreInterpolator(MultiplePointInterpolator):
         self.y_e_hat = None
         self.z_e_hat = None
 
+        # Precompute the barycentric weights
+        x_vec = self.x_gll[:, 0, 0, 0]
+        n = x_vec.shape[0] 
+        # Compute the barycentric weights - maybe have them as an input
+        # For each k, compute: w[k] = 1 / ∏_{j ≠ k} (x_vec[k] - x_vec[j])
+        diff = x_vec[:, None] - x_vec[None, :]  # shape: (n, n)
+        np.fill_diagonal(diff, 1.0)
+        self.barycentric_w = 1.0 / np.prod(diff, axis=1)  # shape: (n,)
+
     def project_element_into_basis(self, x_e, y_e, z_e, apply_1d_ops=True):
         """Project the element data into the appropiate basis"""
         npoints = x_e.shape[0]
@@ -379,9 +388,9 @@ class LegendreInterpolator(MultiplePointInterpolator):
             :, :, :, :
         ]
 
-        lk_r = bar_interp_matrix_at_xtest(self.x_gll, self.rj[:npoints, :nelems, :, :])
-        lk_s = bar_interp_matrix_at_xtest(self.x_gll, self.sj[:npoints, :nelems, :, :])
-        lk_t = bar_interp_matrix_at_xtest(self.x_gll, self.tj[:npoints, :nelems, :, :])
+        lk_r = bar_interp_matrix_at_xtest(self.x_gll, self.rj[:npoints, :nelems, :, :], w=self.barycentric_w)
+        lk_s = bar_interp_matrix_at_xtest(self.x_gll, self.sj[:npoints, :nelems, :, :], w=self.barycentric_w)
+        lk_t = bar_interp_matrix_at_xtest(self.x_gll, self.tj[:npoints, :nelems, :, :], w=self.barycentric_w)
 
         if not apply_1d_ops:
             raise RuntimeError("Only worrking by applying 1d operators")
