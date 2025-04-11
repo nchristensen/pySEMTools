@@ -67,6 +67,12 @@ def apply_operators_3d(dr, ds, dt, x):
 
     Uses np.matmul for batched matrix multiplications in place of einsum.
     """
+    # Ensure all arrays are contiguous to avoid unintended copies.
+    dr = np.ascontiguousarray(dr)
+    ds = np.ascontiguousarray(ds)
+    dt = np.ascontiguousarray(dt)
+    x = np.ascontiguousarray(x)
+
     # Save original shapes
     dshape = dr.shape
     xshape = x.shape
