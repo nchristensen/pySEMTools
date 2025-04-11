@@ -2403,6 +2403,10 @@ class dstructure_hashtable(dstructure):
 
         self.log = logger
         self.elem_percent_expansion = kwargs.get("elem_percent_expansion", 0.01)
+        
+        # First each rank finds their bounding box
+        self.log.write("info", "Finding bounding box of sem mesh")
+        self.my_bbox = get_bbox_from_coordinates(x, y, z)
 
         bin_size = np.prod(x.shape)
         bin_size_1d = int(np.round(np.cbrt(bin_size))) 
@@ -2422,8 +2426,7 @@ class dstructure_hashtable(dstructure):
 
         # See wich element has points in which bin
         self.log.write("info", "Creating bin mesh for the rank")
-        x_r, y_r, z_r, self.my_bbox = linearize_elements(x, y, z, factor=2, rel_tol=self.elem_percent_expansion)
-        bins_of_points = self.binning_hash(x_r, y_r, z_r)
+        bins_of_points = self.binning_hash(x, y, z)
         
         # Create the empty bin to rank map
         approach = 1
