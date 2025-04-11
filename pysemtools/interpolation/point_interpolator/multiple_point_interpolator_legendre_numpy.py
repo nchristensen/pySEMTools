@@ -317,7 +317,15 @@ class LegendreInterpolator(MultiplePointInterpolator):
             self.tj[:npoints, :nelems],
         )
 
-    def interpolate_field_at_rst(self, rj, sj, tj, field_e, apply_1d_ops=True):
+    def interpolate_field_at_rst(self, rj, sj, tj, field_e, apply_1d_ops=True, formula = 'barycentric'):
+        """
+        """
+        if formula == 'barycentric':
+            return self.interpolate_field_at_rst_barycentric(rj, sj, tj, field_e, apply_1d_ops)
+        elif formula == 'lagrange':
+            return self.interpolate_field_at_rst_lagrange(rj, sj, tj, field_e, apply_1d_ops)
+
+    def interpolate_field_at_rst_lagrange(self, rj, sj, tj, field_e, apply_1d_ops=True):
         """
         Interpolate each point in a given field.
         EACH POINT RECIEVES ONE FIELD! SO FIELDS MIGHT BE DUPLICATED
@@ -339,6 +347,41 @@ class LegendreInterpolator(MultiplePointInterpolator):
         lk_r = lag_interp_matrix_at_xtest(self.x_gll, self.rj[:npoints, :nelems, :, :])
         lk_s = lag_interp_matrix_at_xtest(self.x_gll, self.sj[:npoints, :nelems, :, :])
         lk_t = lag_interp_matrix_at_xtest(self.x_gll, self.tj[:npoints, :nelems, :, :])
+
+        if not apply_1d_ops:
+            raise RuntimeError("Only worrking by applying 1d operators")
+        elif apply_1d_ops:
+            field_at_rst = apply_operators_3d(
+                lk_r.transpose(0, 1, 3, 2),
+                lk_s.transpose(0, 1, 3, 2),
+                lk_t.transpose(0, 1, 3, 2),
+                self.field_e[:npoints, :nelems, :, :],
+            )
+
+        return field_at_rst
+    
+    def interpolate_field_at_rst_barycentric(self, rj, sj, tj, field_e, apply_1d_ops=True):
+        """
+        Interpolate each point in a given field.
+        EACH POINT RECIEVES ONE FIELD! SO FIELDS MIGHT BE DUPLICATED
+
+        """
+        npoints = rj.shape[0]
+        nelems = rj.shape[1]
+        n = field_e.shape[2] * field_e.shape[3] * field_e.shape[4]
+
+        self.rj[:npoints, :nelems, :, :] = rj[:, :, :, :]
+        self.sj[:npoints, :nelems, :, :] = sj[:, :, :, :]
+        self.tj[:npoints, :nelems, :, :] = tj[:, :, :, :]
+
+        # Assing the inputs to proper formats
+        self.field_e[:npoints, :nelems, :, :] = field_e.reshape(npoints, nelems, n, 1)[
+            :, :, :, :
+        ]
+
+        lk_r = bar_interp_matrix_at_xtest(self.x_gll, self.rj[:npoints, :nelems, :, :])
+        lk_s = bar_interp_matrix_at_xtest(self.x_gll, self.sj[:npoints, :nelems, :, :])
+        lk_t = bar_interp_matrix_at_xtest(self.x_gll, self.tj[:npoints, :nelems, :, :])
 
         if not apply_1d_ops:
             raise RuntimeError("Only worrking by applying 1d operators")
