@@ -375,7 +375,7 @@ def lag_interp_matrix_at_xtest(x, xtest):
 
     return lk
 
-def bar_interp_matrix_at_xtest_barycentric(x, xtest):
+def bar_interp_matrix_at_xtest(x, xtest):
     """
     Compute the Lagrange interpolation matrix using the barycentric interpolation formula. 
     """
