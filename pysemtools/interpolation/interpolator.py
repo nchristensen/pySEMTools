@@ -16,7 +16,7 @@ from collections import Counter as collections_counter
 try :
     from rtree import index as rtree_index
 except ImportError:
-    rtee_index = None
+    rtree_index = None
 
 NoneType = type(None)
 
