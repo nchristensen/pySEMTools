@@ -1172,9 +1172,12 @@ class Interpolator:
 
             # If the point was not found with certainty, then choose as
             # owner the the one that produced the smaller error in the test pattern
-            min_test_pattern = np.where(
-                np.array(all_test_patterns) == np.array(all_test_patterns).min()
-            )[0]
+            try:
+                min_test_pattern = np.where(
+                    np.array(all_test_patterns) == np.array(all_test_patterns).min()
+                )[0]
+            except ValueError:
+                min_test_pattern = np.array([])
             if min_test_pattern.size > 0:
                 index = min_test_pattern[0]
                 self.probe_partition[point, :] = obuff_probes[index][point, :]
@@ -1454,9 +1457,12 @@ class Interpolator:
 
                 # If the point was not found with certainty, then choose as
                 # owner the the one that produced the smaller error in the test pattern
-                min_test_pattern = np.where(
-                    np.array(all_test_patterns) == np.array(all_test_patterns).min()
-                )[0]
+                try:
+                    min_test_pattern = np.where(
+                        np.array(all_test_patterns) == np.array(all_test_patterns).min()
+                    )[0]
+                except ValueError:
+                    min_test_pattern = np.array([])
                 if min_test_pattern.size > 0:
                     index = min_test_pattern[0]
                     if obuff_test_pattern[index][relative_point] < self.test_pattern_partition[absolute_point]:
