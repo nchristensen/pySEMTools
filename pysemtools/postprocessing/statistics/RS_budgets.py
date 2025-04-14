@@ -181,6 +181,8 @@ def convert_2Dstats_to_3D(stats2D_filename,stats3D_filename,datatype='single'):
     from pysemtools.datatypes.msh import Mesh
     from pysemtools.datatypes.field import FieldRegistry
     from pysemtools.datatypes.utils import extrude_2d_sem_mesh
+    from pysemtools.interpolation.interpolator import get_bbox_from_coordinates
+    from pysemtools.interpolation.point_interpolator.single_point_helper_functions import GLL_pwts
 
     # Get mpi info
     comm = MPI.COMM_WORLD
@@ -204,7 +206,21 @@ def convert_2Dstats_to_3D(stats2D_filename,stats3D_filename,datatype='single'):
     print('fields in the give file: ', field_names )
 
     # extruding mesh and fields
-    msh3d, fld3d = extrude_2d_sem_mesh(comm, lz = msh.lx, msh = msh, fld = fld)
+    ## Find how much to extrude - Extrude the size of the smallest element
+    bbox = get_bbox_from_coordinates(msh.x, msh.y, msh.z)
+    bbox_dist = np.zeros((bbox.shape[0], 3))
+    bbox_dist[:, 0] = bbox[:, 1] - bbox[:, 0]
+    bbox_dist[:, 1] = bbox[:, 3] - bbox[:, 2]
+    bbox_dist[:, 2] = bbox[:, 5] - bbox[:, 4]
+    local_bbox_min_dist = np.min(
+        np.sqrt(bbox_dist[:, 0] ** 2 + bbox_dist[:, 1] ** 2 + bbox_dist[:, 2] ** 2) / 2
+    )
+    bbox_min_dist = comm.allreduce(local_bbox_min_dist, op=MPI.MIN)
+    ## Generate the point distribution
+    x_, _ = GLL_pwts(msh.lx)
+    extrusion_size = bbox_min_dist
+    point_dist = np.flip(x_ * extrusion_size) 
+    msh3d, fld3d = extrude_2d_sem_mesh(comm, lz = msh.lx, msh = msh, fld = fld, point_dist=point_dist)
 
     # filling in the missing z velocity
     z_vel = fld3d.registry['s39']
