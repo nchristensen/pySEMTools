@@ -1981,80 +1981,31 @@ def get_candidate_ranks(self, comm):
 
         # Attempting to optimize. Currently using the old version (the one in else.)
         # Consider activating the one on top by setting 0==0. Maybe it is better for more ranks
-        if 1 == 0:
-            candidate_ranks_per_point = []
+        candidate_ranks_per_point = []
 
-            for chunk_id in range(n_chunks):
-                start = chunk_id * chunk_size
-                end = (chunk_id + 1) * chunk_size
-                if end > self.probe_partition.shape[0]:
-                    end = self.probe_partition.shape[0]
+        for chunk_id in range(0, n_chunks):
 
-                candidate_ranks_per_point_ = self.global_tree.query_ball_point(
-                    x=self.probe_partition[start:end],
-                    r=self.search_radious * (1 + 1e-6),
-                    p=2.0,
-                    eps=1e-8,
-                    workers=1,
-                    return_sorted=False,
-                    return_length=False,
-                )
+            start = chunk_id * chunk_size
+            end = (chunk_id + 1) * chunk_size
+            if end > self.probe_partition.shape[0]:
+                end = self.probe_partition.shape[0]
 
-                true_candidate_ranks = []
-                for i, point in enumerate(self.probe_partition[start:end]):
-                    cand_indices = candidate_ranks_per_point_[i]
-                    if len(cand_indices) > 0:
-                        # Get candidate bounding boxes for these indices.
-                        # Assuming self.global_bbox is an array of shape (total_candidates, 6)
-                        candidate_bboxes = self.global_bbox[cand_indices]
-                        # Apply vectorized check.
-                        valid_mask = pt_in_bbox_vectorized(point, candidate_bboxes, rel_tol=0.01)
-                        # Use the mask to filter candidate indices.
-                        true_candidates = np.array(cand_indices)[valid_mask].tolist()
-                    else:
-                        true_candidates = []
-                    true_candidate_ranks.append(true_candidates)
+            candidate_ranks_per_point_ = self.global_tree.query_ball_point(
+                x=self.probe_partition[start:end],
+                r=self.search_radious * (1 + 1e-6),
+                p=2.0,
+                eps=1e-8,
+                workers=1,
+                return_sorted=False,
+                return_length=False,
+            )
 
-                candidate_ranks_per_point.extend(true_candidate_ranks)
+            refined_candidates = refine_candidates(probes=self.probe_partition[start:end], candidate_elements=candidate_ranks_per_point_, bboxes=self.global_bbox, rel_tol=0.01)
 
-            # Finally, convert the list of candidate ranks to an object array.
-            candidate_ranks_per_point = np.array(candidate_ranks_per_point, dtype=object)
+            candidate_ranks_per_point.extend(refined_candidates)
 
-        else:
-
-            candidate_ranks_per_point = []
-
-            for chunk_id in range(0, n_chunks):
-
-                start = chunk_id * chunk_size
-                end = (chunk_id + 1) * chunk_size
-                if end > self.probe_partition.shape[0]:
-                    end = self.probe_partition.shape[0]
-
-                candidate_ranks_per_point_ = self.global_tree.query_ball_point(
-                    x=self.probe_partition[start:end],
-                    r=self.search_radious * (1 + 1e-6),
-                    p=2.0,
-                    eps=1e-8,
-                    workers=1,
-                    return_sorted=False,
-                    return_length=False,
-                )
-
-                # Check if the points are really in the bounding box
-                candidate_ranks_per_point_bool_ = np.array(
-                    [[pt_in_bbox(point, self.global_bbox[candidate], rel_tol = 0.01) for candidate in candidate_ranks_per_point_[i]]
-                    for i, point in enumerate(self.probe_partition[start:end])], dtype=object)
-                
-                # True candidates
-                ## Dont make it an array (Keep it as a list), to do it later for candidate ranks per point
-                true_candidate_ranks = [[candidate for candidate, bool_candidate in zip(candidate_ranks_per_point_[i], candidate_ranks_per_point_bool_[i]) if bool_candidate]
-                    for i, point in enumerate(self.probe_partition[start:end])]
-                
-                candidate_ranks_per_point.extend(true_candidate_ranks)
-
-            # Give it the same format that the kdtree search gives   
-            candidate_ranks_per_point = np.array(candidate_ranks_per_point, dtype=object)
+        # Give it the same format that the kdtree search gives   
+        candidate_ranks_per_point = np.array(candidate_ranks_per_point, dtype=object)
          
         # Obtain the unique candidates of this rank
         ## 1. flatten the list of lists
