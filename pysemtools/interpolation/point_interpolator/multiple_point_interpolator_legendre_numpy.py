@@ -463,10 +463,7 @@ class LegendreInterpolator(MultiplePointInterpolator):
                 pbar.close()
         else:
 
-            if hasattr(self, "obb_c"):
-                element_candidates = kd_tree.search(probes, obb_c = self.obb_c, obb_jinv = self.obb_jinv)
-            else:
-                element_candidates = kd_tree.search(probes)
+            element_candidates = kd_tree.search(probes)
  
         max_pts = self.max_pts
         pts_n = probes.shape[0]
@@ -757,7 +754,7 @@ class LegendreInterpolator(MultiplePointInterpolator):
             x_max = np.max(x_tilde, axis=(2))
             x_diff = x_max - x_min
             # Get the jacobian as indicated by Mittal et al.
-            jac_moon = x_diff * np.eye(3) / 2
+            jac_moon = x_diff * np.eye(3) / 2 * (1 + 0.05) # Expand 5% # Hard-coded
 
             # Save the centers
             xc_t =  np.concatenate((xc, yc, zc), axis=2) + np.matmul(jac, xc_moon)
@@ -767,8 +764,7 @@ class LegendreInterpolator(MultiplePointInterpolator):
             jac_t = invert_jac(np.matmul(jac, jac_moon))
             obb_j[i : i + nelems, :, :] = jac_t.reshape(nelems, 3, 3)
 
-        self.obb_c = obb_c
-        self.obb_jinv = obb_j
+        return obb_c, obb_j
 
 def determine_initial_guess(self, npoints=1, nelems=1):
     """

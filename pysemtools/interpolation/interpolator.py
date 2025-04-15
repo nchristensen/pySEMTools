@@ -78,9 +78,6 @@ class Interpolator:
         self.t = self.ei.alloc_result_buffer(dtype="double")
         self.test_interp = self.ei.alloc_result_buffer(dtype="double")
 
-        # Get the oriented bbox data
-        if hasattr(self.ei, "get_obb"):
-            self.ei.get_obb(x, y, z, max_pts=max_pts)
 
         # Print what you are using
         try:
@@ -491,6 +488,7 @@ class Interpolator:
         elem_percent_expansion=0.01,
         tol=np.finfo(np.double).eps * 10,
         max_iter=50,
+        use_oriented_bbox = False,
     ):
         """Public method to dins points across ranks and elements"""
         self.log.write(
@@ -513,6 +511,7 @@ class Interpolator:
                 elem_percent_expansion=elem_percent_expansion,
                 tol=tol,
                 max_iter=max_iter,
+                use_oriented_bbox = use_oriented_bbox,
             )
         elif ((find_points_comm_pattern == "point_to_point") or (find_points_comm_pattern == "collective")) and not find_points_iterative[0]:
             self.find_points_(
@@ -522,7 +521,8 @@ class Interpolator:
                 elem_percent_expansion=elem_percent_expansion,
                 tol=tol,
                 max_iter=max_iter,
-                comm_pattern = find_points_comm_pattern
+                comm_pattern = find_points_comm_pattern,
+                use_oriented_bbox = use_oriented_bbox,
             )
         elif ((find_points_comm_pattern == "point_to_point") or (find_points_comm_pattern == "collective")) and find_points_iterative[0]:
             self.find_points_iterative(
@@ -533,7 +533,8 @@ class Interpolator:
                 tol=tol,
                 batch_size=find_points_iterative[1],
                 max_iter=max_iter,
-                comm_pattern= find_points_comm_pattern
+                comm_pattern= find_points_comm_pattern,
+                use_oriented_bbox = use_oriented_bbox,
             )
 
     def find_points_broadcast(
@@ -544,14 +545,21 @@ class Interpolator:
         elem_percent_expansion=0.01,
         tol=np.finfo(np.double).eps * 10,
         max_iter=50,
+        use_oriented_bbox = False,
     ):
         """Find points using the collective implementation"""
         rank = comm.Get_rank()
         size = comm.Get_size()
         self.rank = rank
         
+        kwargs = {
+            "elem_percent_expansion": elem_percent_expansion,
+            "max_pts": self.max_pts,
+            "use_oriented_bbox": use_oriented_bbox,
+            "point_interpolator": self.ei,}
+        
         if local_data_structure == "kdtree":
-            self.my_tree = dstructure_kdtree(self.log, self.x, self.y, self.z, elem_percent_expansion = elem_percent_expansion, max_pts = self.max_pts)    
+            self.my_tree = dstructure_kdtree(self.log, self.x, self.y, self.z, **kwargs)    
         
         elif local_data_structure == "bounding_boxes":            
             # First each rank finds their bounding box
@@ -559,10 +567,10 @@ class Interpolator:
             self.my_bbox = get_bbox_from_coordinates(self.x, self.y, self.z)
 
         elif local_data_structure == "rtree":
-            self.my_tree = dstructure_rtree(self.log, self.x, self.y, self.z, elem_percent_expansion = elem_percent_expansion, max_pts = self.max_pts)
+            self.my_tree = dstructure_rtree(self.log, self.x, self.y, self.z, **kwargs)
         
         elif local_data_structure == "hashtable":
-            self.my_tree = dstructure_hashtable(self.log, self.x, self.y, self.z, elem_percent_expansion = elem_percent_expansion, max_pts = self.max_pts)
+            self.my_tree = dstructure_hashtable(self.log, self.x, self.y, self.z, **kwargs)
 
         nelv = self.x.shape[0]
         self.ranks_ive_checked = []
@@ -990,7 +998,8 @@ class Interpolator:
         elem_percent_expansion=0.01,
         tol=np.finfo(np.double).eps * 10,
         max_iter=50,
-        comm_pattern = "point_to_point"
+        comm_pattern = "point_to_point",
+        use_oriented_bbox = False,
     ):
         """Find points using the point to point implementation"""
         rank = comm.Get_rank()
@@ -1000,8 +1009,14 @@ class Interpolator:
         self.log.tic()
         start_time = MPI.Wtime()
         
+        kwargs = {
+            "elem_percent_expansion": elem_percent_expansion,
+            "max_pts": self.max_pts,
+            "use_oriented_bbox": use_oriented_bbox,
+            "point_interpolator": self.ei,}
+        
         if local_data_structure == "kdtree":
-            self.my_tree = dstructure_kdtree(self.log, self.x, self.y, self.z, elem_percent_expansion = elem_percent_expansion, max_pts = self.max_pts)    
+            self.my_tree = dstructure_kdtree(self.log, self.x, self.y, self.z, **kwargs)    
         
         elif local_data_structure == "bounding_boxes":            
             # First each rank finds their bounding box
@@ -1009,10 +1024,10 @@ class Interpolator:
             self.my_bbox = get_bbox_from_coordinates(self.x, self.y, self.z)
 
         elif local_data_structure == "rtree":
-            self.my_tree = dstructure_rtree(self.log, self.x, self.y, self.z, elem_percent_expansion = elem_percent_expansion, max_pts = self.max_pts)
+            self.my_tree = dstructure_rtree(self.log, self.x, self.y, self.z, **kwargs)
         
         elif local_data_structure == "hashtable":
-            self.my_tree = dstructure_hashtable(self.log, self.x, self.y, self.z, elem_percent_expansion = elem_percent_expansion, max_pts = self.max_pts)
+            self.my_tree = dstructure_hashtable(self.log, self.x, self.y, self.z, **kwargs)
 
         # nelv = self.x.shape[0]
         self.ranks_ive_checked = []
@@ -1218,7 +1233,8 @@ class Interpolator:
         tol=np.finfo(np.double).eps * 10,
         max_iter=50,
         batch_size=5000,
-        comm_pattern = "point_to_point"
+        comm_pattern = "point_to_point",
+        use_oriented_bbox = False,
     ):
         """Find points using the point to point implementation"""
         rank = comm.Get_rank()
@@ -1228,8 +1244,14 @@ class Interpolator:
         self.log.tic()
         start_time = MPI.Wtime()
 
+        kwargs = {
+            "elem_percent_expansion": elem_percent_expansion,
+            "max_pts": self.max_pts,
+            "use_oriented_bbox": use_oriented_bbox,
+            "point_interpolator": self.ei,}
+
         if local_data_structure == "kdtree":
-            self.my_tree = dstructure_kdtree(self.log, self.x, self.y, self.z, elem_percent_expansion = elem_percent_expansion, max_pts = self.max_pts)    
+            self.my_tree = dstructure_kdtree(self.log, self.x, self.y, self.z, **kwargs)    
         
         elif local_data_structure == "bounding_boxes":            
             # First each rank finds their bounding box
@@ -1237,10 +1259,10 @@ class Interpolator:
             self.my_bbox = get_bbox_from_coordinates(self.x, self.y, self.z)
 
         elif local_data_structure == "rtree":
-            self.my_tree = dstructure_rtree(self.log, self.x, self.y, self.z, elem_percent_expansion = elem_percent_expansion, max_pts = self.max_pts)
+            self.my_tree = dstructure_rtree(self.log, self.x, self.y, self.z, **kwargs)
         
         elif local_data_structure == "hashtable":
-            self.my_tree = dstructure_hashtable(self.log, self.x, self.y, self.z, elem_percent_expansion = elem_percent_expansion, max_pts = self.max_pts)
+            self.my_tree = dstructure_hashtable(self.log, self.x, self.y, self.z, **kwargs)
 
         # nelv = self.x.shape[0]
         self.ranks_ive_checked = []
@@ -2279,10 +2301,21 @@ class dstructure_kdtree(dstructure):
         self.log = logger
         self.elem_percent_expansion = kwargs.get("elem_percent_expansion", 0.01)
         self.max_pts = kwargs.get("max_pts", 128)
- 
+        self.use_obb = kwargs.get("use_oriented_bbox", False)
+        ei = kwargs.get("point_interpolator", None)
+
         # First each rank finds their bounding box
         self.log.write("info", "Finding bounding box of sem mesh")
         self.my_bbox = get_bbox_from_coordinates(x, y, z)
+        
+        # Get the oriented bbox data
+        if self.use_obb:
+            if hasattr(ei, "get_obb"): 
+                self.log.write("info", "Finding oriented bounding box of sem mesh")
+                self.obb_c, self.obb_jinv = ei.get_obb(x, y, z, max_pts=self.max_pts)
+            else:
+                self.log.write("error", "You are trying to use the OBB feature, but the ei object does not have the get_obb method. Please check your code.")
+                raise ValueError("The ei object does not have the get_obb method. Please check your code.")
 
         # Expand the bounding boxes just once to make it faster later
         self.expanded_bbox = np.empty_like(self.my_bbox) 
@@ -2314,10 +2347,6 @@ class dstructure_kdtree(dstructure):
 
     def search(self, probes: np.ndarray, progress_bar = False, **kwargs):
 
-        # Get expected keyword arguments 
-        obb_c = kwargs.get("obb_c", None)
-        obb_jinv = kwargs.get("obb_jinv", None)
-
         chunk_size = self.max_pts*10
         n_chunks = int(np.ceil(probes.shape[0] / chunk_size))
         element_candidates = []
@@ -2343,15 +2372,15 @@ class dstructure_kdtree(dstructure):
             element_candidates_ = refine_candidates(probes[start:end], candidate_elements, self.expanded_bbox, rel_tol=0)
 
             # Add a new refinement with the obb as well
-            if obb_c is not None:
-                element_candidates__ = refine_candidates_obb(probes[start:end], element_candidates_, obb_c, obb_jinv, rel_tol=0.01)
+            if self.use_obb: 
+                element_candidates__ = refine_candidates_obb(probes[start:end], element_candidates_, self.obb_c, self.obb_jinv)
                 element_candidates_ = element_candidates__
 
             # Extend with the chunked data
             element_candidates.extend(element_candidates_)
             
-        if obb_c is not None:
-            self.log.write("info", "Done - obb was used to refine search")
+        if self.use_obb:
+            self.log.write("info", "obb was used to refine search")
 
         return element_candidates
 
@@ -2366,6 +2395,8 @@ class dstructure_rtree(dstructure):
         self.log = logger
         self.elem_percent_expansion = kwargs.get("elem_percent_expansion", 0.01)
         self.max_pts = kwargs.get("max_pts", 128)
+        self.use_obb = kwargs.get("use_oriented_bbox", False)
+        ei = kwargs.get("point_interpolator", None)
 
         if rtree_index is None:
             raise ImportError(
@@ -2374,16 +2405,21 @@ class dstructure_rtree(dstructure):
             
         self.log.write("info", "Finding bounding box of sem mesh")
         self.my_bbox = get_bbox_from_coordinates_rtree(x, y, z, rel_tol=self.elem_percent_expansion)
+        
+        # Get the oriented bbox data
+        if self.use_obb:
+            if hasattr(ei, "get_obb"): 
+                self.log.write("info", "Finding oriented bounding box of sem mesh")
+                self.obb_c, self.obb_jinv = ei.get_obb(x, y, z, max_pts=self.max_pts)
+            else:
+                self.log.write("error", "You are trying to use the OBB feature, but the ei object does not have the get_obb method. Please check your code.")
+                raise ValueError("The ei object does not have the get_obb method. Please check your code.")
 
         self.log.write("info", "Creating Rtree with local bbox centroids")
         self.my_tree = create_rtee(self.my_bbox) 
             
     def search(self, probes: np.ndarray, **kwargs):
         
-        # Get expected keyword arguments 
-        obb_c = kwargs.get("obb_c", None)
-        obb_jinv = kwargs.get("obb_jinv", None)
-
         element_candidates = []
         for pt in range(probes.shape[0]):
             query_point_ = (probes[pt, 0], probes[pt, 1], probes[pt, 2])
@@ -2391,12 +2427,12 @@ class dstructure_rtree(dstructure):
             element_candidates.append(list(self.my_tree.intersection(query_point)))
             
         # Add a new refinement with the obb as well  
-        if obb_c is not None:
+        if self.use_obb:
                 
-            element_candidates_ = refine_candidates_obb(probes, element_candidates, obb_c, obb_jinv, rel_tol=0.01)
+            element_candidates_ = refine_candidates_obb(probes, element_candidates, self.obb_c, self.obb_jinv)
             element_candidates = element_candidates_
             
-            self.log.write("info", "Done - Using obb to refine search")
+            self.log.write("info", "obb was used to refine search")
 
         return element_candidates
 
@@ -2590,7 +2626,7 @@ def refine_candidates(probes, candidate_elements, bboxes, rel_tol = 0.01):
     
     return refined_candidates
 
-def refine_candidates_obb(probes, candidate_elements, obb_c, obb_jinv, rel_tol = 0.01):
+def refine_candidates_obb(probes, candidate_elements, obb_c, obb_jinv):
     """
     Refine candidate elements for each probe by keeping only those where the probe 
     lies within the corresponding expanded bounding box.
@@ -2621,7 +2657,7 @@ def refine_candidates_obb(probes, candidate_elements, obb_c, obb_jinv, rel_tol =
     # Check with the obb as in Mittal et al.
     check = np.matmul(candidate_bboxes_jinv, (pts - candidate_bboxes_c).reshape(-1,3,1)).reshape(-1,3)
     check = np.abs(check)
-    tst = np.ones((check.shape[0])) * (1 + rel_tol)
+    tst = np.ones((check.shape[0])) * (1 + 1e-6)
     
     # Vectorized check: create a boolean mask indicating which candidate pair passes
     valid_mask = ((check[:, 0] <= tst) & (check[:, 1] <= tst) & (check[:, 1] <= tst))
