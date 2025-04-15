@@ -78,6 +78,10 @@ class Interpolator:
         self.t = self.ei.alloc_result_buffer(dtype="double")
         self.test_interp = self.ei.alloc_result_buffer(dtype="double")
 
+        # Get the oriented bbox data
+        if hasattr(self.ei, "get_obb"):
+            self.ei.get_obb(x, y, z, max_pts=max_pts)
+
         # Print what you are using
         try:
             dev = self.r.device
@@ -555,7 +559,7 @@ class Interpolator:
             self.my_bbox = get_bbox_from_coordinates(self.x, self.y, self.z)
 
         elif local_data_structure == "rtree":
-            self.my_tree = dstructure_rtree(self.log, self.x, self.y, self.z, elem_percent_expansion = elem_percent_expansion)
+            self.my_tree = dstructure_rtree(self.log, self.x, self.y, self.z, elem_percent_expansion = elem_percent_expansion, max_pts = self.max_pts)
         
         elif local_data_structure == "hashtable":
             self.my_tree = dstructure_hashtable(self.log, self.x, self.y, self.z, elem_percent_expansion = elem_percent_expansion, max_pts = self.max_pts)
@@ -997,7 +1001,7 @@ class Interpolator:
         start_time = MPI.Wtime()
         
         if local_data_structure == "kdtree":
-            self.my_tree = dstructure_kdtree(self.log, self.x, self.y, self.z, elem_percent_expansion = elem_percent_expansion)    
+            self.my_tree = dstructure_kdtree(self.log, self.x, self.y, self.z, elem_percent_expansion = elem_percent_expansion, max_pts = self.max_pts)    
         
         elif local_data_structure == "bounding_boxes":            
             # First each rank finds their bounding box
@@ -1005,10 +1009,10 @@ class Interpolator:
             self.my_bbox = get_bbox_from_coordinates(self.x, self.y, self.z)
 
         elif local_data_structure == "rtree":
-            self.my_tree = dstructure_rtree(self.log, self.x, self.y, self.z, elem_percent_expansion = elem_percent_expansion)
+            self.my_tree = dstructure_rtree(self.log, self.x, self.y, self.z, elem_percent_expansion = elem_percent_expansion, max_pts = self.max_pts)
         
         elif local_data_structure == "hashtable":
-            self.my_tree = dstructure_hashtable(self.log, self.x, self.y, self.z, elem_percent_expansion = elem_percent_expansion)
+            self.my_tree = dstructure_hashtable(self.log, self.x, self.y, self.z, elem_percent_expansion = elem_percent_expansion, max_pts = self.max_pts)
 
         # nelv = self.x.shape[0]
         self.ranks_ive_checked = []
@@ -1225,7 +1229,7 @@ class Interpolator:
         start_time = MPI.Wtime()
 
         if local_data_structure == "kdtree":
-            self.my_tree = dstructure_kdtree(self.log, self.x, self.y, self.z, elem_percent_expansion = elem_percent_expansion)    
+            self.my_tree = dstructure_kdtree(self.log, self.x, self.y, self.z, elem_percent_expansion = elem_percent_expansion, max_pts = self.max_pts)    
         
         elif local_data_structure == "bounding_boxes":            
             # First each rank finds their bounding box
@@ -1233,10 +1237,10 @@ class Interpolator:
             self.my_bbox = get_bbox_from_coordinates(self.x, self.y, self.z)
 
         elif local_data_structure == "rtree":
-            self.my_tree = dstructure_rtree(self.log, self.x, self.y, self.z, elem_percent_expansion = elem_percent_expansion)
+            self.my_tree = dstructure_rtree(self.log, self.x, self.y, self.z, elem_percent_expansion = elem_percent_expansion, max_pts = self.max_pts)
         
         elif local_data_structure == "hashtable":
-            self.my_tree = dstructure_hashtable(self.log, self.x, self.y, self.z, elem_percent_expansion = elem_percent_expansion)
+            self.my_tree = dstructure_hashtable(self.log, self.x, self.y, self.z, elem_percent_expansion = elem_percent_expansion, max_pts = self.max_pts)
 
         # nelv = self.x.shape[0]
         self.ranks_ive_checked = []
@@ -2308,8 +2312,12 @@ class dstructure_kdtree(dstructure):
         self.log.write("info", "Creating KD tree with local bbox centroids") 
         self.my_tree = KDTree(self.my_bbox_centroids)
 
-    def search(self, probes: np.ndarray, progress_bar = False):
-        
+    def search(self, probes: np.ndarray, progress_bar = False, **kwargs):
+
+        # Get expected keyword arguments 
+        obb_c = kwargs.get("obb_c", None)
+        obb_jinv = kwargs.get("obb_jinv", None)
+
         chunk_size = self.max_pts*10
         n_chunks = int(np.ceil(probes.shape[0] / chunk_size))
         element_candidates = []
@@ -2334,8 +2342,16 @@ class dstructure_kdtree(dstructure):
             # I am already passing the expanded bounding box, so I take relative tolerance = 0
             element_candidates_ = refine_candidates(probes[start:end], candidate_elements, self.expanded_bbox, rel_tol=0)
 
+            # Add a new refinement with the obb as well
+            if obb_c is not None:
+                element_candidates__ = refine_candidates_obb(probes[start:end], element_candidates_, obb_c, obb_jinv, rel_tol=0.01)
+                element_candidates_ = element_candidates__
+
             # Extend with the chunked data
             element_candidates.extend(element_candidates_)
+            
+        if obb_c is not None:
+            self.log.write("info", "Done - obb was used to refine search")
 
         return element_candidates
 
@@ -2349,6 +2365,7 @@ class dstructure_rtree(dstructure):
 
         self.log = logger
         self.elem_percent_expansion = kwargs.get("elem_percent_expansion", 0.01)
+        self.max_pts = kwargs.get("max_pts", 128)
 
         if rtree_index is None:
             raise ImportError(
@@ -2362,12 +2379,24 @@ class dstructure_rtree(dstructure):
         self.my_tree = create_rtee(self.my_bbox) 
             
     def search(self, probes: np.ndarray, **kwargs):
+        
+        # Get expected keyword arguments 
+        obb_c = kwargs.get("obb_c", None)
+        obb_jinv = kwargs.get("obb_jinv", None)
 
         element_candidates = []
         for pt in range(probes.shape[0]):
             query_point_ = (probes[pt, 0], probes[pt, 1], probes[pt, 2])
             query_point = query_point_ + query_point_
             element_candidates.append(list(self.my_tree.intersection(query_point)))
+            
+        # Add a new refinement with the obb as well  
+        if obb_c is not None:
+                
+            element_candidates_ = refine_candidates_obb(probes, element_candidates, obb_c, obb_jinv, rel_tol=0.01)
+            element_candidates = element_candidates_
+            
+            self.log.write("info", "Done - Using obb to refine search")
 
         return element_candidates
 
@@ -2537,6 +2566,65 @@ def refine_candidates(probes, candidate_elements, bboxes, rel_tol = 0.01):
     valid_mask = ((pts[:, 0] >= lower_x) & (pts[:, 0] <= upper_x) &
                   (pts[:, 1] >= lower_y) & (pts[:, 1] <= upper_y) &
                   (pts[:, 2] >= lower_z) & (pts[:, 2] <= upper_z))
+    
+    # Filter the probe and candidate indices according to the valid mask.
+    valid_probe_indices = probe_indices[valid_mask]
+    valid_candidate_indices = candidate_indices[valid_mask]
+    
+    # Initialize the output list with empty lists for each probe.
+    refined_candidates = [[] for _ in range(probes.shape[0])]
+    
+    # Sort the valid candidate pairs by the probe index to group them together.
+    order = np.argsort(valid_probe_indices)
+    valid_probe_sorted = valid_probe_indices[order]
+    valid_candidate_sorted = valid_candidate_indices[order]
+    
+    # Use np.unique to get the boundaries for each probe in the sorted array.
+    unique_probes, start_idx, counts = np.unique(valid_probe_sorted, 
+                                                 return_index=True, 
+                                                 return_counts=True)
+    
+    # Fill the refined_candidates for each probe.
+    for probe, idx, count in zip(unique_probes, start_idx, counts):
+        refined_candidates[probe] = valid_candidate_sorted[idx: idx + count].tolist()
+    
+    return refined_candidates
+
+def refine_candidates_obb(probes, candidate_elements, obb_c, obb_jinv, rel_tol = 0.01):
+    """
+    Refine candidate elements for each probe by keeping only those where the probe 
+    lies within the corresponding expanded bounding box.
+    
+    """
+    # Flatten the candidate_elements lists, creating arrays that record for each candidate
+    # the corresponding probe index and candidate bbox index.
+    probe_indices = []
+    candidate_indices = []
+    
+    for i, cands in enumerate(candidate_elements):
+        if cands:  # if this probe has candidate bbox indices
+            probe_indices.extend([i] * len(cands))
+            candidate_indices.extend(cands)
+            
+    probe_indices = np.array(probe_indices)  # shape: (total_num_candidates,)
+    candidate_indices = np.array(candidate_indices)  # shape: (total_num_candidates,)
+    
+    # If no candidates exist overall, return a list of empty lists.
+    if probe_indices.size == 0:
+        return [[] for _ in range(probes.shape[0])]
+    
+    # Get the corresponding probes and bounding boxes for all candidate pairs.
+    pts = probes[probe_indices]           # shape: (total_num_candidates, 3)
+    candidate_bboxes_c = obb_c[candidate_indices]  # shape: (total_num_candidates, 6)
+    candidate_bboxes_jinv = obb_jinv[candidate_indices]  # shape: (total_num_candidates, 6)
+
+    # Check with the obb as in Mittal et al.
+    check = np.matmul(candidate_bboxes_jinv, (pts - candidate_bboxes_c).reshape(-1,3,1)).reshape(-1,3)
+    check = np.abs(check)
+    tst = np.ones((check.shape[0])) * (1 + rel_tol)
+    
+    # Vectorized check: create a boolean mask indicating which candidate pair passes
+    valid_mask = ((check[:, 0] <= tst) & (check[:, 1] <= tst) & (check[:, 1] <= tst))
     
     # Filter the probe and candidate indices according to the valid mask.
     valid_probe_indices = probe_indices[valid_mask]
