@@ -2467,7 +2467,7 @@ class dstructure_hashtable(dstructure):
         self.log.write("info", "Filling bbox space for correct hashtable finding")
         x_r, y_r, z_r, _ = linearize_elements(x, y, z, factor=2, rel_tol=self.elem_percent_expansion)
 
-        bin_size = np.prod(x.shape)
+        bin_size = x.shape[0]
         bin_size_1d = int(np.round(np.cbrt(bin_size))) 
         bin_size = bin_size_1d**3
 
