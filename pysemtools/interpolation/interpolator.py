@@ -2447,10 +2447,25 @@ class dstructure_hashtable(dstructure):
         self.log = logger
         self.elem_percent_expansion = kwargs.get("elem_percent_expansion", 0.01)
         self.max_pts = kwargs.get("max_pts", 128)
+        self.use_obb = kwargs.get("use_oriented_bbox", False)
+        ei = kwargs.get("point_interpolator", None)
         
         # First each rank finds their bounding box
         self.log.write("info", "Finding bounding box of sem mesh")
         self.my_bbox = get_bbox_from_coordinates(x, y, z)
+        
+        # Get the oriented bbox data
+        if self.use_obb:
+            if hasattr(ei, "get_obb"): 
+                self.log.write("info", "Finding oriented bounding box of sem mesh")
+                self.obb_c, self.obb_jinv = ei.get_obb(x, y, z, max_pts=self.max_pts)
+            else:
+                self.log.write("error", "You are trying to use the OBB feature, but the ei object does not have the get_obb method. Please check your code.")
+                raise ValueError("The ei object does not have the get_obb method. Please check your code.")
+
+        # Make the mesh fill the space of its bounding box
+        self.log.write("info", "Filling bbox space for correct hashtable finding")
+        x_r, y_r, z_r, _ = linearize_elements(x, y, z, factor=2, rel_tol=self.elem_percent_expansion)
 
         bin_size = np.prod(x.shape)
         bin_size_1d = int(np.round(np.cbrt(bin_size))) 
@@ -2470,7 +2485,7 @@ class dstructure_hashtable(dstructure):
 
         # See wich element has points in which bin
         self.log.write("info", "Creating bin mesh for the rank")
-        bins_of_points = self.binning_hash(x, y, z)
+        bins_of_points = self.binning_hash(x_r, y_r, z_r)
         
         # Create the empty bin to rank map
         approach = 1
@@ -2540,6 +2555,13 @@ class dstructure_hashtable(dstructure):
         element_candidates = [self.bin_to_elem_map[probe_to_bin[i]] for i in range(0, probes.shape[0])]
 
         element_candidates = refine_candidates(probes, element_candidates, self.my_bbox, rel_tol=self.elem_percent_expansion)
+        
+        if self.use_obb:
+                
+            element_candidates_ = refine_candidates_obb(probes, element_candidates, self.obb_c, self.obb_jinv)
+            element_candidates = element_candidates_
+            
+            self.log.write("info", "obb was used to refine search")
 
         return element_candidates
 
