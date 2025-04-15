@@ -465,12 +465,13 @@ class LegendreInterpolator(MultiplePointInterpolator):
 
             element_candidates = kd_tree.search(probes) 
                     
-        # Identify variables
         max_pts = self.max_pts
         pts_n = probes.shape[0]
         max_candidate_elements = np.max([len(elist) for elist in element_candidates])
         iterations = np.ceil((pts_n / max_pts))
-        checked_elements = [[] for i in range(0, pts_n)]
+        # Use pointers instead of checked_elements
+        next_candidate = np.zeros(pts_n, dtype=int)
+        candidate_lengths = np.array([len(elist) for elist in element_candidates])
 
         exit_flag = False
         # The following logic only works for nelems = 1
@@ -485,19 +486,14 @@ class LegendreInterpolator(MultiplePointInterpolator):
                     break
 
                 # Get the index of points that have not been found
-                pt_not_found_indices = get_points_not_found_index(
-                    err_code, checked_elements, element_candidates, max_pts
-                )
+                pt_not_found_indices = np.flatnonzero((err_code != 1) & (next_candidate < candidate_lengths))
+                pt_not_found_indices = pt_not_found_indices[:max_pts]
 
                 # See which element should be checked in this iteration
-                elem_to_check_per_point = get_element_to_check(
-                    pt_not_found_indices, element_candidates, checked_elements
-                )
+                elem_to_check_per_point = [element_candidates[i][next_candidate[i]] for i in pt_not_found_indices]
 
                 # Update the checked elements
-                checked_elements = update_checked_elements(
-                    checked_elements, pt_not_found_indices, elem_to_check_per_point
-                )
+                next_candidate[pt_not_found_indices] += 1
 
                 npoints = len(pt_not_found_indices)
 
