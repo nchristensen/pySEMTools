@@ -1104,7 +1104,7 @@ class LegendreInterpolator(MultiplePointInterpolator):
             field_new_shape = (npoints, 1) + sampled_field.shape[1:]
             
             # Call the interpolation routine on the current batch
-            interpolation_buffer[:npoints, 1] = self.interpolate_field_at_rst(
+            interpolation_buffer[:npoints, :1] = self.interpolate_field_at_rst(
                 probes_rst[current, 0].reshape(rst_new_shape),
                 probes_rst[current, 1].reshape(rst_new_shape),
                 probes_rst[current, 2].reshape(rst_new_shape),
