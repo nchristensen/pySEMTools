@@ -11,6 +11,8 @@ from .multiple_point_helper_functions_torch import (
     legendre_basis_at_xtest,
     legendre_basis_derivative_at_xtest,
     lag_interp_matrix_at_xtest,
+    bar_interp_matrix_at_xtest,
+
 )
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -46,6 +48,7 @@ class LegendreInterpolator(MultiplePointInterpolator):
         self.x_e = torch.as_tensor(self.x_e, dtype=torch.float64, device=device)
         self.y_e = torch.as_tensor(self.y_e, dtype=torch.float64, device=device)
         self.z_e = torch.as_tensor(self.z_e, dtype=torch.float64, device=device)
+        self.barycentric_w = torch.as_tensor(self.barycentric_w, dtype=torch.float64, device=device)
 
         self.xj = torch.as_tensor(self.xj, dtype=torch.float64, device=device)
         self.yj = torch.as_tensor(self.yj, dtype=torch.float64, device=device)
@@ -691,7 +694,15 @@ class LegendreInterpolator(MultiplePointInterpolator):
             self.tj[:npoints, :nelems].detach(),
         )
 
-    def interpolate_field_at_rst(self, rj, sj, tj, field_e, apply_1d_ops=True):
+    def interpolate_field_at_rst(self, rj, sj, tj, field_e, apply_1d_ops=True, formula = 'barycentric'):
+        """
+        """
+        if formula == 'barycentric':
+            return self.interpolate_field_at_rst_barycentric(rj, sj, tj, field_e, apply_1d_ops)
+        elif formula == 'lagrange':
+            return self.interpolate_field_at_rst_lagrange(rj, sj, tj, field_e, apply_1d_ops)
+
+    def interpolate_field_at_rst_lagrange(self, rj, sj, tj, field_e, apply_1d_ops=True):
         """
         Interpolate each point in a given field.
         EACH POINT RECIEVES ONE FIELD! SO FIELDS MIGHT BE DUPLICATED
@@ -728,6 +739,57 @@ class LegendreInterpolator(MultiplePointInterpolator):
             )
             lk_t = lag_interp_matrix_at_xtest(
                 self.x_gll, self.tj[:npoints, :nelems, :, :]
+            )
+
+            if not apply_1d_ops:
+                raise RuntimeError("Only worrking by applying 1d operators")
+            elif apply_1d_ops:
+                field_at_rst = apply_operators_3d(
+                    lk_r.permute(0, 1, 3, 2),
+                    lk_s.permute(0, 1, 3, 2),
+                    lk_t.permute(0, 1, 3, 2),
+                    self.field_e[:npoints, :nelems, :, :],
+                )
+
+        return field_at_rst
+
+    def interpolate_field_at_rst_barycentric(self, rj, sj, tj, field_e, apply_1d_ops=True):
+        """
+        Interpolate each point in a given field.
+        EACH POINT RECIEVES ONE FIELD! SO FIELDS MIGHT BE DUPLICATED
+
+        """
+
+        with torch.no_grad():
+            npoints = rj.shape[0]
+            nelems = rj.shape[1]
+            n = field_e.shape[2] * field_e.shape[3] * field_e.shape[4]
+
+            self.rj[:npoints, :nelems, :, :] = torch.as_tensor(
+                rj[:, :, :, :], dtype=torch.float64, device=device
+            )
+            self.sj[:npoints, :nelems, :, :] = torch.as_tensor(
+                sj[:, :, :, :], dtype=torch.float64, device=device
+            )
+            self.tj[:npoints, :nelems, :, :] = torch.as_tensor(
+                tj[:, :, :, :], dtype=torch.float64, device=device
+            )
+
+            # Assing the inputs to proper formats
+            self.field_e[:npoints, :nelems, :, :] = torch.as_tensor(
+                field_e.reshape(npoints, nelems, n, 1)[:, :, :, :],
+                dtype=torch.float64,
+                device=device,
+            )
+
+            lk_r = bar_interp_matrix_at_xtest(
+                self.x_gll, self.rj[:npoints, :nelems, :, :], w = self.barycentric_w
+            )
+            lk_s = bar_interp_matrix_at_xtest(
+                self.x_gll, self.sj[:npoints, :nelems, :, :], w = self.barycentric_w
+            )
+            lk_t = bar_interp_matrix_at_xtest(
+                self.x_gll, self.tj[:npoints, :nelems, :, :], w = self.barycentric_w
             )
 
             if not apply_1d_ops:

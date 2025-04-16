@@ -331,3 +331,42 @@ def lag_interp_matrix_at_xtest(x, xtest):
         lk[:, :, k_, :] = prod_[:, :, 0, :]
 
     return lk
+
+def bar_interp_matrix_at_xtest(x, xtest, w=None):
+    """
+    Compute the Lagrange interpolation matrix using the barycentric interpolation formula,
+    ported to PyTorch.
+    
+    """
+    # Remove singleton dimensions so that x becomes a 1D tensor of nodes,
+    # and xtest becomes a 2D tensor: (npts, nelem)
+    x_vec = x[:, 0, 0, 0]         # shape: (n,)
+    xtest_mat = xtest[..., 0, 0]    # shape: (npts, nelem)
+    n = x_vec.shape[0]
+    
+    # Compute the barycentric weights if not provided.
+    if w is None:
+        # Compute the difference matrix: diff[i, j] = x_vec[i] - x_vec[j]
+        diff = x_vec.view(n, 1) - x_vec.view(1, n)   # shape: (n, n)
+        # Fill the diagonal with 1's to avoid division by zero
+        diff.fill_diagonal_(1.0)
+        # For each k, compute w[k] = 1 / ∏_{j ≠ k} (x_vec[k] - x_vec[j])
+        w = 1.0 / torch.prod(diff, dim=1)              # shape: (n,)
+    
+    # Compute differences between each test point and every node.
+    # We want diff_xtest of shape: (npts, nelem, n)
+    diff_xtest = xtest_mat.unsqueeze(-1) - x_vec.unsqueeze(0).unsqueeze(0)
+    
+    # Compute the barycentric formula:
+    #    num = w / (xtest - x_vec)
+    # Note: Division by zero (or very small numbers) may occur, but we catch them later.
+    num = w.unsqueeze(0).unsqueeze(0) / diff_xtest  # shape: (npts, nelem, n)
+    denom = torch.sum(num, dim=-1, keepdim=True)      # shape: (npts, nelem, 1)
+    L = num / denom                                 # shape: (npts, nelem, n)
+    
+    # Replace any NaN values (which occur when xtest equals one of the nodes)
+    # with 1.0.
+    L[torch.isnan(L)] = 1.0
+    
+    # Expand the last dimension for consistency, making the output shape (npts, nelem, n, 1)
+    return L.unsqueeze(-1)
