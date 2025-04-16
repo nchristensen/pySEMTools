@@ -5,7 +5,7 @@ import torch
 
 # from .multiple_point_helper_functions_numpy import GLC_pwts, GLL_pwts
 
-device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 
 def apply_operators_3d_einsum(dr, ds, dt, x):
@@ -64,7 +64,9 @@ def apply_operators_3d_einsum(dr, ds, dt, x):
 
     return temp.reshape((tempshape[0], tempshape[1], tempsize, 1))
 
-def apply_operators_3d(dr, ds, dt, x):
+# For now, doing this hoping GPUs would perform better with the combined version. 
+# Test and then figure out if this is the case
+def apply_operators_3d_(dr, ds, dt, x):
     """
     Applies operators in the r, s, and t directions (similar to NEK5000, but with a reversed order)
     using torch.matmul instead of torch.einsum.
@@ -114,6 +116,30 @@ def apply_operators_3d(dr, ds, dt, x):
     tempshape = temp.shape
     final_size = temp.shape[2] * temp.shape[3]
     return temp.reshape(tempshape[0], tempshape[1], final_size, 1)
+
+def apply_operators_3d(dr, ds, dt, x):
+    """
+    Apply three operators dr, ds, and dt (each of shape (npts, elem, lx, lx))
+    to an input tensor x (of shape (npts, elem, lx**3, 1)) in one einsum call.
+    """
+    # Get batch dimensions and compute lx from x's third dimension.
+    npts, elem, l3, one = x.shape
+    lx = int(round(l3 ** (1.0/3)))
+    if lx**3 != l3:
+        raise ValueError("The third dimension of x must be a perfect cube.")
+
+    r0, r1 = dr.shape[2:]
+    s0, s1 = ds.shape[2:]
+    t0, t1 = dt.shape[2:]
+
+    # Reshape x from (npts, elem, lx**3, 1) to (npts, elem, lx, lx, lx)
+    x_sh = x.view(npts, elem, lx, lx, lx)
+    
+    result = torch.einsum('neia,nejb,nekc,neabc->neijk', dt, ds, dr, x_sh)
+    
+    # Optionally, reshape the output back to (npts, elem, lx**3, 1)
+    result = result.reshape(npts, elem, r0*s0*t0, 1)
+    return result
 
 def legendre_basis_at_xtest_slow_obsolete(n, xtest):
     """
