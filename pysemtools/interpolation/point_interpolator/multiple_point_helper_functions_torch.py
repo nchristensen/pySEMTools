@@ -6,6 +6,7 @@ import torch
 # from .multiple_point_helper_functions_numpy import GLC_pwts, GLL_pwts
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+device_str = "cuda" if torch.cuda.is_available() else "cpu"
 
 
 def apply_operators_3d_einsum(dr, ds, dt, x):
@@ -66,7 +67,14 @@ def apply_operators_3d_einsum(dr, ds, dt, x):
 
 # For now, doing this hoping GPUs would perform better with the combined version. 
 # Test and then figure out if this is the case
-def apply_operators_3d_(dr, ds, dt, x):
+
+def apply_operators_3d(dr, ds, dt, x):
+    if device_str == "cpu":
+        return apply_operators_3d_split(dr, ds, dt, x)
+    elif device_str == "cuda":
+        return apply_operators_3d_fused(dr, ds, dt, x)
+
+def apply_operators_3d_split(dr, ds, dt, x):
     """
     Applies operators in the r, s, and t directions (similar to NEK5000, but with a reversed order)
     using torch.matmul instead of torch.einsum.
@@ -117,7 +125,7 @@ def apply_operators_3d_(dr, ds, dt, x):
     final_size = temp.shape[2] * temp.shape[3]
     return temp.reshape(tempshape[0], tempshape[1], final_size, 1)
 
-def apply_operators_3d(dr, ds, dt, x):
+def apply_operators_3d_fused(dr, ds, dt, x):
     """
     Apply three operators dr, ds, and dt (each of shape (npts, elem, lx, lx))
     to an input tensor x (of shape (npts, elem, lx**3, 1)) in one einsum call.
