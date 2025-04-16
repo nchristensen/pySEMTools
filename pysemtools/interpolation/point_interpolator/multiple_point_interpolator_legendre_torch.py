@@ -13,7 +13,7 @@ from .multiple_point_helper_functions_torch import (
     lag_interp_matrix_at_xtest,
 )
 
-device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 NoneType = type(None)
 
 
