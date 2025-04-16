@@ -1134,15 +1134,15 @@ class LegendreInterpolator(MultiplePointInterpolator):
 
         with torch.no_grad():
             # Allocate torch tensors for internal use
-            rst = torch.zeros((max_pts, ndummy, 1, 1), dtype=torch.float64)
-            elem_data = torch.zeros((max_pts, ndummy, lx * ly * lz, 3, 1), dtype=torch.float64)
+            rst = torch.zeros((max_pts, ndummy, 1, 1), dtype=torch.float64, device=device)
+            elem_data = torch.zeros((max_pts, ndummy, lx * ly * lz, 3, 1), dtype=torch.float64, device=device)
 
             # Process in batches of max_pts elements
             for i in range(0, nelv, max_pts):
                 nelems = min(max_pts, nelv - i)
-                x_e = torch.as_tensor(x[i : i + nelems], dtype=torch.float64).reshape(nelems, ndummy, lx, ly, lz)
-                y_e = torch.as_tensor(y[i : i + nelems], dtype=torch.float64).reshape(nelems, ndummy, lx, ly, lz)
-                z_e = torch.as_tensor(z[i : i + nelems], dtype=torch.float64).reshape(nelems, ndummy, lx, ly, lz)
+                x_e = torch.as_tensor(x[i : i + nelems], dtype=torch.float64, device=device).reshape(nelems, ndummy, lx, ly, lz)
+                y_e = torch.as_tensor(y[i : i + nelems], dtype=torch.float64, device=device).reshape(nelems, ndummy, lx, ly, lz)
+                z_e = torch.as_tensor(z[i : i + nelems], dtype=torch.float64, device=device).reshape(nelems, ndummy, lx, ly, lz)
 
                 # Project the element into the local basis (this should update self.jac)
                 self.project_element_into_basis(x_e, y_e, z_e)
