@@ -84,6 +84,8 @@ class Logger:
 
         self.log = logger
 
+        self.sync_time = {}
+
         # if DEBUG:
         #    self.write("warning", "Debug mode activated - This will produce a lot of output.")
         #    self.write("warning", "Options where all ranks write are followed by a comm barrier.")
@@ -100,6 +102,19 @@ class Logger:
         """
 
         self.time = time()
+    
+    def sync_tic(self, id = 0):
+        """
+        Store the current time.
+
+        Returns
+        -------
+        None.
+
+        """
+        
+        self.comm.Barrier()
+        self.sync_time[id] = time()
 
     def toc(self):
         """
@@ -108,6 +123,18 @@ class Logger:
         """
 
         self.write("info", f"Elapsed time: {time() - self.time}s")
+    
+    def sync_toc(self, id = 0, message=None, time_message="Elapsed time: "):
+        """
+        Write elapsed time since the last call to tic.
+
+        """
+
+        self.comm.Barrier()
+        if message is None:
+            self.write("info", f"{time_message}{time() - self.sync_time[id]}s")
+        else:
+            self.write("info", f"{message} - {time_message}{time() - self.sync_time[id]}s")
 
     def write(self, level, message):
         """Method that writes messages in the log"""

@@ -166,6 +166,7 @@ class Probes:
         self.log.write("info", f" ========================")
 
         # Assign probes
+        self.log.sync_tic()
         self.data_read_from_structured_mesh = False
         if isinstance(probes, np.ndarray) or isinstance(probes, NoneType):
             self.log.write("info", "Probes provided as keyword argument")
@@ -178,6 +179,7 @@ class Probes:
                 "ERROR: Probes must be provided as a string, numpy array or None if the probes are not distributed"
             )
             comm.Abort(1)
+        self.log.sync_toc(message="Query points (probes) read")
 
         # Check if the probes are distributed
         self.distributed_probes = False
@@ -235,6 +237,7 @@ class Probes:
 
         # Initialize the interpolator
         self.log.write("info", "Initializing interpolator")
+        self.log.sync_tic()
         self.itp = Interpolator(
             self.x,
             self.y,
@@ -256,6 +259,7 @@ class Probes:
             global_tree_type=global_tree_type,
             global_tree_nbins=global_tree_nbins,
         )
+        self.log.sync_toc(message="Interpolator initialized in all ranks")
 
         # Scatter the probes to all ranks
         if self.distributed_probes:
@@ -267,6 +271,7 @@ class Probes:
 
         # Find where the point in each rank should be
         self.log.write("info", "Finding points")
+        self.log.sync_tic()
         self.itp.find_points(
             comm,
             find_points_iterative=find_points_iterative,
@@ -277,6 +282,7 @@ class Probes:
             local_data_structure=local_data_structure,
             use_oriented_bbox=use_oriented_bbox
         )
+        self.log.sync_toc(message="Finding points finalized in all ranks")
 
         # Send points to the owners
         if self.distributed_probes:
@@ -367,6 +373,7 @@ class Probes:
         """
 
         self.log.write("info", "Interpolating fields from field list")
+        self.log.sync_tic()
 
         self.number_of_fields = len(field_list)
 
@@ -407,6 +414,9 @@ class Probes:
                         interpolated_fields_from_sources[j]
                     )
 
+            self.log.sync_toc(message="Interpolation: point evaluation done")
+            self.log.sync_tic(id=1)
+
             # Send the data back to the ranks that sent me the probes
             sources, interpolated_data = self.itp.rt.all_to_all(
                 destination=self.itp.my_sources,
@@ -423,6 +433,9 @@ class Probes:
                 self.interpolated_fields[
                     self.itp.local_probe_index_sent_to_destination[i]
                 ] = interpolated_data[list(sources).index(self.itp.destinations[i])][:]
+            
+            self.log.sync_toc(id = 1, message="Interpolation: point redistribution done")
+            self.log.sync_toc(message="Finished interpolation and redistribution in all ranks", time_message="Aggregated time: ")
 
         # If the probes were given in rank 0, then each rank interpolates the points that it owns physically
         # and then send them to rank 0 to be processed further
@@ -453,6 +466,9 @@ class Probes:
 
                 i += 1
 
+            self.log.sync_toc(message="Interpolation: point evaluation done")
+            self.log.sync_tic(id=1)
+
             # Gather in rank zero for processing
             root = 0
             sendbuf = self.my_interpolated_fields.reshape(
@@ -473,8 +489,12 @@ class Probes:
                 # The reason for this is that to scatter we need the data to be contigous.
                 # You sort to make sure that the data from each rank is grouped.
                 self.interpolated_fields[self.itp.sort_by_rank] = tmp
+            
+            self.log.sync_toc(id = 1, message="Interpolation: point redistribution done")
+            self.log.sync_toc(message="Finished interpolation and redistribution in all ranks", time_message="Aggregated time: ")
 
         # Write the data
+        self.log.sync_tic()
         if write_data:
             # Define the name of the interpolated fields
             if field_names is None:
@@ -489,6 +509,7 @@ class Probes:
                     write_interpolated_data(self, parallel=False)
             else:
                 write_interpolated_data(self, parallel=True)
+        self.log.sync_toc(message="Finished writing interpolated fields")
 
 
 def write_coordinates(self, parallel=False):
