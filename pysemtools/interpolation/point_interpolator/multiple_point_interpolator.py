@@ -41,6 +41,16 @@ class MultiplePointInterpolator(ABC):
         self.field_e = np.zeros((max_pts, 1, self.x_e.shape[2], 1))
         self.point_inside_element = np.zeros((max_pts, max_elems, 1, 1), dtype=bool)
 
+        # Precompute the barycentric weights
+        x_vec = self.x_gll[:, 0, 0, 0]
+        n = x_vec.shape[0] 
+        # Compute the barycentric weights - maybe have them as an input
+        # For each k, compute: w[k] = 1 / ∏_{j ≠ k} (x_vec[k] - x_vec[j])
+        diff = x_vec[:, None] - x_vec[None, :]  # shape: (n, n)
+        np.fill_diagonal(diff, 1.0)
+        self.barycentric_w = 1.0 / np.prod(diff, axis=1)  # shape: (n,)
+
+
     @abstractmethod
     def project_element_into_basis(self):
         """Project the element into the basis"""

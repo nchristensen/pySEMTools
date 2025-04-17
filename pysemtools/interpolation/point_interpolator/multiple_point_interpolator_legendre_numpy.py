@@ -35,15 +35,6 @@ class LegendreInterpolator(MultiplePointInterpolator):
         self.y_e_hat = None
         self.z_e_hat = None
 
-        # Precompute the barycentric weights
-        x_vec = self.x_gll[:, 0, 0, 0]
-        n = x_vec.shape[0] 
-        # Compute the barycentric weights - maybe have them as an input
-        # For each k, compute: w[k] = 1 / ∏_{j ≠ k} (x_vec[k] - x_vec[j])
-        diff = x_vec[:, None] - x_vec[None, :]  # shape: (n, n)
-        np.fill_diagonal(diff, 1.0)
-        self.barycentric_w = 1.0 / np.prod(diff, axis=1)  # shape: (n,)
-
     def project_element_into_basis(self, x_e, y_e, z_e, apply_1d_ops=True):
         """Project the element data into the appropiate basis"""
         npoints = x_e.shape[0]
@@ -463,8 +454,8 @@ class LegendreInterpolator(MultiplePointInterpolator):
                 pbar.close()
         else:
 
-            element_candidates = kd_tree.search(probes) 
-                    
+            element_candidates = kd_tree.search(probes)
+ 
         max_pts = self.max_pts
         pts_n = probes.shape[0]
         max_candidate_elements = np.max([len(elist) for elist in element_candidates])
@@ -699,6 +690,72 @@ class LegendreInterpolator(MultiplePointInterpolator):
             sampled_field_at_probe[current] = interpolation_buffer[:npoints, 0].reshape(npoints)
                 
         return sampled_field_at_probe
+    
+    def get_obb(self, x: np.ndarray, y: np.ndarray, z: np.ndarray, max_pts: int =256, ndummy: int = 1):
+        """
+        Obtain the oriented bounding boxed of the element as shown by Mittal et al.
+        """
+
+        nelv = x.shape[0]
+        lz = x.shape[1]
+        ly = x.shape[2]
+        lx = x.shape[3]
+
+        # Allocate arrays to keep info
+        obb_j = np.zeros((nelv, 3, 3), dtype=np.double)
+        obb_c = np.zeros((nelv, 3), dtype=np.double)
+
+        # Allocate the rst zeros
+        rst = np.zeros((max_pts, ndummy, 1, 1), dtype=np.double)
+        elem_data = np.zeros((max_pts, ndummy, lx*ly*lz, 3, 1), dtype=np.double)
+
+        # Loop over the elements based on the max points
+        for i in range(0, nelv, max_pts):
+            nelems = min(max_pts, nelv - i)
+            # Get the points
+            x_e = x[i : i + nelems, :, :, :].reshape(nelems, ndummy, lx, ly, lz)
+            y_e = y[i : i + nelems, :, :, :].reshape(nelems, ndummy, lx, ly, lz)
+            z_e = z[i : i + nelems, :, :, :].reshape(nelems, ndummy, lx, ly, lz)
+
+            # Project them into the basis
+            self.project_element_into_basis(x_e, y_e, z_e)
+
+            # Get the centers and their jacobian
+            xc, yc, zc = self.get_xyz_from_rst(
+                rst[:nelems, :ndummy, :, :],
+                rst[:nelems, :ndummy, :, :],
+                rst[:nelems, :ndummy, :, :],
+            )
+            jac = self.jac[:nelems, :ndummy]
+            jac_inv = invert_jac(jac)
+
+            # rearange the elements to columns to apply the jacobian
+            elem_data[:nelems, :ndummy, :, 0, 0] = x_e.reshape(nelems, ndummy, lx*ly*lz) - xc.reshape(nelems, ndummy, 1)
+            elem_data[:nelems, :ndummy, :, 1, 0] = y_e.reshape(nelems, ndummy, lx*ly*lz) - yc.reshape(nelems, ndummy, 1)
+            elem_data[:nelems, :ndummy, :, 2, 0] = z_e.reshape(nelems, ndummy, lx*ly*lz) - zc.reshape(nelems, ndummy, 1)
+
+            # Apply the jacobian to each point to get the tranformation
+            x_tilde = np.einsum("ijklm, ijkmt -> ijklt" , jac_inv[:, :, np.newaxis, :, :], elem_data[:nelems, :ndummy])
+
+            # Get the center of this reference element xc_moon
+            xc_moon = np.mean(x_tilde, axis=(2))
+
+            # Now get the AABB of the reference element
+            x_min = np.min(x_tilde, axis=(2))
+            x_max = np.max(x_tilde, axis=(2))
+            x_diff = x_max - x_min
+            # Get the jacobian as indicated by Mittal et al.
+            jac_moon = x_diff * np.eye(3) / 2 * (1 + 0.05) # Expand 5% # Hard-coded
+
+            # Save the centers
+            xc_t =  np.concatenate((xc, yc, zc), axis=2) + np.matmul(jac, xc_moon)
+            obb_c[i : i + nelems, :] = xc_t.reshape(nelems, 3)
+            
+            # save the jacobian
+            jac_t = invert_jac(np.matmul(jac, jac_moon))
+            obb_j[i : i + nelems, :, :] = jac_t.reshape(nelems, 3, 3)
+
+        return obb_c, obb_j
 
 def determine_initial_guess(self, npoints=1, nelems=1):
     """

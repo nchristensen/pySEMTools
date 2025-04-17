@@ -71,7 +71,7 @@ def test_probes_msh_single():
     tlist = []
     point_int_l = ["single_point_legendre", "multiple_point_legendre_numpy", "multiple_point_legendre_torch"]
     global_tree_type_l = ["rank_bbox", "domain_binning"]
-    local_data_structure_l = ["kdtree", "rtree"]
+    local_data_structure_l = ["kdtree", "rtree", "hashtable"]
     find_points_iterative = [[False], [True, 1]]
 
     for point_int in point_int_l:

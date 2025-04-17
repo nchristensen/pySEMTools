@@ -11,9 +11,11 @@ from .multiple_point_helper_functions_torch import (
     legendre_basis_at_xtest,
     legendre_basis_derivative_at_xtest,
     lag_interp_matrix_at_xtest,
+    bar_interp_matrix_at_xtest,
+
 )
 
-device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 NoneType = type(None)
 
 
@@ -46,6 +48,7 @@ class LegendreInterpolator(MultiplePointInterpolator):
         self.x_e = torch.as_tensor(self.x_e, dtype=torch.float64, device=device)
         self.y_e = torch.as_tensor(self.y_e, dtype=torch.float64, device=device)
         self.z_e = torch.as_tensor(self.z_e, dtype=torch.float64, device=device)
+        self.barycentric_w = torch.as_tensor(self.barycentric_w, dtype=torch.float64, device=device)
 
         self.xj = torch.as_tensor(self.xj, dtype=torch.float64, device=device)
         self.yj = torch.as_tensor(self.yj, dtype=torch.float64, device=device)
@@ -691,7 +694,15 @@ class LegendreInterpolator(MultiplePointInterpolator):
             self.tj[:npoints, :nelems].detach(),
         )
 
-    def interpolate_field_at_rst(self, rj, sj, tj, field_e, apply_1d_ops=True):
+    def interpolate_field_at_rst(self, rj, sj, tj, field_e, apply_1d_ops=True, formula = 'barycentric'):
+        """
+        """
+        if formula == 'barycentric':
+            return self.interpolate_field_at_rst_barycentric(rj, sj, tj, field_e, apply_1d_ops)
+        elif formula == 'lagrange':
+            return self.interpolate_field_at_rst_lagrange(rj, sj, tj, field_e, apply_1d_ops)
+
+    def interpolate_field_at_rst_lagrange(self, rj, sj, tj, field_e, apply_1d_ops=True):
         """
         Interpolate each point in a given field.
         EACH POINT RECIEVES ONE FIELD! SO FIELDS MIGHT BE DUPLICATED
@@ -728,6 +739,57 @@ class LegendreInterpolator(MultiplePointInterpolator):
             )
             lk_t = lag_interp_matrix_at_xtest(
                 self.x_gll, self.tj[:npoints, :nelems, :, :]
+            )
+
+            if not apply_1d_ops:
+                raise RuntimeError("Only worrking by applying 1d operators")
+            elif apply_1d_ops:
+                field_at_rst = apply_operators_3d(
+                    lk_r.permute(0, 1, 3, 2),
+                    lk_s.permute(0, 1, 3, 2),
+                    lk_t.permute(0, 1, 3, 2),
+                    self.field_e[:npoints, :nelems, :, :],
+                )
+
+        return field_at_rst
+
+    def interpolate_field_at_rst_barycentric(self, rj, sj, tj, field_e, apply_1d_ops=True):
+        """
+        Interpolate each point in a given field.
+        EACH POINT RECIEVES ONE FIELD! SO FIELDS MIGHT BE DUPLICATED
+
+        """
+
+        with torch.no_grad():
+            npoints = rj.shape[0]
+            nelems = rj.shape[1]
+            n = field_e.shape[2] * field_e.shape[3] * field_e.shape[4]
+
+            self.rj[:npoints, :nelems, :, :] = torch.as_tensor(
+                rj[:, :, :, :], dtype=torch.float64, device=device
+            )
+            self.sj[:npoints, :nelems, :, :] = torch.as_tensor(
+                sj[:, :, :, :], dtype=torch.float64, device=device
+            )
+            self.tj[:npoints, :nelems, :, :] = torch.as_tensor(
+                tj[:, :, :, :], dtype=torch.float64, device=device
+            )
+
+            # Assing the inputs to proper formats
+            self.field_e[:npoints, :nelems, :, :] = torch.as_tensor(
+                field_e.reshape(npoints, nelems, n, 1)[:, :, :, :],
+                dtype=torch.float64,
+                device=device,
+            )
+
+            lk_r = bar_interp_matrix_at_xtest(
+                self.x_gll, self.rj[:npoints, :nelems, :, :], w = self.barycentric_w
+            )
+            lk_s = bar_interp_matrix_at_xtest(
+                self.x_gll, self.sj[:npoints, :nelems, :, :], w = self.barycentric_w
+            )
+            lk_t = bar_interp_matrix_at_xtest(
+                self.x_gll, self.tj[:npoints, :nelems, :, :], w = self.barycentric_w
             )
 
             if not apply_1d_ops:
@@ -1012,70 +1074,120 @@ class LegendreInterpolator(MultiplePointInterpolator):
     def interpolate_field_from_rst(
         self, probes_info, interpolation_buffer=None, sampled_field=None, settings=None
     ):
-
-        # Parse the inputs
-        ## Probes information
-        probes = probes_info.get("probes", None)
-        probes_rst = probes_info.get("probes_rst", None)
-        el_owner = probes_info.get("el_owner", None)
-        err_code = probes_info.get("err_code", None)
-        # Settings
-        if not isinstance(settings, NoneType):
-            progress_bar = settings.get("progress_bar", False)
-        else:
-            progress_bar = False
+        # --- Parse Inputs ---
+        probes      = probes_info.get("probes", None)
+        probes_rst  = probes_info.get("probes_rst", None)
+        el_owner    = probes_info.get("el_owner", None)
+        err_code    = probes_info.get("err_code", None)
+        
+        # Get settings; default progress_bar to False
+        progress_bar = settings.get("progress_bar", False) if settings is not None else False
 
         max_pts = self.max_pts
-        pts_n = probes.shape[0]
-        iterations = np.ceil((pts_n / max_pts))
+        num_probes = probes.shape[0]
 
-        sampled_field_at_probe = np.empty((probes.shape[0]))
-        probe_interpolated = np.zeros((probes.shape[0]))
+        # --- Precompute valid indices once ---
+        valid_idx = np.nonzero(err_code != 0)[0]  # valid indices only
+        n_valid = valid_idx.size
 
-        for i in range(0, int(iterations)):
+        # Prepare output array
+        sampled_field_at_probe = np.zeros(num_probes)
 
-            # Check the probes to interpolate this iteration
-            probes_to_interpolate = np.where(
-                (err_code != 0) & (probe_interpolated == 0)
-            )[0]
-            probes_to_interpolate = probes_to_interpolate[:max_pts]
+        # --- Process valid indices in batches ---
+        for start in range(0, n_valid, max_pts):
+            # Select the current batch from the valid indices
+            current = valid_idx[start:start + max_pts]
+            npoints = current.size
 
-            # Check the number of probes
-            npoints = len(probes_to_interpolate)
-            nelems = 1
-
-            if npoints == 0:
-                break
-
-            # Inmediately update the points that will be interpolated
-            probe_interpolated[probes_to_interpolate] = 1
-
-            rst_new_shape = (npoints, nelems, 1, 1)
-            field_new_shape = (
-                npoints,
-                nelems,
-                sampled_field.shape[1],
-                sampled_field.shape[2],
-                sampled_field.shape[3],
+            # Compute new shapes based on npoints (assumes nelems == 1)
+            rst_new_shape   = (npoints, 1, 1, 1)
+            field_new_shape = (npoints, 1) + sampled_field.shape[1:]
+            
+            # Call the interpolation routine on the current batch
+            interpolation_buffer[:npoints, :1] = self.interpolate_field_at_rst(
+                probes_rst[current, 0].reshape(rst_new_shape),
+                probes_rst[current, 1].reshape(rst_new_shape),
+                probes_rst[current, 2].reshape(rst_new_shape),
+                sampled_field[el_owner[current]].reshape(field_new_shape)
             )
-
-            interpolation_buffer[:npoints, :nelems] = self.interpolate_field_at_rst(
-                probes_rst[probes_to_interpolate, 0].reshape(rst_new_shape),
-                probes_rst[probes_to_interpolate, 1].reshape(rst_new_shape),
-                probes_rst[probes_to_interpolate, 2].reshape(rst_new_shape),
-                sampled_field[el_owner[probes_to_interpolate]].reshape(field_new_shape),
-            )
-
-            # Populate the sampled field
-            sampled_field_at_probe[probes_to_interpolate] = (
-                interpolation_buffer[:npoints, :nelems]
-                .reshape(npoints)
-                .to("cpu")
-                .numpy()
-            )
+                
+            # Store the interpolated values back into the result array
+            sampled_field_at_probe[current] = interpolation_buffer[:npoints, 0].reshape(npoints).to("cpu").numpy()
 
         return sampled_field_at_probe
 
+    def get_obb(self, x: np.ndarray, y: np.ndarray, z: np.ndarray, max_pts: int = 256, ndummy: int = 1):
+        """
+        Obtain the oriented bounding box (OBB) of the element as described by Mittal et al.
+        Internal computations are performed using torch tensors and only the outputs
+        are returned as numpy arrays.
+
+        """
+        nelv = x.shape[0]
+        lz = x.shape[1]
+        ly = x.shape[2]
+        lx = x.shape[3]
+
+        # Preallocate output arrays (numpy) for centers and jacobians
+        obb_c = np.zeros((nelv, 3), dtype=np.double)
+        obb_j = np.zeros((nelv, 3, 3), dtype=np.double)
+
+        with torch.no_grad():
+            # Allocate torch tensors for internal use
+            rst = torch.zeros((max_pts, ndummy, 1, 1), dtype=torch.float64, device=device)
+            elem_data = torch.zeros((max_pts, ndummy, lx * ly * lz, 3, 1), dtype=torch.float64, device=device)
+
+            # Process in batches of max_pts elements
+            for i in range(0, nelv, max_pts):
+                nelems = min(max_pts, nelv - i)
+                x_e = torch.as_tensor(x[i : i + nelems], dtype=torch.float64, device=device).reshape(nelems, ndummy, lx, ly, lz)
+                y_e = torch.as_tensor(y[i : i + nelems], dtype=torch.float64, device=device).reshape(nelems, ndummy, lx, ly, lz)
+                z_e = torch.as_tensor(z[i : i + nelems], dtype=torch.float64, device=device).reshape(nelems, ndummy, lx, ly, lz)
+
+                # Project the element into the local basis (this should update self.jac)
+                self.project_element_into_basis(x_e, y_e, z_e)
+
+                # Retrieve the center coordinates and the jacobian for the projection
+                xc, yc, zc = self.get_xyz_from_rst(
+                    rst[:nelems, :ndummy, :, :],
+                    rst[:nelems, :ndummy, :, :],
+                    rst[:nelems, :ndummy, :, :]
+                )
+                jac = self.jac[:nelems, :ndummy]
+                jac_inv = torch.linalg.inv(jac)
+
+                # Rearrange the element coordinates into columns for transformation
+                elem_data[:nelems, :ndummy, :, 0, 0] = x_e.reshape(nelems, ndummy, lx * ly * lz) - xc.reshape(nelems, ndummy, 1)
+                elem_data[:nelems, :ndummy, :, 1, 0] = y_e.reshape(nelems, ndummy, lx * ly * lz) - yc.reshape(nelems, ndummy, 1)
+                elem_data[:nelems, :ndummy, :, 2, 0] = z_e.reshape(nelems, ndummy, lx * ly * lz) - zc.reshape(nelems, ndummy, 1)
+
+                # Transform the points into the reference element coordinates
+                x_tilde = torch.einsum("ijklm,ijkmt->ijklt", jac_inv[:, :, None, :, :], elem_data[:nelems, :ndummy])
+                # Compute the average (center) of the transformed points (reference center)
+                xc_moon = torch.mean(x_tilde, dim=2)
+
+                # Compute the axis-aligned bounding box (AABB) in the reference configuration
+                x_min = torch.min(x_tilde, dim=2)[0]  # shape: (nelems, ndummy, 3, 1)
+                x_max = torch.max(x_tilde, dim=2)[0]  # shape: (nelems, ndummy, 3, 1)
+                x_diff = x_max - x_min              # shape: (nelems, ndummy, 3, 1)
+
+                scale = 1.05 / 2.0   # factor corresponding to a 5% expansion
+                # Create an identity matrix of shape (3, 3) and add batch dimensions:
+                I = torch.eye(3, dtype=torch.float64, device=x_diff.device).unsqueeze(0).unsqueeze(0)  # shape: (1, 1, 3, 3)
+                # Multiply: x_diff has shape (nelems, ndummy, 3, 1), broadcast I along the first two axes.
+                jac_moon = scale * x_diff * I  # Resulting shape: (nelems, ndummy, 3, 3)
+
+                # Compute the center of the oriented bounding box in the original coordinate system
+                center_tensor = torch.cat((xc, yc, zc), dim=2)  # shape: (nelems, ndummy, 3)
+                xc_t = center_tensor + torch.matmul(jac, xc_moon)
+                # Save the results (flatten the ndummy dimension)
+                obb_c[i : i + nelems, :] = xc_t.reshape(nelems, 3).cpu().numpy()
+
+                # Compute the oriented bounding box jacobian in the original space and save it
+                jac_t = torch.linalg.inv(torch.matmul(jac, jac_moon))
+                obb_j[i : i + nelems, :, :] = jac_t.reshape(nelems, 3, 3).cpu().numpy()
+
+        return obb_c, obb_j
 
 def determine_initial_guess(self, npoints=1, nelems=1):
     """

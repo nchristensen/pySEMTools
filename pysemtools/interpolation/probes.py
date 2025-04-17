@@ -138,7 +138,8 @@ class Probes:
         use_autograd: bool = False,
         find_points_tol: float = np.finfo(np.double).eps * 10,
         find_points_max_iter: int = 50,
-        local_data_structure: str = "kdtree"
+        local_data_structure: str = "kdtree",
+        use_oriented_bbox: bool = False,
     ):
 
         rank = comm.Get_rank()
@@ -161,6 +162,7 @@ class Probes:
         self.log.write("info", f"find_points_tol: {find_points_tol}")
         self.log.write("info", f"find_points_max_iter: {find_points_max_iter}")
         self.log.write("info", f"local_data_structure: {local_data_structure}")
+        self.log.write("info", f"use_oriented_bbox: {use_oriented_bbox}")
         self.log.write("info", f" ========================")
 
         # Assign probes
@@ -273,6 +275,7 @@ class Probes:
             tol=find_points_tol,
             max_iter=find_points_max_iter,
             local_data_structure=local_data_structure,
+            use_oriented_bbox=use_oriented_bbox
         )
 
         # Send points to the owners
