@@ -185,7 +185,7 @@ class SVD:
         else:
             # If the rank is not zero, simply create a buffer to recieve the uy dy and vty
             uy = np.empty((m * size, m), dtype=xi.dtype)
-            dy = np.empty((m), dtype=np.double)
+            dy = np.empty((m), dtype=xi.real.dtype)
             vty = np.empty((m, m), dtype=xi.dtype)
         self.log.write("debug", "Broadcasting SVD(y) results")
         comm.Bcast(uy, root=0)
@@ -251,7 +251,7 @@ class SVD:
         else:
             # Prepare buffers for broadcast
             uy = torch.empty((m * size, m), dtype=xi.dtype, device='cpu')
-            dy = torch.empty((m,), dtype=torch.double, device='cpu')
+            dy = torch.empty((m,), dtype=xi.real.dtype, device='cpu')
             vty = torch.empty((m, m), dtype=xi.dtype, device='cpu')
 
         self.log.write("debug", "Broadcasting SVD(y) results")
