@@ -1,9 +1,10 @@
 """ Module that contains msh class, which contains relevant data on the domain"""
 
 import sys
-import importlib
-if importlib.util.find_spec('torch') is not None:
+if 'torch' in sys.modules:
     import torch
+else:
+    torch = None
 import numpy as np
 from ..monitoring.logger import Logger
 from .element_slicing import fetch_elem_facet_data as fd
@@ -86,7 +87,7 @@ class Mesh:
         self.bckend = bckend
         if bckend == 'torch':
             if sys.modules.get("torch") is None:
-                raise ImportError("torch is not installed. Please install it to use the torch backend.")
+                raise ImportError("torch is not installed/imported. Please install it and import it in your driver python script to use the torch backend.")
 
         if not isinstance(data, NoneType):
             self.init_from_data(comm, data)

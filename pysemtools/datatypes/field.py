@@ -1,9 +1,8 @@
 """ Contians class that contains information associated to fields"""
 
 import sys
-import importlib
 import numpy as np
-if importlib.util.find_spec('torch') is not None:
+if 'torch' in sys.modules:
     import torch
     dtype_map = {
         np.dtype('float64'): torch.float64,
@@ -21,7 +20,9 @@ if importlib.util.find_spec('torch') is not None:
     torch.int64: np.dtype('int64'),
     torch.int32: np.dtype('int32'),
     torch.bool: np.dtype('bool'),
-}
+    }
+else:
+    torch = None
 from ..monitoring.logger import Logger
 from ..io.ppymech.neksuite import pynekread_field
 
@@ -263,7 +264,7 @@ class FieldRegistry(Field):
         self.bckend = bckend
         if bckend == 'torch':
             if sys.modules.get("torch") is None:
-                raise ImportError("torch is not installed. Please install it to use the torch backend.")
+                raise ImportError("torch is not installed/imported. Please install it and import it in your driver python script to use the torch backend.")
             self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
         self.update_vars()
