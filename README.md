@@ -3,7 +3,10 @@ A package for post-processing data obtained using a spectral-element method (SEM
 
 Documentation is available [here](https://extremeflow.github.io/pySEMTools/).
 
-There is a paper available (link to Arxiv updated soon). In case you find the tools useful, please cite as (updated soon). The work was partially funded by the “Adaptive multi-tier intelligent data manager for Exascale (ADMIRE)” project,
+In case you find the tools useful, please cite as:
+* Perez, A., Toosi, S., Olsen, T.F., Markidis, S., Schlatter, P., 2025. Pysemtools: A library for post-processing hexahedral spectral element data. [https://doi.org/10.48550/arXiv.2504.12301](https://doi.org/10.48550/arXiv.2504.12301)
+
+The work was partially funded by the “Adaptive multi-tier intelligent data manager for Exascale (ADMIRE)” project,
 which is funded by the European Union’s Horizon 2020 JTI-EuroHPC research and innovation program under grant
 Agreement number: 956748. 
 
