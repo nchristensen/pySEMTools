@@ -1,5 +1,6 @@
 """ This module contains operations to perform streaming and parallel SVD"""
 
+import sys
 import numpy as np
 import scipy.optimize
 if 'torch' in sys.modules:
