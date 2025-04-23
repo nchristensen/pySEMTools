@@ -3,9 +3,10 @@
 from math import pi
 import numpy as np
 import sys
-import importlib
-if importlib.util.find_spec('torch') is not None:
+if 'torch' in sys.modules:
     import torch
+else:
+    torch = None
 from ..monitoring.logger import Logger
 
 
@@ -87,7 +88,7 @@ class Coef:
         if bckend == 'torch':
 
             if sys.modules.get("torch") is None:
-                raise ImportError("torch is not installed. Please install it to use the torch backend.")
+                raise ImportError("torch is not installed/imported. Please install it and import it in your driver python script to use the torch backend.")
             self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
             # Correct dtype if input is torch tensor
