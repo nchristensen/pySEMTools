@@ -16,6 +16,10 @@ def cartesian_to_cylindrical_rotation_matrix(x: float, y: float, z: float) -> np
 
     rotation_matrix = np.zeros((3, 3))
 
+    # Check if the radius is zero
+    if np.sqrt(x**2 + y**2) <= 1e-7:
+        return np.eye(3)
+
     # Define the rotation matrix
     angle = np.arctan2(y, x)
     if angle < 0:
