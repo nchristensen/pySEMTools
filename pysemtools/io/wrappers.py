@@ -120,7 +120,7 @@ def read_data(comm, fname: str, keys: list[str], parallel_io: bool = False, dtyp
 
     return data 
 
-def write_data(comm, fname: str, data_dict: dict[str, np.ndarray], parallel_io: bool = False, dtype = np.single, msh: Mesh = None, write_mesh:bool=False, distributed_axis: int = 0):
+def write_data(comm, fname: str, data_dict: dict[str, np.ndarray], parallel_io: bool = False, dtype = np.single, msh: Union[Mesh, list[np.ndarray]] = None, write_mesh:bool=False, distributed_axis: int = 0):
     """
     Write data to a file
 
@@ -147,7 +147,13 @@ def write_data(comm, fname: str, data_dict: dict[str, np.ndarray], parallel_io: 
     extension = os.path.basename(fname).split('.')[1]
 
     # Write the data
-    if extension == 'hdf5':
+    if (extension == 'hdf5') or (extension == 'h5'):
+
+        if write_mesh:
+            data_dict["x"] = msh[0]
+            data_dict["y"] = msh[1]
+            data_dict["z"] = msh[2]
+
         if parallel_io:
             # Create a new HDF5 file using the MPI communicator
             with h5py.File(fname, 'w', driver='mpio', comm=comm) as f:
@@ -186,6 +192,8 @@ def write_data(comm, fname: str, data_dict: dict[str, np.ndarray], parallel_io: 
     elif extension[0] == 'f':
         if msh is None:
             raise ValueError("A mesh object must be provided to write a fld file")
+        elif isinstance(msh, list):
+            msh = Mesh(comm, x = msh[0], y = msh[1], z = msh[2], create_connectivity=False)
         
         # Write the data to a fld file
         fld = FieldRegistry(comm)
@@ -198,5 +206,8 @@ def write_data(comm, fname: str, data_dict: dict[str, np.ndarray], parallel_io: 
             wdsz = 8
 
         pynekwrite(fname, comm, msh=msh, fld=fld, wdsz=wdsz, write_mesh=write_mesh)
+
+    else:
+        raise ValueError("The file extension is not supported")
 
     return
