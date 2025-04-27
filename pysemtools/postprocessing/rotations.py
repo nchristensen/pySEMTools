@@ -4,7 +4,7 @@ from typing import Union
 import h5py
 import os
 import numpy as np
-from ..io.wrappers import read_data
+from ..io.wrappers import read_data, write_data
 
 
 def cartesian_to_cylindrical_rotation_matrix(x: float, y: float, z: float) -> np.ndarray:
@@ -37,7 +37,7 @@ def cartesian_to_cylindrical_rotation_matrix(x: float, y: float, z: float) -> np
 
     return rotation_matrix
 
-def rotate_tensor(comm, msh: Union[str, list[np.ndarray]], fld: Union[str, list[np.ndarray]], tensor_field_names: list, rotation_matrix: callable, output_file: Union[str] = None, output_field_names: list = None) -> np.ndarray:
+def rotate_tensor(comm, msh: Union[str, list[np.ndarray]], fld: Union[str, list[np.ndarray]], tensor_field_names: list, rotation_matrix: callable, output_file: Union[str] = None, output_field_names: list = None, parallel_io: bool = False, distributed_axis: int = 0, dtype = np.single, write_mesh: bool = False) -> np.ndarray:
     """
     Rotate tensor from a file
 
@@ -71,7 +71,7 @@ def rotate_tensor(comm, msh: Union[str, list[np.ndarray]], fld: Union[str, list[
     #Read the mesh data
     if isinstance(msh, str):
         
-        data = read_data(comm, msh, ["x", "y", "z"], dtype = np.single)
+        data = read_data(comm, msh, ["x", "y", "z"], dtype = dtype, parallel_io = parallel_io, distributed_axis = distributed_axis)
         x = np.copy(data["x"])
         y = np.copy(data["y"])
         z = np.copy(data["z"])
@@ -86,7 +86,7 @@ def rotate_tensor(comm, msh: Union[str, list[np.ndarray]], fld: Union[str, list[
     # Read the tensor data
     if isinstance(fld, str):
 
-        data = read_data(comm, fld, tensor_field_names, dtype = np.single)
+        data = read_data(comm, fld, tensor_field_names, dtype = dtype, parallel_io = parallel_io, distributed_axis = distributed_axis)
         tensor = []
         for field_name in tensor_field_names:
             tensor.append(data[field_name])    
@@ -105,19 +105,15 @@ def rotate_tensor(comm, msh: Union[str, list[np.ndarray]], fld: Union[str, list[
         raise ValueError('Rotation in this type of tensor is not implemented')
     
     if not isinstance(output_file, type(None)):
-        path = os.path.dirname(output_file)
-        if path == '': path = '.'
-        prefix = os.path.basename(output_file).split('.')[0]
-        extension = os.path.basename(output_file).split('.')[1]
-        if extension == 'hdf5':
-            with h5py.File(output_file, 'w') as f:
-                for i, field_name in enumerate(tensor_field_names):
-                    if isinstance(output_field_names, type(None)):
-                        f.create_dataset(f"rot_{field_name}", data=rotated_tensor[i])
-                    else:
-                        f.create_dataset(f"{output_field_names[i]}", data=rotated_tensor[i])
-        else:
-            raise ValueError('The output file must be in HDF5 format')
+        # Construct the output data dictionary
+        data = {}
+        for i, field_name in enumerate(tensor_field_names):
+            if isinstance(output_field_names, type(None)):
+                data[f"rot_{field_name}"] = rotated_tensor[i]
+            else:
+                data[f"{output_field_names[i]}"] = rotated_tensor[i]
+        # Write the data to the file
+        write_data(comm, output_file, data, parallel_io = parallel_io, distributed_axis=distributed_axis, dtype = dtype, msh = [x, y, z], write_mesh=write_mesh)
     else:
         return rotated_tensor 
 
