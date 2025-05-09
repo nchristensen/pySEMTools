@@ -367,9 +367,10 @@ def read_field(comm, fname="compressed_field0.f00001"):
     else:
         dc.lz = 1
 
+    data_to_process = len(variable_data)
+    
     process_counter = 0
     if variable_names[0] == "x":
-        data_to_process = len(variable_data)
         # Initialize a new mesh object
         x = variable_data[process_counter].reshape((dc.nelv, dc.lz, dc.ly, dc.lx))
         process_counter += 1
