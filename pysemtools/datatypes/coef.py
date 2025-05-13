@@ -891,6 +891,76 @@ class Coef:
 
         return field
 
+    def build_spatial_filter(self, r_tf: np.array = None, s_tf: np.array = None, t_tf: np.array = None):
+        """
+        Build a spatial filter based on the given transfer functions.
+
+        Parameters
+        ----------
+        r_tf : np.array
+            Transfer function for the r dimension. Shape should be (lx, lx).
+        s_tf : np.array
+            Transfer function for the s dimension. Shape should be (ly, ly).
+        t_tf : np.array
+            Transfer function for the t dimension. Shape should be (lz, lz).
+            This is optional. If none is passed, it is assumed that the field is 2D.
+
+        Returns
+        -------
+        None
+            The spatial filters are stored in the r_filter, s_filter, and t_filter attributes.
+        
+        """
+
+        if (r_tf is None) or (s_tf is None):
+            raise ValueError("Transfer functions must be provided for r and s dimensions.")
+        if self.gdim == 3 and t_tf is None:
+            raise ValueError("Transfer function for t dimension must be provided for 3D fields.")
+
+        # Build the spatial filter
+        self.log.write("info", "Building spatial filter")
+
+        self.r_filter = self.v @ r_tf @ self.vinv
+        self.s_filter = self.v @ s_tf @ self.vinv
+
+        if self.bckend == 'torch':
+            self.r_filter = torch.as_tensor(self.r_filter, dtype=self.dtype_d, device=self.device)
+            self.s_filter = torch.as_tensor(self.s_filter, dtype=self.dtype_d, device=self.device)
+        if self.gdim == 3:
+            self.t_filter = self.v @ t_tf @ self.vinv
+            if self.bckend == 'torch':
+                self.t_filter = torch.as_tensor(self.t_filter, dtype=self.dtype_d, device=self.device)
+        else:
+            self.t_filter = None
+        
+        self.log.write("info", "1d filters stored in the r_filter, s_filter and t_filter (if 3D) attributes")
+
+    def apply_spatial_filter(self, field):
+        """
+        Apply the stored spatial filters
+
+        Parameters
+        ----------
+        field : np.array
+            Field to apply the spatial filter to. Shape should be (nelv, lz, ly, lx).
+
+        Returns
+        -------
+        np.array
+            Filtered field. Shape is the same as the input field.
+
+        Notes
+        -----
+        The spatial filters must be created before calling this function, otherwise, an error will be raised.
+        """
+
+        if (not hasattr(self, "r_filter")) or (not hasattr(self, "s_filter")):
+            raise ValueError("Spatial filter has not been built. Call build_spatial_filter() first.")
+
+        if self.bckend == 'numpy':
+            return self.dudrst_1d_operator(field, self.r_filter, self.s_filter, self.t_filter)
+        elif self.bckend == 'torch':
+            return self.dudrst_1d_operator_torch(field, self.r_filter, self.s_filter, self.t_filter) 
 
 # -----------------------------------------------------------------------
 
@@ -1666,3 +1736,4 @@ def invert_jacobian_3d(self):
     self.dtdz = (self.dxdr * self.dyds - self.dxds * self.dydr) / self.jac
 
     return
+
