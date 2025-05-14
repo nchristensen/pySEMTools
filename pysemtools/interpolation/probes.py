@@ -429,7 +429,7 @@ class Probes:
             sources, interpolated_data = self.itp.rt.all_to_all(
                 destination=self.itp.my_sources,
                 data=my_interpolated_fields,
-                dtype=my_interpolated_fields[0].dtype,
+                dtype=np.double,
             )
             # reshape the data
             for i in range(0, len(sources)):
