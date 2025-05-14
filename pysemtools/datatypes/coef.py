@@ -507,8 +507,12 @@ class Coef:
         field.shape = field_shape_as_columns
 
         # Calculate the derivative applying the 3D operator broadcasting with einsum
-        dudrst = np.einsum(
-            "ejk, ekm -> ejm",
+        #dudrst = np.einsum(
+        #    "ejk, ekm -> ejm",
+        #    dr.reshape(1, operator_shape[0], operator_shape[1]),
+        #    field,
+        #)
+        dudrst = np.matmul(
             dr.reshape(1, operator_shape[0], operator_shape[1]),
             field,
         )
@@ -1447,7 +1451,8 @@ def apply_operators_2d(dr, ds, x):
     # Reshape the field to be consistent
     xreshape = x.reshape((xshape[0], xshape[1], int(xsize / drt_s0), drt_s0))
     # Apply the operator with einsum
-    temp = np.einsum("ijkl,ijlm->ijkm", xreshape, drt)
+    #temp = np.einsum("ijkl,ijlm->ijkm", xreshape, drt)
+    temp = np.matmul(xreshape, drt)
 
     # Reshape the arrays as needed
     tempsize = temp.shape[2] * temp.shape[3]
@@ -1457,7 +1462,8 @@ def apply_operators_2d(dr, ds, x):
     # Apply in s direction
 
     temp = temp.reshape((xshape[0], xshape[1], ds_s1, int(tempsize / ds_s1)))
-    temp = np.einsum("ijkl,ijlm->ijkm", ds, temp)
+    #temp = np.einsum("ijkl,ijlm->ijkm", ds, temp)
+    temp = np.matmul(ds, temp)
 
     # Reshape to proper size
     tempshape = temp.shape
@@ -1525,7 +1531,8 @@ def apply_operators_3d(dr, ds, dt, x):
     # Reshape the field to be consistent
     xreshape = x.reshape((xshape[0], xshape[1], int(xsize / drt_s0), drt_s0))
     # Apply the operator with einsum
-    temp = np.einsum("ijkl,ijlm->ijkm", xreshape, drt)
+    #temp = np.einsum("ijkl,ijlm->ijkm", xreshape, drt)
+    temp = np.matmul(xreshape, drt)
 
     # Reshape the arrays as needed
     tempsize = temp.shape[2] * temp.shape[3]
@@ -1536,9 +1543,10 @@ def apply_operators_3d(dr, ds, dt, x):
     temp = temp.reshape(
         (xshape[0], xshape[1], ds_s1, ds_s1, int(tempsize / (ds_s1**2)))
     )
-    temp = np.einsum(
-        "ijklm,ijkmn->ijkln", ds.reshape((dshape[0], dshape[1], 1, ds_s0, ds_s1)), temp
-    )
+    #temp = np.einsum(
+    #    "ijklm,ijkmn->ijkln", ds.reshape((dshape[0], dshape[1], 1, ds_s0, ds_s1)), temp
+    #)
+    temp = np.matmul(ds.reshape((dshape[0], dshape[1], 1, ds_s0, ds_s1)), temp)
 
     # Reshape the arrays as needed
     tempsize = temp.shape[2] * temp.shape[3] * temp.shape[4]
@@ -1548,7 +1556,8 @@ def apply_operators_3d(dr, ds, dt, x):
     # Apply in t direction
 
     temp = temp.reshape((xshape[0], xshape[1], dt_s1, int(tempsize / dt_s1)))
-    temp = np.einsum("ijkl,ijlm->ijkm", dt, temp)
+    #temp = np.einsum("ijkl,ijlm->ijkm", dt, temp)
+    temp = np.matmul(dt, temp)
 
     # Reshape to proper size
     tempshape = temp.shape
