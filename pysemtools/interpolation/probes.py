@@ -322,6 +322,14 @@ class Probes:
                     "info",
                     f"Found {nfound} points, {nnotfound} not found, {nwarning} with warnings",
                 )
+        elif self.distributed_probes and (not write_coords):
+            nfound = len(np.where(self.itp.err_code == 1)[0])
+            nnotfound = len(np.where(self.itp.err_code == 0)[0])
+            nwarning = len(np.where(self.itp.err_code == -10)[0])
+            self.log.write(
+                "info_all",
+                f"Found {nfound} points, {nnotfound} not found, {nwarning} with warnings",
+            )
 
         ## init dummy variables
         self.fld_data = None

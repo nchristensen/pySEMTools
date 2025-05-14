@@ -155,6 +155,10 @@ class Logger:
             if rank == 0:
                 self.log.info(message)
 
+        if level == "info_all":
+            self.log.info(f"Rank {comm.Get_rank()}: {message}")
+            comm.Barrier()
+
         if level == "warning":
             if rank == 0:
                 self.log.warning(message)
