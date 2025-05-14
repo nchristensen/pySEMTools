@@ -360,7 +360,7 @@ def preadnek(filename, comm, data_dtype=np.double):
 
 
 # @profile
-def pynekread(filename, comm, data_dtype=np.double, msh=None, fld=None):
+def pynekread(filename, comm, data_dtype=np.double, msh=None, fld=None, overwrite_fld = False):
     """
     Read nek file and returs a pynekobject (Parallel).
 
@@ -382,6 +382,9 @@ def pynekread(filename, comm, data_dtype=np.double, msh=None, fld=None):
 
     fld : Field
         The field object to put the data in. (Default value = None).
+
+    overwrite_fld : bool
+        Wether or not to overwrite the contents of fld. (Default value = False).
 
     Returns
     -------
@@ -467,6 +470,9 @@ def pynekread(filename, comm, data_dtype=np.double, msh=None, fld=None):
 
     if not isinstance(fld, type(None)):
         log.write("info", "Reading field data")
+        if overwrite_fld:
+            log.write("info", "Overwriting fld object")
+            fld.clear()
 
     # Read the velocity
     if ioh.vel_variables > 0:
