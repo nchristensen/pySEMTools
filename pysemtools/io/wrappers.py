@@ -9,6 +9,7 @@ from ..datatypes.field import FieldRegistry
 from .ppymech.neksuite import pynekread, pynekwrite
 import numpy as np
 from mpi4py import MPI
+from ..monitoring.logger import Logger
 
 def read_data(comm, fname: str, keys: list[str], parallel_io: bool = False, dtype = np.single, distributed_axis: int = 0):
     """
@@ -150,6 +151,10 @@ def write_data(comm, fname: str, data_dict: dict[str, np.ndarray], parallel_io: 
     prefix = os.path.basename(fname).split('.')[0]
     extension = os.path.basename(fname).split('.')[1]
 
+    log = Logger(comm=comm, module_name="write_data")
+    log.tic()
+    log.write("info", "Writing file: {}".format(fname))
+
     # Write the data
     if (extension == 'hdf5') or (extension == 'h5'):
 
@@ -202,6 +207,9 @@ def write_data(comm, fname: str, data_dict: dict[str, np.ndarray], parallel_io: 
                 for key in data_dict.keys():
                     data = data_dict[key]
                     dset = f.create_dataset(key, data=data, dtype=data.dtype)
+
+        log.write("debug", "File written")
+        log.toc()
 
     elif extension[0] == 'f':
         if msh is None:
