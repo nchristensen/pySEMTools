@@ -120,7 +120,7 @@ def read_data(comm, fname: str, keys: list[str], parallel_io: bool = False, dtyp
 
     return data 
 
-def write_data(comm, fname: str, data_dict: dict[str, np.ndarray], parallel_io: bool = False, dtype = np.single, msh: Union[Mesh, list[np.ndarray]] = None, write_mesh:bool=False, distributed_axis: int = 0):
+def write_data(comm, fname: str, data_dict: dict[str, np.ndarray], parallel_io: bool = False, dtype = np.single, msh: Union[Mesh, list[np.ndarray]] = None, write_mesh:bool=False, distributed_axis: int = 0, uniform_shape: bool = False):
     """
     Write data to a file
 
@@ -139,6 +139,10 @@ def write_data(comm, fname: str, data_dict: dict[str, np.ndarray], parallel_io: 
         The mesh object to write to a fld file, by default None
     write_mesh : bool, optional
         Only valid for writing fld files
+    distributed_axis : int, optional
+        The axis along which the data is distributed, by default 0
+    uniform_shape : bool, optional
+        If True, the global shape of the data is assumed to be uniform, by default False
     """
 
     # Check the file extension
@@ -158,27 +162,37 @@ def write_data(comm, fname: str, data_dict: dict[str, np.ndarray], parallel_io: 
             # Create a new HDF5 file using the MPI communicator
             with h5py.File(fname, 'w', driver='mpio', comm=comm) as f:
 
+                # Always set the global shape to be initialized
+                global_shape_init = False
+
                 for key in data_dict.keys():
-                    data = data_dict[key]
-            
-                    # Determine local sizes
-                    local_array_shape = data.shape
-                    local_array_size = data.size
-
-                    # Obtain the total number of entries in the array    
-                    global_axis_0_shape = np.array(comm.allreduce(local_array_shape[distributed_axis], op=MPI.SUM))
-                    # Obtain the offset in the file
-                    offset = comm.scan(local_array_shape[distributed_axis]) - local_array_shape[distributed_axis]
                     
-                    # Set the global size
-                    temp = list(local_array_shape)
-                    temp[distributed_axis] = global_axis_0_shape
-                    global_array_shape = tuple(temp)
+                    data = data_dict[key]
 
-                    # Get the slice where the data should be written
-                    slices = [slice(None) for i in range(len(global_array_shape))]
-                    slices[distributed_axis] = slice(offset, offset + local_array_shape[distributed_axis])                    
+                    # Find the global shape of the arrays
+                    if (not global_shape_init):
 
+                        # Determine local sizes
+                        local_array_shape = data.shape
+                        local_array_size = data.size
+
+                        # Obtain the total number of entries in the array    
+                        global_axis_0_shape = np.array(comm.allreduce(local_array_shape[distributed_axis], op=MPI.SUM))
+                        # Obtain the offset in the file
+                        offset = comm.scan(local_array_shape[distributed_axis]) - local_array_shape[distributed_axis]
+                        
+                        # Set the global size
+                        temp = list(local_array_shape)
+                        temp[distributed_axis] = global_axis_0_shape
+                        global_array_shape = tuple(temp)
+
+                        # Get the slice where the data should be written
+                        slices = [slice(None) for i in range(len(global_array_shape))]
+                        slices[distributed_axis] = slice(offset, offset + local_array_shape[distributed_axis])
+
+                        # If the data is uniform, lock this global shape.
+                        if uniform_shape:
+                            global_shape_init = True                    
                     
                     # Create the data set and assign the data
                     dset = f.create_dataset(key, global_array_shape, dtype=data.dtype)
