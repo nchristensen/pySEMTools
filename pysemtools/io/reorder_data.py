@@ -10,13 +10,14 @@ from ..datatypes.coef import Coef
 from ..datatypes.field import Field, FieldRegistry
 from .ppymech.neksuite import preadnek, pynekread
 from .wrappers import read_data
+from typing import cast
 
 comm = MPI.COMM_WORLD
 rank = comm.Get_rank()
 size = comm.Get_size()
 
 
-def generate_data(fname_3d, fname_out):
+def generate_data(fname_3d: str, fname_out: str):
 
     msh_3d = Mesh(comm, create_connectivity=True)
     pynekread(fname_3d, comm, data_dtype=np.single, msh=msh_3d)
@@ -89,7 +90,7 @@ def generate_data(fname_3d, fname_out):
     y_global = data["y"]
     z_global = data["z"]
 
-    size_data = x_global.shape[0]
+    size_data: int = x_global.shape[0]
     subset_x = x_global[:size_data]
     subset_y = y_global[:size_data]
     subset_z = z_global[:size_data]
