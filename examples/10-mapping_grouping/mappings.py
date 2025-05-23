@@ -1,49 +1,53 @@
 #!/usr/bin/env python
 
+# Import required modules
 import os
 import sys
 sys.path.append("/home/hpc/iwst/iwst115h/forked_git/pySEMTools") # add path to pynek tools
-
-missing_vars = []
-
-num_elements_per_section = int(os.environ.get("num_elements_per_section"))
-pattern_factor = int(os.environ.get("pattern_factor"))
-num_pattern_cross_sections = int(os.environ.get("num_pattern_cross_sections"))
-
-if num_elements_per_section is None:
-    missing_vars.append("num_elements_per_section")
-if pattern_factor is None:
-    missing_vars.append("pattern_factor")
-if num_pattern_cross_sections is None:
-    missing_vars.append("num_pattern_cross_sections")
-
-if missing_vars:
-    print(f"Error: Missing environment variables: {', '.join(missing_vars)}", file=sys.stderr)
-    sys.exit(1)
-
-# Import required modules
+from typing import cast
 from mpi4py import MPI
-import numpy as np
-from pysemtools.io.reorder_data import generate_data, calculate_face_differences, calculate_face_averages, calculate_face_normals, face_mappings, compare_mappings, compare_methods
-from pysemtools.io.reorder_data import reduce_face_normals, directions_face_normals, reorder_assigned_data, correct_axis_signs
 
 comm = MPI.COMM_WORLD
 rank = comm.Get_rank()
 size = comm.Get_size()
 
+if rank == 0:
+    num_elements_per_section = os.environ.get("num_elements_per_section")
+    pattern_factor = os.environ.get("pattern_factor")
+    num_pattern_cross_sections = os.environ.get("num_pattern_cross_sections")
+
+    # Check if any variable is missing
+    if None in [num_elements_per_section, pattern_factor, num_pattern_cross_sections]:
+        print("Error: Missing required environment variables.", file=sys.stderr)
+        sys.exit(1)
+
+    num_elements_per_section = int(cast(str, num_elements_per_section))
+    pattern_factor = int(cast(str, pattern_factor))
+    num_pattern_cross_sections = int(cast(str, num_pattern_cross_sections))
+else:
+    num_elements_per_section = None
+    pattern_factor = None
+    num_pattern_cross_sections = None
+
+num_elements_per_section = comm.bcast(num_elements_per_section, root=0)
+pattern_factor = comm.bcast(pattern_factor, root=0)
+num_pattern_cross_sections = comm.bcast(num_pattern_cross_sections, root=0)
+
 elem_pattern_crosssections = num_elements_per_section * pattern_factor; # No. of elements in each pattern cross-section
-
 total_elements = elem_pattern_crosssections * num_pattern_cross_sections # Total elements in the file.
-
 elements_per_rank = total_elements // size  # No. of elements in each rank.
-
 ranks_per_section = num_elements_per_section // elements_per_rank # No. of ranks per each cross-section
-
 ranks_per_pattern_section = ranks_per_section * pattern_factor # No. of ranks per each pattern cross-section
-
 leftover = total_elements % size  # Elements that don’t fit evenly in the rank (if any)
 
-def validate_rank_size(total_elements, size, num_elements_per_section):
+import numpy as np
+from pysemtools.io.reorder_data import (
+    generate_data, calculate_face_differences, calculate_face_averages, calculate_face_normals,
+    face_mappings, compare_mappings, compare_methods, reduce_face_normals, directions_face_normals,
+    reorder_assigned_data, correct_axis_signs
+)
+
+def validate_rank_size(total_elements: int, size: int, num_elements_per_section: int) -> bool:
    
     # Criterion 1: elements_per_rank should be exactly divisible
     elements_per_rank = total_elements // size
@@ -60,7 +64,7 @@ def validate_rank_size(total_elements, size, num_elements_per_section):
     print(f"Both Criterias Passed: elements_per_rank = {elements_per_rank}, ranks_per_section = {ranks_per_section}") if rank == 0 else None
     return True
 
-def find_valid_sizes(total_elements, num_elements_per_section, min_size=200, max_size=2000):
+def valid_sizes(total_elements: int, num_elements_per_section: int, min_size: int=100, max_size: int=2000):
 
     valid_sizes = []
 
@@ -72,8 +76,6 @@ def find_valid_sizes(total_elements, num_elements_per_section, min_size=200, max
 
     if not valid_sizes:
         print("No valid sizes found. Consider adjusting your min/max limits.")
-        # Placeholder for image generation logic
-        # generate_suggestion_image() 
     
     print("Valid size options:", valid_sizes)
         
@@ -85,14 +87,14 @@ if rank == 0:
 else:
     check = None 
     
-check = comm.bcast(check, root=0)  
+check = comm.bcast(check, root=0)
 
-if check:    
+def mappings() -> None:
     # fname_3d = "/home/woody/iwst/iwst115h/Work/Checkpoint_files/field0.f00024"
-    fname_3d = "/home/woody/iwst/iwst115h/Work/Checkpoint_files/field0.f00000"
+    fname_3d: str = "/home/woody/iwst/iwst115h/Work/Checkpoint_files/field0.f00000"
     
     # fname_out = "/home/woody/iwst/iwst115h/Work/writefiles/unstruct_new/field_out_0.f00024"
-    fname_out = "/home/woody/iwst/iwst115h/Work/writefiles/field/fieldout0.f00000"
+    fname_out: str = "/home/woody/iwst/iwst115h/Work/writefiles/field/fieldout0.f00000"
     
     assigned_data = generate_data(fname_3d, fname_out)
 
@@ -352,7 +354,9 @@ if check:
 
     print(f"Mappings of cy after reordering")
     compare_vector_mappings(mappings_cy, ref_vector_mapping, idx_ranges)
-    
+
+if check:
+    mappings()
 elif rank ==0:
     print(f"Error:: Invalid size: {size}")
-    suggested_sizes  = find_valid_sizes(total_elements, num_elements_per_section)
+    suggested_sizes  = valid_sizes(total_elements, num_elements_per_section)
