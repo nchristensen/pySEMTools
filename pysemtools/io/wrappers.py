@@ -11,7 +11,59 @@ import numpy as np
 from mpi4py import MPI
 from ..monitoring.logger import Logger
 
-def read_data(comm, fname: str, keys: list[str], parallel_io: bool = False, dtype = np.single, distributed_axis: int = 0):
+def partition_read_data(comm, fname: str = None, distributed_axis: int = 0):
+    """
+    Generate partition information for hdf5 files. Useful if needing to read or write multiple files with the same partitioning, such that the
+    read/write functions does not need to do the same every time.
+
+    Parameters
+    ----------
+    comm : MPI.Comm
+        The MPI communicator
+    data : Union[np.ndarray, str]
+        The data to partition, or the name of the file to read. If a string, it is assumed to be an hdf5 file.
+        If the data is a dictionary, it is assumed to be a dictionary with numpy arrays as values.
+
+
+    """
+
+    #raise NotImplementedError("Parallel IO is not implemented for hdf5 files")
+    with h5py.File(fname, 'r', driver='mpio', comm=comm) as f:
+        for key in f.keys()[0]:
+            # Get the global array shape and sizes
+            global_array_shape = f[key].shape
+
+            # Determine how many axis zero elements to get locally
+            # This corresponds to a linearly load balanced partitioning
+            i_rank = comm.Get_rank()
+            m = global_array_shape[distributed_axis]
+            pe_rank = i_rank
+            pe_size = comm.Get_size()
+            ip = np.floor(
+                (
+                    np.double(m)
+                    + np.double(pe_size)
+                    - np.double(pe_rank)
+                    - np.double(1)
+                )
+                / np.double(pe_size)
+            )
+            local_axis_0_shape = int(ip)
+            #determine the offset
+            offset = comm.scan(local_axis_0_shape) - local_axis_0_shape
+
+            # Determine the local array shape
+            temp = list(global_array_shape)
+            temp[distributed_axis] = local_axis_0_shape
+            local_array_shape = tuple(temp)
+            
+            # Get the slice of the data that should be read
+            slices = [slice(None) for i in range(len(global_array_shape))]
+            slices[distributed_axis] = slice(offset, offset + local_array_shape[distributed_axis])     
+
+    return slices
+
+def read_data(comm, fname: str, keys: list[str], parallel_io: bool = False, dtype = np.single, distributed_axis: int = 0, slices: list = None):
     """
     Read data from a file and return a dictionary with the names of the files and keys
 
@@ -25,6 +77,14 @@ def read_data(comm, fname: str, keys: list[str], parallel_io: bool = False, dtyp
         The keys to read from the file
     parallel_io : bool, optional
         If True, read the file in parallel, by default False. This is aimed for hdf5 files, and currently it does not work if True
+    dtype : np.dtype, optional
+        The data type of the data to read, by default np.single
+    distributed_axis : int, optional
+        The axis along which the data is distributed, by default 0. This is used to determine how many elements to read from the file in parallel.
+    slices : list, optional
+        A list of slices to read from the file. If None, the local data will be read based on the distributed_axis and the communicator. If provided, it should match the number of dimensions in the data.
+        Note that if you are reading in parallel, the slices should be provided in such a way that they correspond to the local data on each process, otherwise the data will be replicated.
+        If in doubt, do not provide slices, and the local data will be determined automatically.
 
     Returns
     -------
@@ -45,41 +105,56 @@ def read_data(comm, fname: str, keys: list[str], parallel_io: bool = False, dtyp
                 data = {}
                 for key in keys:
 
-                    # Get the global array shape and sizes
-                    global_array_shape = f[key].shape
-                    global_array_size = f[key].size
-                    global_array_dtype = f[key].dtype
+                    # If the slices are not provided, determine the local data to read
+                    if slices is None:
 
-                    # Determine how many axis zero elements to get locally
-                    # This corresponds to a linearly load balanced partitioning
-                    i_rank = comm.Get_rank()
-                    m = global_array_shape[distributed_axis]
-                    pe_rank = i_rank
-                    pe_size = comm.Get_size()
-                    ip = np.floor(
-                        (
-                            np.double(m)
-                            + np.double(pe_size)
-                            - np.double(pe_rank)
-                            - np.double(1)
+                        # Get the global array shape and sizes
+                        global_array_shape = f[key].shape
+                        # Determine how many axis zero elements to get locally
+                        # This corresponds to a linearly load balanced partitioning
+                        i_rank = comm.Get_rank()
+                        m = global_array_shape[distributed_axis]
+                        pe_rank = i_rank
+                        pe_size = comm.Get_size()
+                        ip = np.floor(
+                            (
+                                np.double(m)
+                                + np.double(pe_size)
+                                - np.double(pe_rank)
+                                - np.double(1)
+                            )
+                            / np.double(pe_size)
                         )
-                        / np.double(pe_size)
-                    )
-                    local_axis_0_shape = int(ip)
-                    #determine the offset
-                    offset = comm.scan(local_axis_0_shape) - local_axis_0_shape
+                        local_axis_0_shape = int(ip)
+                        #determine the offset
+                        offset = comm.scan(local_axis_0_shape) - local_axis_0_shape
 
-                    # Determine the local array shape
-                    temp = list(global_array_shape)
-                    temp[distributed_axis] = local_axis_0_shape
-                    local_array_shape = tuple(temp)
+                        # Determine the local array shape
+                        temp = list(global_array_shape)
+                        temp[distributed_axis] = local_axis_0_shape
+                        local_array_shape = tuple(temp)
+                        
+                        # Get the slice of the data that should be read
+                        slices = [slice(None) for i in range(len(global_array_shape))]
+                        slices[distributed_axis] = slice(offset, offset + local_array_shape[distributed_axis])                    
+
+                    # Otherwise, if the slices are provided, use them to read the data.
+                    else:
+
+                        # Get the global array shape and sizes
+                        global_array_shape = f[key].shape
+
+                        local_array_shape = []
+                        for i in range(len(global_array_shape)):
+                            if isinstance(slices[i], slice) and slices[i].start is not None and slices[i].stop is not None:
+                                local_array_shape.append(slices[i].stop - slices[i].start)
+                            elif isinstance(slices[i], slice) and slices[i].start is None and slices[i].stop is None:
+                                local_array_shape.append(global_array_shape[i])
+
+                        local_array_shape = tuple(local_array_shape)
                     
-                    # Create the local array
+                    # Allocate the local data array
                     local_data = np.empty(local_array_shape, dtype=dtype)
-
-                    # Get the slice of the data that should be read
-                    slices = [slice(None) for i in range(len(global_array_shape))]
-                    slices[distributed_axis] = slice(offset, offset + local_array_shape[distributed_axis])                    
 
                     # Read the data
                     local_data[:] = f[key][tuple(slices)]
@@ -91,7 +166,13 @@ def read_data(comm, fname: str, keys: list[str], parallel_io: bool = False, dtyp
             with h5py.File(fname, 'r') as f:
                 data = {}
                 for key in keys:
-                    data[key] = f[key][:]
+                    if slices is None:
+                        data[key] = f[key][:]
+                    else:
+                        if not len(slices) == f[key].ndim:
+                            raise ValueError("The number of slices provided does not match the number of dimensions in the data.")
+                        else:
+                            data[key] = f[key][tuple(slices)]
     
     elif extension[0] == 'f':
         
