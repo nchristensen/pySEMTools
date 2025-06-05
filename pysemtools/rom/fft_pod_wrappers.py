@@ -1,6 +1,7 @@
 """ Contains functions to wrap the ROM types to easily post process data """
 
 from .pod import POD
+from typing import Union, Callable
 from ..io.wrappers import read_data, write_data
 from .io_help import IoHelp
 import numpy as np
@@ -281,7 +282,9 @@ def pod_fourier_1_homogenous_direction(
     k: int,
     p: int,
     fft_axis: int,
-    distributed_axis: int = None
+    distributed_axis: int = None,
+    preprocessing_field_operation: list[Callable] = None,
+    postprocessing_field_operation: list[Callable] = None,
 ) -> tuple:
     """
     Perform POD on a sequence of snapshot while applying fft in an homogenous direction of choice.
@@ -312,6 +315,13 @@ def pod_fourier_1_homogenous_direction(
     fft_axis : int
         Axis to perform the fft on.
         0 for x, 1 for y, 2 for z. (Although this depends on how the mesh was created)
+    distributed_axis : int, optional
+        Axis to distribute the data over.
+        If None, the data will not be distributed.
+    field_operation : list[callable], optional
+        List of operations to perform on the fields before the POD.
+        Handy if some operations are needed to adjust the norm that is optimized.
+
 
     Returns
     -------
@@ -331,6 +341,18 @@ def pod_fourier_1_homogenous_direction(
     # ============
 
     number_of_pod_fields = len(pod_fields)
+
+    if preprocessing_field_operation is not None:
+        if len(preprocessing_field_operation) != number_of_pod_fields:
+            raise ValueError(
+                "The preprocessing_field_operation list must have the same length as the pod_fields list"
+            )
+    
+    if postprocessing_field_operation is not None:
+        if len(postprocessing_field_operation) != number_of_pod_fields:
+            raise ValueError(
+                "The postprocessing_field_operation list must have the same length as the pod_fields list"
+            )
 
     # Load the mass matrix
     #with h5py.File(mass_matrix_fname, "r") as f:
@@ -399,6 +421,12 @@ def pod_fourier_1_homogenous_direction(
         fld_data_ = read_data(comm, fname=fname, keys=pod_fields, parallel_io=parallel_io, distributed_axis=distributed_axis)
         fld_data = [fld_data_[field] for field in pod_fields]
 
+        # Apply the preprocessing field operations if needed:
+        if preprocessing_field_operation is not None:
+            for i in range(0, number_of_pod_fields):
+                if preprocessing_field_operation[i] is not None:
+                    fld_data[i] = preprocessing_field_operation[i](fld_data[i])
+
         # Perform the fft
         for i in range(0, number_of_pod_fields):
             fld_data[i] = np.fft.fft(
@@ -462,6 +490,12 @@ def pod_fourier_1_homogenous_direction(
             pod[kappa].update(
                 comm, buff=ioh[kappa].buff[:, : (ioh[kappa].buffer_index)]
             )
+        
+        # Apply the postprocessing field operations if needed:
+        if postprocessing_field_operation is not None:
+            for i in range(0, number_of_pod_fields):
+                if postprocessing_field_operation[i] is not None:
+                    fld_data[i] = postprocessing_field_operation[i](fld_data[i])
 
         # Scale back the modes (with the mass matrix)
         pod[kappa].scale_modes(comm, bm1sqrt=ioh[kappa].bm1sqrt, op="div")
