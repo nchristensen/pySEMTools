@@ -151,6 +151,32 @@ pod.scale_modes(comm, bm1sqrt = ioh.bm1sqrt, op = "div")
 pod.rotate_local_modes_to_global(comm)
 
 #=========================================
+# Perform extended POD on extra fields
+#=========================================
+for j in range(0, pod_number_of_snapshots):
+
+    # Read the snapshot again
+    path     = field_data.dataPath
+    casename = field_data.casename
+    index    = field_data.index
+    fname=path+casename+'0.f'+str(index + j).zfill(5)
+    fld = FieldRegistry(comm)
+    pynekread(fname, comm, data_dtype=dtype, fld = fld) 
+    
+    # Get the required fields
+    t = fld.registry['t']
+
+    # Initialize the extended pod mode array
+    if j == 0:
+        extended_t = np.zeros((t.size, pod.u_1t.shape[1]), dtype=dtype)
+
+    # Perform the projection with the right singular vectors
+    extended_t += t.reshape(-1, 1) @ (pod.vt_1t.T)[j, :].reshape(1, -1)
+
+# Scale back with the singular values
+extended_t /= pod.d_1t.reshape(1, -1)
+
+#=========================================
 # Write out the modes
 #=========================================
 
@@ -164,12 +190,14 @@ for j in range(0, pod_write_modes):
         u_mode = get_fld_from_ndarray(field_list1d[0], msh.lx, msh.ly, msh.lz, msh.nelv) 
         v_mode = get_fld_from_ndarray(field_list1d[1], msh.lx, msh.ly, msh.lz, msh.nelv) 
         w_mode = get_fld_from_ndarray(field_list1d[2], msh.lx, msh.ly, msh.lz, msh.nelv) 
+        t_mode = extended_t[:, j].reshape(msh.x.shape)
 
         # write the data
         fld = FieldRegistry(comm)        
         fld.add_field(comm, field_name = "u", field = u_mode, dtype = dtype)
         fld.add_field(comm, field_name = "v", field = v_mode, dtype = dtype)
         fld.add_field(comm, field_name = "w", field = w_mode, dtype = dtype)
+        fld.add_field(comm, field_name = "t", field = t_mode, dtype = dtype)
         pynekwrite(f"./modes0.f{str(j).zfill(5)}", comm=comm, msh=msh, fld=fld, wdsz=4, istep = j) 
         
 #=========================================
