@@ -7,6 +7,7 @@ from .io_help import IoHelp
 import numpy as np
 import h5py
 import os
+from ..monitoring.logger import Logger
 from pyevtk.hl import gridToVTK
 
 
@@ -272,6 +273,129 @@ def physical_space(
 
     return physical_fields
 
+def extended_pod_1_homogenous_direction(
+    comm,
+    file_sequence: list[str],
+    extended_pod_fields: list[str],
+    mass_matrix_fname: str,
+    mass_matrix_key: str,
+    fft_axis: int,
+    distributed_axis: int = None,
+    pod: dict[int, POD] = None,
+    ioh: dict[int, IoHelp] = None,
+    ): 
+
+    """"""
+    
+    log = Logger(comm=comm, module_name="extended_pod")
+    log.write("info", "Starting extended POD in homogenous direction")
+    for field in extended_pod_fields:
+        log.write("info", "Extended POD field: " + field)
+ 
+    number_of_pod_fields = len(extended_pod_fields)
+    
+    # Read the mass matrix simply to set up sizes
+    if distributed_axis is not None:
+        parallel_io = True
+    else:
+        parallel_io = False
+        distributed_axis = 0
+
+    dat = read_data(comm, fname= mass_matrix_fname, keys=[mass_matrix_key], parallel_io=parallel_io, distributed_axis=distributed_axis)
+    bm = dat[mass_matrix_key]
+    bm[np.where(bm == 0)] = 1e-14
+    field_3d_shape = bm.shape
+
+    # Obtain the number of frequencies you will obtain
+    N_samples = bm.shape[fft_axis]
+    number_of_frequencies = N_samples // 2 + 1
+    # Choose the proper mass matrix slice
+    bm = bm[get_mass_slice(fft_axis)]
+
+    extended_ioh = {"wavenumber": "buffers"}
+    extended_modes = {"wavenumber": "mode_array"}
+
+    # Initialize the buffers and objects for each wavenumber
+    for kappa in range(0, number_of_frequencies):
+
+        # Instance io helper that will serve as buffer for the snapshots
+        extended_ioh[kappa] = IoHelp(
+            comm,
+            number_of_fields=number_of_pod_fields,
+            batch_size=1,
+            field_size=bm.size,
+            mass_matrix_data_type=bm.dtype,
+            field_data_type=np.complex128,
+            module_name="extended_buffer_kappa" + str(kappa),
+        )
+
+        extended_modes[kappa] = np.zeros((bm.size*number_of_pod_fields, pod[kappa].u_1t.shape[1]), dtype=np.complex128)
+    
+    # ============
+    # Main program
+    # ============
+    # Extended POD modes
+    # ============
+
+    j = 0
+    while j < len(file_sequence):
+
+        # Load the snapshot data
+        fname = file_sequence[j]
+
+        log.write("info", "Processing snapshot: " + fname)
+
+        fld_data_ = read_data(comm, fname=fname, keys=extended_pod_fields, parallel_io=parallel_io, distributed_axis=distributed_axis)
+        fld_data = [fld_data_[field] for field in extended_pod_fields]
+
+        # Perform the fft
+        for i in range(0, number_of_pod_fields):
+            fld_data[i] = np.fft.fft(
+                fld_data[i], axis=fft_axis
+            ) / fourier_normalization(N_samples)
+
+        # For each wavenumber, load buffers and update if needed
+        for kappa in range(0, number_of_frequencies):
+
+            # Get the proper slice for the wavenumber
+            positive_wavenumber_slice = get_wavenumber_slice(kappa, fft_axis)
+
+            # Get the wavenumber data
+            wavenumber_data = []
+            for i in range(0, number_of_pod_fields):
+                wavenumber_data.append(
+                    fld_data[i][positive_wavenumber_slice] * degenerate_scaling(kappa)
+                )  # Here add contributions from negative wavenumbers
+
+            # Put the fourier snapshot data into a column array
+            extended_ioh[kappa].copy_fieldlist_to_xi(wavenumber_data)
+
+            # Project the snapshot into the known right singular vectors
+            extended_modes[kappa] = extended_modes[kappa] + extended_ioh[kappa].xi @ (pod[kappa].vt_1t.T)[j, :].reshape(1, -1)
+
+        j += 1
+    
+    # ============
+    # Main program
+    # ============
+    # rscale modes
+    # ============
+
+    log.write("info", "Processing snapshots: Done")
+    log.write("info", "Performing necesary rescalings")
+
+    # Use the singular values
+    for kappa in range(0, number_of_frequencies):
+        extended_modes[kappa] /= pod[kappa].d_1t.reshape(1, -1)
+
+        extended_modes[kappa] /= degenerate_scaling(kappa)
+
+    # Extend the POD object with the data
+    log.write("info", "Extending POD objects with the extended modes")
+    for kappa in range(0, number_of_frequencies):
+        pod[kappa].u_1t = np.concatenate((pod[kappa].u_1t, extended_modes[kappa]), axis=0)
+
+    log.write("info", "Extended POD in homogenous direction done")
 
 def pod_fourier_1_homogenous_direction(
     comm,

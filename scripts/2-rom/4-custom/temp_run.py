@@ -80,10 +80,20 @@ fft_axis = 1
 distributed_axis = 0
 
 # Import the pysemtools routines
-from pysemtools.rom.fft_pod_wrappers import pod_fourier_1_homogenous_direction, physical_space
+from pysemtools.rom.fft_pod_wrappers import pod_fourier_1_homogenous_direction, physical_space, extended_pod_1_homogenous_direction
 from pysemtools.io.wrappers import read_data
 pod, ioh, _3d_bm_shape, number_of_frequencies, N_samples = pod_fourier_1_homogenous_direction(comm, file_sequence, pod_fields, mass_matrix_fname, mass_matrix_key, k, p, fft_axis,
                                                                                             distributed_axis=distributed_axis, preprocessing_field_operation=preproc, postprocessing_field_operation=postproc)
+
+
+# =========================
+# Perform extended POD
+# =========================
+file_sequence = file_sequence
+extended_pod_fields = ["t", "p"]
+extended_pod_1_homogenous_direction(comm, file_sequence, extended_pod_fields, mass_matrix_fname, mass_matrix_key, fft_axis, distributed_axis=distributed_axis, pod=pod, ioh=ioh)
+# Define the output field names
+pod_fields = ["u", "v", "w", "sqrt(cv*t)", "t" , "p"]
 
 # =========================
 # Sort energetic modes
