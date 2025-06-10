@@ -223,7 +223,7 @@ save_pod_state(comm, "pod_state.hdf5", pod, ioh, pod_fields, fft_axis, N_samples
 # =========================
 comm.Barrier()
 from pysemtools.rom.fft_pod_wrappers import load_pod_state
-if 1 == 0:
+if 1 == 1:
     pod_r, ioh_r, settings_r = load_pod_state(comm, "pod_state.hdf5", parallel_io=True, distributed_axis=distributed_axis)
     for kappa in pod.keys():
         try:
