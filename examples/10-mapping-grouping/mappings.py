@@ -1,9 +1,8 @@
 #!/usr/bin/env python
 
-# Import required modules
 import os
 import sys
-sys.path.append("/home/hpc/iwst/iwst115h/forked_git/pySEMTools") # add path to pynek tools
+sys.path.append("/home/hpc/iwst/iwst115h/forked_git/pySEMTools")
 from typing import cast
 from mpi4py import MPI
 
@@ -95,8 +94,8 @@ def mappings() -> None:
     
     # fname_out = "/home/woody/iwst/iwst115h/Work/writefiles/unstruct_new/field_out_0.f00024"
     fname_out: str = "/home/woody/iwst/iwst115h/Work/writefiles/field/fieldout0.f00000"
-    
-    assigned_data = generate_data(fname_3d, fname_out)
+
+    assigned_data, fld_3d_r, msh_3d = generate_data(fname_3d, fname_out)
 
     # Methods for cal. the difference and normal vectors
     assigned_r_diff, assigned_s_diff, assigned_t_diff = calculate_face_differences(assigned_data)
@@ -275,7 +274,7 @@ def mappings() -> None:
         z_vectors_local = np.zeros_like(element_centers_local)       # Shape: (num_elements, 3) 
         
         # Assign Z-vector (flow direction unit vector)
-        z_vectors_local[:, flow_directions] = 1  # Example: If flow_directions=2 -> (0,0,1) for all
+        z_vectors_local[:, flow_directions] = 1
             
         # Compute radial vector (difference between element and cross-section center)
         element_centers_local = np.array(element_centers_local)   

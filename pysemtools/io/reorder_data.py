@@ -2,7 +2,7 @@
 
 import os
 import sys
-sys.path.append("/home/hpc/iwst/iwst115h/forked_git/pySEMTools/pysemtools") # add path to pynek tools
+sys.path.append("/home/hpc/iwst/iwst115h/forked_git/pySEMTools/pysemtools")
 from mpi4py import MPI
 import numpy as np
 from ..datatypes.msh import Mesh
@@ -10,95 +10,32 @@ from ..datatypes.coef import Coef
 from ..datatypes.field import Field, FieldRegistry
 from .ppymech.neksuite import preadnek, pynekread
 from .wrappers import read_data
-from typing import cast
 
 comm = MPI.COMM_WORLD
 rank = comm.Get_rank()
 size = comm.Get_size()
 
-
 def generate_data(fname_3d: str, fname_out: str):
 
     msh_3d = Mesh(comm, create_connectivity=True)
     pynekread(fname_3d, comm, data_dtype=np.single, msh=msh_3d)
-    data_3d = preadnek(fname_3d, comm, data_dtype=np.single)
-    msh_3d = Mesh(comm, data=data_3d, create_connectivity=True)
-
-    x = msh_3d.x.copy().astype(np.float64)
-    y = msh_3d.y.copy().astype(np.float64)
-    z = msh_3d.z.copy().astype(np.float64)
-
-    msh_3d_sub = Mesh(comm, create_connectivity=True)
-    msh_3d_sub.init_from_coords(comm, x=x, y=y, z=z)
-
-    coef_3d = Coef(msh_3d, comm, get_area=True)
-
-    fld_3d = Field(comm)
-
-    pynekread(fname_3d, comm, data_dtype=np.single, fld=fld_3d)
-
-    data_3d = preadnek(fname_3d, comm, data_dtype=np.single)
-
-    fld_3d = Field(comm, data=data_3d)
-
-    # for key in fld_3d.fields.keys():
-    #     print(f'{key} has {len(fld_3d.fields[key])} fields')
-
-    u = fld_3d.fields['vel'][0]
-    v = fld_3d.fields['vel'][1]
-    w = fld_3d.fields['vel'][2]
-    p = fld_3d.fields['pres'][0]
-    # t = fld_3d.fields['temp'][0]
-
-    mag = np.sqrt(u**2 + v**2 + w**2)
-    fld_3d.fields['scal'].append(mag)
-    fld_3d.update_vars()
-
-    # fname_out = "/home/woody/iwst/iwst115h/Work/writefiles/unstruct_new/field_out_0.f00024"
-    fname_out = "/home/woody/iwst/iwst115h/Work/writefiles/field/fieldout0.f00000"
-
-    # pynekwrite(fname_out, comm, msh=msh_3d, fld=fld_3d, write_mesh=True, wdsz=4)
 
     fld_3d_r = FieldRegistry(comm)
     pynekread(fname_3d, comm, data_dtype=np.single, fld=fld_3d_r)
 
-    fld_3d_r.add_field(comm, field_name='mag', field=mag, dtype=mag.dtype)
-
-    fld_3d_r.add_field(comm, field_name='mag_r', file_name=fname_out, file_type='fld', file_key='scal_0', dtype=mag.dtype)
-
-    eq = np.allclose(fld_3d_r.registry['mag'], fld_3d_r.registry['mag_r'])
-
-
-    fld_3d_r.add_field(comm, field_name='ones', field=np.ones_like(mag), dtype=mag.dtype)
-
-    # If I modify the registry, the list is modified:
-    fld_3d_r.registry['ones'][100,0,:,:] = 2.0
-
-    # The same happens in the opposite direction
-    fld_3d_r.fields['scal'][2][100,0,:,:] = 3.0
-
-    # However if you try to assing a field directly (zeros) to the registry, you will get an error:
-    zeros = np.zeros_like(mag)
-
-    # But see that if you add the field again with the proper method, then it should work as you want
-    fld_3d_r.add_field(comm, field_name='ones', field=zeros, dtype=zeros.dtype)
+    pynekwrite(fname_out, comm, msh=msh_3d, fld=fld_3d, write_mesh=True, wdsz=4)
 
     data = read_data(comm, fname_out, ["x", "y", "z", "scal_0"], dtype = np.single)
 
     # Extract global coordinates of elements
-    x_global = data["x"]  # Shape: (num_elements, 8, 8, 8)
-    y_global = data["y"]
-    z_global = data["z"]
+    x_global, y_global, z_global = data["x"], data["y"], data["z"]
+    size_data = x_global.shape[0]
 
-    size_data: int = x_global.shape[0]
-    subset_x = x_global[:size_data]
-    subset_y = y_global[:size_data]
-    subset_z = z_global[:size_data]
+    subset_x, subset_y, subset_z = (arr[:size_data] for arr in (x_global, y_global, z_global))
     
     assigned_data = np.stack((subset_x, subset_y, subset_z), axis=-1)
-    print(f"Rank {rank} has subset shape: {assigned_data.shape}")
     
-    return assigned_data
+    return assigned_data, fld_3d_r, msh_3d
 
 # Methods for cal. the difference and normal vectors
 def calculate_face_differences(assigned_data):
@@ -204,7 +141,7 @@ def compare_mappings(mappings, ref_mapping, method: str):
                 
     # print(f"Rank {rank} has total matches: {match_count}")
     matching_percentage = (match_count / num_elements) * 100
-    print(f"Rank {rank} has matching percentage of {method} w.r.t ref_mapping_fd {ref_mapping}: {matching_percentage:.2f}%")
+    # print(f"Rank {rank} has matching percentage of {method} w.r.t ref_mapping_fd {ref_mapping}: {matching_percentage:.2f}%")
 
 def compare_methods(mappings_fd, mappings_fa):
     num_elements = len(mappings_fd)
@@ -219,7 +156,7 @@ def compare_methods(mappings_fd, mappings_fa):
             # print(f" Face Avg Mapping: Element {i}: r -> {mappings_fa[i][0]}, s -> {mappings_fa[i][1]}, t -> {mappings_fa[i][2]}") 
                 
     matching_percentage = (match_count / num_elements) * 100
-    print(f"Rank {rank} has matching Percentage b/w mappings_fd & mappings_fa: {matching_percentage:.2f}%")
+    # print(f"Rank {rank} has matching Percentage b/w mappings_fd & mappings_fa: {matching_percentage:.2f}%")
     
 # Method-3: Face Normals
 def align_normals(normals, normals_pair, direction_type):
