@@ -138,13 +138,22 @@ if comm.Get_size() > 1:
     print("to write to vtk you need to do it in serial")
     sys.exit(0)
 
-nsnapshots = 400
-for i in range(0, nsnapshots):
-    m = 1
-    wavenumber = mode_index[m]["wavenumber"]
-    mode = mode_index[0]["mode"]
 
-    phys = physical_space(pod, ioh, wavenumbers=[wavenumber], modes=[mode], field_shape=x.shape, fft_axis=fft_axis, field_names=pod_fields, N_samples=N_samples, snapshots=[i])
+nsnapshots = 400
+wavenumber_rec = []
+mode_rec = {}
+for key in [0, 1, 2, 3]:
+    kappa = mode_index[key]["wavenumber"]
+    if kappa not in wavenumber_rec:
+        wavenumber_rec.append(kappa)
+        mode_rec[kappa] = [mode_index[key]["mode"]]
+    else:
+        mode_rec[kappa].append(mode_index[key]["mode"])
+
+for i in range(0, nsnapshots):
     
-    gridToVTK( f"energetic_mode_{m}_snapshot_{str(i).zfill(5)}",  x, y, z, pointData=phys[i])
+    phys = physical_space(pod, ioh, wavenumbers=wavenumber_rec, modes=mode_rec, field_shape=x.shape, fft_axis=fft_axis, field_names=pod_fields, N_samples=N_samples, snapshots=[i])
+
+    print(f"Writing snapshot {i} of {nsnapshots} to vtk") 
+    gridToVTK( f"energetic_modes_snapshot_{str(i).zfill(5)}",  x, y, z, pointData=phys[i])
 

@@ -107,7 +107,7 @@ def physical_space(
     pod: dict[int, POD],
     ioh: dict[int, IoHelp],
     wavenumbers: list[int],
-    modes: list[int],
+    modes: Union[list[int], dict[int, list[int]]],
     field_shape: tuple,
     fft_axis: int,
     field_names: list[str],
@@ -161,12 +161,19 @@ def physical_space(
         # Reconstruct the fourier coefficients per wavenumber with the given snapshots and modes
         fourier_reconstruction = {}
         for kappa in wavenumbers:
+
+            # If modes is a dict, we take the modes for the wavenumber
+            if isinstance(modes, dict):
+                modes_ = modes[kappa]
+            else:
+                modes_ = modes
+
             fourier_reconstruction[kappa] = (
-                pod[kappa].u_1t[:, modes].reshape(-1, len(modes))
-                @ np.diag(pod[kappa].d_1t[modes])
+                pod[kappa].u_1t[:, modes_].reshape(-1, len(modes_))
+                @ np.diag(pod[kappa].d_1t[modes_])
                 @ pod[kappa]
-                .vt_1t[np.ix_(modes, snapshots)]
-                .reshape(len(modes), len(snapshots))
+                .vt_1t[np.ix_(modes_, snapshots)]
+                .reshape(len(modes_), len(snapshots))
             )
 
         # Go thorugh the wavenumbers in the list and put the modes in the physical space
