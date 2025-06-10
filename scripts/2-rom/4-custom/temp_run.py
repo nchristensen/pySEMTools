@@ -215,4 +215,27 @@ if comm.Get_rank() == 0:
 # Save the POD state
 # =========================
 if comm.Get_rank() == 0: print("Saving the POD state to file")
-save_pod_state(comm, "pod_state.hdf5", pod, parallel_io=True, distributed_axis=distributed_axis)
+save_pod_state(comm, "pod_state.hdf5", pod, ioh, pod_fields, fft_axis, N_samples, number_of_frequencies, parallel_io=True, distributed_axis=distributed_axis)
+
+
+# =========================
+# Load the POD state and verify
+# =========================
+comm.Barrier()
+from pysemtools.rom.fft_pod_wrappers import load_pod_state
+if 1 == 0:
+    pod_r, ioh_r, settings_r = load_pod_state(comm, "pod_state.hdf5", parallel_io=True, distributed_axis=distributed_axis)
+    for kappa in pod.keys():
+        try:
+            int(kappa)
+        except:
+            continue  # Skip non-integer keys
+
+        pas = np.allclose(pod_r[kappa].u_1t, pod[kappa].u_1t, rtol=1e-5, atol=1e-7) 
+        print(pas)
+
+        pas = np.allclose(pod_r[kappa].vt_1t, pod[kappa].vt_1t, rtol=1e-5, atol=1e-7)
+        print(pas)
+
+        pas = np.allclose(pod_r[kappa].d_1t, pod[kappa].d_1t, rtol=1e-5, atol=1e-7)
+        print(pas)
