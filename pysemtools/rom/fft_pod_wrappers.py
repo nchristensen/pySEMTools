@@ -371,7 +371,7 @@ def extended_pod_1_homogenous_direction(
             extended_ioh[kappa].copy_fieldlist_to_xi(wavenumber_data)
 
             # Project the snapshot into the known right singular vectors
-            extended_modes[kappa] = extended_modes[kappa] + extended_ioh[kappa].xi @ (pod[kappa].vt_1t.T)[j, :].reshape(1, -1)
+            extended_modes[kappa] = extended_modes[kappa] + extended_ioh[kappa].xi @ (np.conj(pod[kappa].vt_1t.T))[j, :].reshape(1, -1)
 
         j += 1
     
