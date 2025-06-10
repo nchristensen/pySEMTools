@@ -619,7 +619,11 @@ def pod_fourier_1_homogenous_direction(
         if postprocessing_field_operation is not None:
             for i in range(0, number_of_pod_fields):
                 if postprocessing_field_operation[i] is not None:
-                    fld_data[i] = postprocessing_field_operation[i](fld_data[i])
+                    mode_size = bm.size
+                    start = i * mode_size
+                    end = (i + 1) * mode_size
+                    # Apply the postprocessing operation to the modes
+                    pod[kappa].u_1t[start:end, :] = postprocessing_field_operation[i](pod[kappa].u_1t[start:end, :])
 
         # Scale back the modes (with the mass matrix)
         pod[kappa].scale_modes(comm, bm1sqrt=ioh[kappa].bm1sqrt, op="div")
