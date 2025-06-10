@@ -906,7 +906,6 @@ def load_pod_state(comm, fname, parallel_io: bool = False, distributed_axis: int
     for wavenumber in wavenumbers:
 
         # Determine the keys to read
-        print(pod_fields)
         wavenumber_keys = []
         for pod_field in pod_fields:
             wavenumber_keys.append(f"field_{pod_field}_wavenumber_{wavenumber}")
@@ -915,7 +914,6 @@ def load_pod_state(comm, fname, parallel_io: bool = False, distributed_axis: int
         wavenumber_data = read_data(comm, f"{prefix}_modes.{extension}", wavenumber_keys, parallel_io=parallel_io, distributed_axis=distributed_axis, dtype=np.complex128)
 
         # Get the field size
-        print(wavenumber_keys)
         field_size = wavenumber_data[wavenumber_keys[0]].shape[0]
         number_of_modes = wavenumber_data[wavenumber_keys[0]].shape[1]
 
