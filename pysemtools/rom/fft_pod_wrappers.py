@@ -782,7 +782,7 @@ def write_3dfield_to_file(
                     write_data(comm, fname=outname, data_dict = mode_dict[kappa][mode], parallel_io=parallel_io, distributed_axis=distributed_axis) 
 
 
-def save_pod_state(fname: str, pod: dict[int, POD]):
+def save_pod_state(comm, fname: str, pod: dict[int, POD], parallel_io: bool = False, distributed_axis: int = 0):
     """
     Save the POD object dictionary to a file. From this, one can produce more analysis.
 
@@ -793,7 +793,15 @@ def save_pod_state(fname: str, pod: dict[int, POD]):
     pod : dict[int, POD]
         Dictionary of POD object with the modes to transform to physical space
         the int key is the wavenumber
+    parallel_io : bool, optional
+        If True, the data will be written in parallel, by default False
+    distributed_axis : int, optional
+        Axis where the data is distributed, by default 0
+        This is only used if parallel_io is True.
+
     """
+    
+    log = Logger(comm=comm, module_name="pod-savestate")
 
     path = os.path.dirname(fname)
     if path == "":
@@ -801,34 +809,37 @@ def save_pod_state(fname: str, pod: dict[int, POD]):
     prefix = os.path.basename(fname).split(".")[0]
     extension = os.path.basename(fname).split(".")[1]
 
-    f = h5py.File(f"{prefix}_modes.{extension}", "w")
+    # Save the modes
+    log.write("info", "Saving POD modes to file")
+    mode_data = {}
     for kappa in pod.keys():
         try:
             int(kappa)
         except:
             continue
-        # Save the POD object
-        f.create_dataset(f"wavenumber_{kappa}", data=pod[kappa].u_1t)
-    f.close()
+        mode_data[f"{kappa}"] = pod[kappa].u_1t
+    write_data(comm, fname=f"{prefix}_modes.{extension}", data_dict = mode_data, parallel_io=parallel_io, distributed_axis=distributed_axis) 
 
-    f = h5py.File(f"{prefix}_singlular_values.{extension}", "w")
-    for kappa in pod.keys():
-        try:
-            int(kappa)
-        except:
-            continue
-        # Save the POD object
-        f.create_dataset(f"wavenumber_{kappa}", data=pod[kappa].d_1t)
-    f.close()
+    log.write("info", "Saving POD singular values and right singular vectors to file")
+    if comm.Get_rank() == 0:
+        f = h5py.File(f"{prefix}_singlular_values.{extension}", "w")
+        for kappa in pod.keys():
+            try:
+                int(kappa)
+            except:
+                continue
+            # Save the POD object
+            f.create_dataset(f"{kappa}", data=pod[kappa].d_1t)
+        f.close()
 
-    f = h5py.File(f"{prefix}_right_singular_vectors.{extension}", "w")
-    for kappa in pod.keys():
-        try:
-            int(kappa)
-        except:
-            continue
-        # Save the POD object
-        f.create_dataset(f"wavenumber_{kappa}", data=pod[kappa].vt_1t)
-    f.close()
+        f = h5py.File(f"{prefix}_right_singular_vectors.{extension}", "w")
+        for kappa in pod.keys():
+            try:
+                int(kappa)
+            except:
+                continue
+            # Save the POD object
+            f.create_dataset(f"{kappa}", data=pod[kappa].vt_1t)
+        f.close()
 
     return
