@@ -7,9 +7,9 @@ from .io_help import IoHelp
 import numpy as np
 import h5py
 import os
+import json
 from ..monitoring.logger import Logger
 from pyevtk.hl import gridToVTK
-
 
 def get_wavenumber_slice(kappa, fft_axis):
     """
@@ -782,7 +782,15 @@ def write_3dfield_to_file(
                     write_data(comm, fname=outname, data_dict = mode_dict[kappa][mode], parallel_io=parallel_io, distributed_axis=distributed_axis) 
 
 
-def save_pod_state(comm, fname: str, pod: dict[int, POD], parallel_io: bool = False, distributed_axis: int = 0):
+def save_pod_state(comm, fname: str, 
+                   pod: dict[int, POD], 
+                   ioh: dict[int, IoHelp], 
+                   pod_fields: list[str], 
+                   fft_axis: int, 
+                   N_samples: int,
+                   number_of_frequencies: int, 
+                   parallel_io: bool = False, 
+                   distributed_axis: int = 0):
     """
     Save the POD object dictionary to a file. From this, one can produce more analysis.
 
@@ -817,29 +825,126 @@ def save_pod_state(comm, fname: str, pod: dict[int, POD], parallel_io: bool = Fa
             int(kappa)
         except:
             continue
-        mode_data[f"{kappa}"] = pod[kappa].u_1t
+
+        mode_per_field = ioh[kappa].split_narray_to_1dfields(pod[kappa].u_1t)
+        for f, field in enumerate(pod_fields):
+            mode_data[f"field_{field}_wavenumber_{kappa}"] = mode_per_field[f].copy()
+
     write_data(comm, fname=f"{prefix}_modes.{extension}", data_dict = mode_data, parallel_io=parallel_io, distributed_axis=distributed_axis) 
 
     log.write("info", "Saving POD singular values and right singular vectors to file")
+    
+    comm.Barrier()  # Ensure all processes are synchronized before saving
     if comm.Get_rank() == 0:
-        f = h5py.File(f"{prefix}_singlular_values.{extension}", "w")
+
+        # Save settings that were used to create the objects
+        # Write the data to hdf5
+        settings = {}
+        settings["pod_fields"] = pod_fields
+        settings["fft_axis"] = fft_axis
+        settings["N_samples"] = N_samples
+        settings["number_of_frequencies"] = number_of_frequencies
+        wavenumbers = []
         for kappa in pod.keys():
             try:
                 int(kappa)
             except:
                 continue
-            # Save the POD object
-            f.create_dataset(f"{kappa}", data=pod[kappa].d_1t)
+            wavenumbers.append(int(kappa))
+        settings["wavenumbers"] = wavenumbers
+        print(settings["wavenumbers"])
+        f = h5py.File(f"{prefix}_settings.{extension}", "w")
+        f.attrs['settings'] = json.dumps(settings) 
         f.close()
 
-        f = h5py.File(f"{prefix}_right_singular_vectors.{extension}", "w")
+        # Save singular values
+        singular_value_data = {}
         for kappa in pod.keys():
             try:
                 int(kappa)
             except:
                 continue
             # Save the POD object
-            f.create_dataset(f"{kappa}", data=pod[kappa].vt_1t)
-        f.close()
+            singular_value_data[f"{kappa}"] = pod[kappa].d_1t
+        write_data(comm, fname=f"{prefix}_singular_values.{extension}", data_dict = singular_value_data, parallel_io=False)
+
+        # Save right singular vectors
+        right_singular_vectors_data = {}
+        for kappa in pod.keys():
+            try:
+                int(kappa)
+            except:
+                continue
+            # Save the POD object
+            right_singular_vectors_data[f"{kappa}"] = pod[kappa].vt_1t
+        write_data(comm, fname=f"{prefix}_right_singular_vectors.{extension}", data_dict = right_singular_vectors_data, parallel_io=False)
 
     return
+
+
+def load_pod_state(comm, fname, parallel_io: bool = False, distributed_axis: int = 0):
+    
+    path = os.path.dirname(fname)
+    if path == "":
+        path = "."
+    prefix = os.path.basename(fname).split(".")[0]
+    extension = os.path.basename(fname).split(".")[1]
+
+    # First load the settings
+    with h5py.File(f"{prefix}_settings.{extension}") as f:
+        settings = json.loads(f.attrs['settings'])  
+
+    pod_fields = settings["pod_fields"]
+    fft_axis = settings["fft_axis"]
+    N_samples = settings["N_samples"]
+    number_of_frequencies = settings["number_of_frequencies"]
+    wavenumbers = settings["wavenumbers"]
+
+    # Load the modes
+    pod = {}
+    ioh = {}
+    for wavenumber in wavenumbers:
+
+        # Determine the keys to read
+        print(pod_fields)
+        wavenumber_keys = []
+        for pod_field in pod_fields:
+            wavenumber_keys.append(f"field_{pod_field}_wavenumber_{wavenumber}")
+        
+        # Read the data from the file
+        wavenumber_data = read_data(comm, f"{prefix}_modes.{extension}", wavenumber_keys, parallel_io=parallel_io, distributed_axis=distributed_axis, dtype=np.complex128)
+
+        # Get the field size
+        print(wavenumber_keys)
+        field_size = wavenumber_data[wavenumber_keys[0]].shape[0]
+        number_of_modes = wavenumber_data[wavenumber_keys[0]].shape[1]
+
+        # Initialize the POD object
+        pod[int(wavenumber)] = POD(
+            comm, number_of_modes_to_update=number_of_modes, global_updates=True, auto_expand=False
+        )
+        # Concatenate the modes into one array
+        pod[int(wavenumber)].u_1t = np.concatenate(
+            [wavenumber_data[key].copy() for key in wavenumber_data.keys()], axis=0
+        )
+
+        # Initialize the IoHelp object
+        ioh[int(wavenumber)] = IoHelp(
+            comm,
+            number_of_fields=len(pod_fields),
+            batch_size=1,
+            field_size=field_size,
+            mass_matrix_data_type=np.float64,  # Assuming mass matrix is float64
+            field_data_type=np.complex128,
+            module_name="buffer_kappa" + str(wavenumber),
+        )
+
+        # Read the singular values
+        singular_values = read_data(comm, f"{prefix}_singular_values.{extension}", [str(wavenumber)], parallel_io=False, dtype=np.float64)
+        pod[int(wavenumber)].d_1t = singular_values[str(wavenumber)].copy()
+
+        # Read the right singular vectors
+        right_singular_vectors = read_data(comm, f"{prefix}_right_singular_vectors.{extension}", [str(wavenumber)], parallel_io=False, dtype=np.complex128)
+        pod[int(wavenumber)].vt_1t = right_singular_vectors[str(wavenumber)].copy()
+
+    return pod, ioh, settings 
