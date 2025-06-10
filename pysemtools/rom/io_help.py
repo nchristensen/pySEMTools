@@ -78,7 +78,7 @@ class IoHelp:
         field_size = self.field_size
         number_of_fields = array.shape[0] // field_size
         if number_of_fields != self.number_of_fields:
-            self.log.write("warning", f"Number of fields passed: {number_of_fields} != number of fields expected: {self.number_of_fields} from inputs. Dividing the array into {number_of_fields} fields of size {field_size}. Be mindful that this may not be what you want.")
+            self.log.write("debug", f"Number of fields passed: {number_of_fields} != number of fields expected: {self.number_of_fields} from inputs. Dividing the array into {number_of_fields} fields of size {field_size}. Be mindful that this may not be what you want.")
         field_list1d = []
 
         for i in range(0, number_of_fields):
