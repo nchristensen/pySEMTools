@@ -66,21 +66,22 @@ os.environ["PYSEMTOOLS_HIDE_LOG"] = 'false'
 # =========================
 # Perform the POD
 # =========================
-nsnapshots = 9
-file_sequence = [f"./field{str(1+i).zfill(5)}.hdf5" for i in range(0, nsnapshots)]
+nsnapshots = 400
+file_sequence = [f"../../1-interpolation/2-interpolation_file_sequence/interpolated_fields{str(1+i).zfill(5)}.hdf5" for i in range(0, nsnapshots)]
 pod_fields = ["u", "v", "w", "t"]
 preproc = [v_pre, v_pre, v_pre, t_pre]
-postproc = [v_post, v_post, v_post, None]  # No post-processing for temperature
-mesh_fname = "./points.hdf5"
-mass_matrix_fname = "./points.hdf5"
+postproc = [v_post, v_post, v_post, None]
+mesh_fname = "../../1-interpolation/1-structured_mesh_generation/points.hdf5"
+mass_matrix_fname = "../../1-interpolation/1-structured_mesh_generation/points.hdf5"
 mass_matrix_key = "mass"
 k = len(file_sequence) # This is the number of modes to be kept / updated
 p = k # This is the number of modes to be kept / updated
 fft_axis = 1 
 distributed_axis = 0
+verify_reconstruction = False
 
 # Import the pysemtools routines
-from pysemtools.rom.fft_pod_wrappers import pod_fourier_1_homogenous_direction, physical_space, extended_pod_1_homogenous_direction
+from pysemtools.rom.fft_pod_wrappers import pod_fourier_1_homogenous_direction, physical_space, extended_pod_1_homogenous_direction, save_pod_state
 from pysemtools.io.wrappers import read_data
 pod, ioh, _3d_bm_shape, number_of_frequencies, N_samples = pod_fourier_1_homogenous_direction(comm, file_sequence, pod_fields, mass_matrix_fname, mass_matrix_key, k, p, fft_axis,
                                                                                             distributed_axis=distributed_axis, preprocessing_field_operation=preproc, postprocessing_field_operation=postproc)
@@ -94,6 +95,36 @@ extended_pod_fields = ["t", "p"]
 extended_pod_1_homogenous_direction(comm, file_sequence, extended_pod_fields, mass_matrix_fname, mass_matrix_key, fft_axis, distributed_axis=distributed_axis, pod=pod, ioh=ioh)
 # Define the output field names
 pod_fields = ["u", "v", "w", "sqrt(cv*t)", "t" , "p"]
+
+# =========================
+# Verify reconstruction
+# =========================
+if verify_reconstruction:
+
+    verification_fields_file = ["u", "v", "w", "t", "p"]
+    verification_fields_pod = ["u", "v", "w", "t" , "p"]
+
+    for i, file in enumerate(file_sequence):
+
+        fld = read_data(comm, file, keys=verification_fields_file, parallel_io=True, distributed_axis=distributed_axis)
+        phys = physical_space(pod, ioh, wavenumbers=[k for k in range(0, number_of_frequencies)], modes=[i for i in range(0, k)], field_shape=_3d_bm_shape, fft_axis=fft_axis, field_names=pod_fields, N_samples=N_samples, snapshots=[i])
+
+        all_passed = []
+        for j, field in enumerate(verification_fields_file):
+
+            a = phys[i][verification_fields_pod[j]]
+            b = fld[verification_fields_file[j]]
+
+            passed = np.allclose(a,b, rtol=1e-5, atol=1e-7)
+            all_passed.append(passed)
+            if not passed:
+                print(f"Reconstruction failed for snapshot {i} and field {field}")  
+                break
+        passed = np.all(all_passed)
+
+        if comm.Get_rank() == 0:
+            print(f"Reconstruction for snapshot {i} {'passed' if passed else 'failed'}")
+
 
 # =========================
 # Sort energetic modes
@@ -179,3 +210,9 @@ if comm.Get_rank() == 0:
         # write to vtk
         print(f"Writing mode {i} to vtk")
         gridToVTK( "energetic_mode"+str(i).zfill(5),  x, y, z, pointData=data)
+
+# =========================
+# Save the POD state
+# =========================
+if comm.Get_rank() == 0: print("Saving the POD state to file")
+save_pod_state(comm, "pod_state.hdf5", pod, parallel_io=True, distributed_axis=distributed_axis)

@@ -53,21 +53,41 @@ os.environ["PYSEMTOOLS_HIDE_LOG"] = 'false'
 # =========================
 # Perform the POD
 # =========================
-nsnapshots = 9
-file_sequence = [f"./field{str(1+i).zfill(5)}.hdf5" for i in range(0, nsnapshots)]
+nsnapshots = 10
+file_sequence = [f"../../1-interpolation/2-interpolation_file_sequence/interpolated_fields{str(1+i).zfill(5)}.hdf5" for i in range(0, nsnapshots)]
 pod_fields = ["u", "v", "w"]
-mesh_fname = "./points.hdf5"
-mass_matrix_fname = "./points.hdf5"
+mesh_fname = "../../1-interpolation/1-structured_mesh_generation/points.hdf5"
+mass_matrix_fname = "../../1-interpolation/1-structured_mesh_generation/points.hdf5"
 mass_matrix_key = "mass"
 k = len(file_sequence) # This is the number of modes to be kept / updated
 p = k # This is the number of modes to be kept / updated
 fft_axis = 1 
 distributed_axis = 0
+verify_reconstruction = True
 
 # Import the pysemtools routines
 from pysemtools.rom.fft_pod_wrappers import pod_fourier_1_homogenous_direction, physical_space
 from pysemtools.io.wrappers import read_data
 pod, ioh, _3d_bm_shape, number_of_frequencies, N_samples = pod_fourier_1_homogenous_direction(comm, file_sequence, pod_fields, mass_matrix_fname, mass_matrix_key, k, p, fft_axis, distributed_axis=distributed_axis)
+
+# =========================
+# Verify reconstruction
+# =========================
+if verify_reconstruction:
+    for i, file in enumerate(file_sequence):
+
+        fld = read_data(comm, file, keys=pod_fields, parallel_io=True, distributed_axis=distributed_axis)
+        phys = physical_space(pod, ioh, wavenumbers=[k for k in range(0, number_of_frequencies)], modes=[i for i in range(0, k)], field_shape=_3d_bm_shape, fft_axis=fft_axis, field_names=pod_fields, N_samples=N_samples, snapshots=[i])
+
+        all_passed = []
+        for field in pod_fields:
+            passed = np.allclose(phys[i][field], fld[field])
+            all_passed.append(passed)
+
+        passed = np.all(all_passed)
+
+        if comm.Get_rank() == 0:
+            print(f"Reconstruction for snapshot {i} {'passed' if passed else 'failed'}")
 
 # =========================
 # Sort energetic modes
