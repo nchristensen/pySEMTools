@@ -42,6 +42,19 @@ def load_hdf5_settings(group):
             settings[key] = load_hdf5_settings(item)
     return settings
 
+def v_pre(field):
+    return field * np.sqrt(1/2)
+
+def v_post(field):
+    return field / np.sqrt(1/2)
+
+def t_pre(field):
+    cp = 1
+    gamma = 1.4
+    cv = cp / gamma
+    field[field < 0] = 0.0
+    return np.sqrt(cv * field)
+
 # Get mpi info
 comm = MPI.COMM_WORLD
 
@@ -50,44 +63,23 @@ import os
 os.environ["PYSEMTOOLS_DEBUG"] = 'false'
 os.environ["PYSEMTOOLS_HIDE_LOG"] = 'false'
 
-# =========================
-# Perform the POD
-# =========================
-nsnapshots = 10
-file_sequence = [f"../../1-interpolation/2-interpolation_file_sequence/interpolated_fields{str(1+i).zfill(5)}.hdf5" for i in range(0, nsnapshots)]
-pod_fields = ["u", "v", "w"]
-mesh_fname = "../../1-interpolation/1-structured_mesh_generation/points.hdf5"
-mass_matrix_fname = "../../1-interpolation/1-structured_mesh_generation/points.hdf5"
-mass_matrix_key = "mass"
-k = len(file_sequence) # This is the number of modes to be kept / updated
-p = k # This is the number of modes to be kept / updated
-fft_axis = 1 
-distributed_axis = 0
-verify_reconstruction = True
-
 # Import the pysemtools routines
-from pysemtools.rom.fft_pod_wrappers import pod_fourier_1_homogenous_direction, physical_space
+from pysemtools.rom.fft_pod_wrappers import pod_fourier_1_homogenous_direction, physical_space, extended_pod_1_homogenous_direction, save_pod_state
 from pysemtools.io.wrappers import read_data
-pod, ioh, _3d_bm_shape, number_of_frequencies, N_samples = pod_fourier_1_homogenous_direction(comm, file_sequence, pod_fields, mass_matrix_fname, mass_matrix_key, k, p, fft_axis, distributed_axis=distributed_axis)
+from pysemtools.rom.fft_pod_wrappers import load_pod_state
+
+distributed_axis = 0
+mesh_fname = "../../1-interpolation/1-structured_mesh_generation/points.hdf5"
 
 # =========================
-# Verify reconstruction
+# load pod
 # =========================
-if verify_reconstruction:
-    for i, file in enumerate(file_sequence):
 
-        fld = read_data(comm, file, keys=pod_fields, parallel_io=True, distributed_axis=distributed_axis)
-        phys = physical_space(pod, ioh, wavenumbers=[k for k in range(0, number_of_frequencies)], modes=[i for i in range(0, k)], field_shape=_3d_bm_shape, fft_axis=fft_axis, field_names=pod_fields, N_samples=N_samples, snapshots=[i])
-
-        all_passed = []
-        for field in pod_fields:
-            passed = np.allclose(phys[i][field], fld[field])
-            all_passed.append(passed)
-
-        passed = np.all(all_passed)
-
-        if comm.Get_rank() == 0:
-            print(f"Reconstruction for snapshot {i} {'passed' if passed else 'failed'}")
+pod, ioh, settings = load_pod_state(comm, "pod_state.hdf5", parallel_io=True, distributed_axis = distributed_axis)
+number_of_frequencies = settings["number_of_frequencies"]
+N_samples = settings["N_samples"]
+pod_fields = settings["pod_fields"]
+fft_axis = settings["fft_axis"]
 
 # =========================
 # Sort energetic modes
@@ -139,37 +131,29 @@ for i in range(0, out_modes):
     mode_index[i]["singular_value"] = singular_values[indices[i]]
     mode_index[i]["right_singular_vector_real"] = pod[k].vt_1t[mode, :].real
     mode_index[i]["right_singular_vector_imag"] = pod[k].vt_1t[mode, :].imag
-    write_3dfield_to_file("pod.hdf5", x, y, z, pod, ioh, wavenumbers=[k], modes=[mode], field_shape=_3d_bm_shape, fft_axis=fft_axis, field_names=pod_fields, N_samples=N_samples, distributed_axis=distributed_axis,comm = comm)
+    write_3dfield_to_file("pod.hdf5", x, y, z, pod, ioh, wavenumbers=[k], modes=[mode], field_shape= x.shape, fft_axis=fft_axis, field_names=pod_fields, N_samples=N_samples, distributed_axis=distributed_axis,comm = comm)
 
-if comm.Get_rank() == 0:
-    import json
-    with open("mode_index.json", "w") as f:
-        json.dump(mode_index_json, f, indent=4)
-    print("Wrote mode index to file")
 
-    # Write the data to hdf5
-    f = h5py.File("mode_index.hdf5", "w")
-    for key in mode_index:
-        group = f.create_group(f"{key}")
-        add_settings_to_hdf5(group, mode_index[key])
-    f.close()
+if comm.Get_size() > 1:
+    print("to write to vtk you need to do it in serial")
+    sys.exit(0)
 
-comm.Barrier()
 
-# To visualize with VTK, I only know how to do it in one rank currently
-if comm.Get_rank() == 0:
+nsnapshots = 400
+wavenumber_rec = []
+mode_rec = {}
+for key in [0, 1, 2, 3]:
+    kappa = mode_index[key]["wavenumber"]
+    if kappa not in wavenumber_rec:
+        wavenumber_rec.append(kappa)
+        mode_rec[kappa] = [mode_index[key]["mode"]]
+    else:
+        mode_rec[kappa].append(mode_index[key]["mode"])
 
-    msh_data = read_data(comm, fname=mesh_fname, keys=["x", "y", "z"], parallel_io=False,distributed_axis=distributed_axis)
-    x = msh_data["x"]
-    y = msh_data["y"]
-    z = msh_data["z"]
+for i in range(0, nsnapshots):
+    
+    phys = physical_space(pod, ioh, wavenumbers=wavenumber_rec, modes=mode_rec, field_shape=x.shape, fft_axis=fft_axis, field_names=pod_fields, N_samples=N_samples, snapshots=[i])
 
-    for i in range(0, out_modes):
-        wavenumbers = mode_index[i]["wavenumber"]
-        modes = mode_index[i]["mode"]
+    print(f"Writing snapshot {i} of {nsnapshots} to vtk") 
+    gridToVTK( f"energetic_modes_snapshot_{str(i).zfill(5)}",  x, y, z, pointData=phys[i])
 
-        data = read_data(comm, fname=f"pod_kappa_{wavenumbers}_mode{modes}.hdf5", keys=pod_fields, parallel_io=False, distributed_axis=distributed_axis)
-
-        # write to vtk
-        print(f"Writing mode {i} to vtk")
-        gridToVTK( "energetic_mode"+str(i).zfill(5),  x, y, z, pointData=data)

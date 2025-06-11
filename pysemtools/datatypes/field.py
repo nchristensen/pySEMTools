@@ -24,7 +24,7 @@ if 'torch' in sys.modules:
 else:
     torch = None
 from ..monitoring.logger import Logger
-from ..io.ppymech.neksuite import pynekread_field
+from ..io.ppymech.neksuite import pynekread_field, get_file_time
 
 NoneType = type(None)
 
@@ -442,6 +442,8 @@ class FieldRegistry(Field):
                 field_list = pynekread_field(
                     file_name, comm, data_dtype=dtype, key=file_key
                 )
+
+                self.t = get_file_time(file_name) 
 
                 if key_prefix == "vel" or key_prefix == "pos":
                     field = field_list[key_suffix]
