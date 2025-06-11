@@ -554,6 +554,14 @@ def pynekread(filename, comm, data_dtype=np.double, msh=None, fld=None, overwrit
     del log
     return
 
+def get_file_time(filename):
+    '''
+    Get the time from the file header. This is useful for calls to the individual field reader.
+    '''
+
+    header = read_header(filename)
+
+    return header.time
 
 def pynekread_field(filename, comm, data_dtype=np.double, key=""):
     """
