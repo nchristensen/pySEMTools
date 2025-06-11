@@ -53,7 +53,7 @@ Some functionalities such as data streaming require the use of adios2. You can c
 
 #### PyTorch
 
-Specifically for the interpolator routines, a pytorch module is available in case you have GPUs and want to use them in the process. We note that we only use pytorch in this one instance as an option. There are versions that work exclusively with numpy on CPUs so pytorch can be avoided.
+Some classed are compatible with the pytorch module in case you have GPUs and want to use them in the process. We note that we only use pytorch optionally. There are versions that work exclusively with numpy on CPUs so pytorch can be avoided.
 
 To install pytorch, you can check [here](https://pytorch.org/get-started/locally/). A simple installation for CUDA v12.1 on linux would look like this (following the instructions from the link):
 ```
