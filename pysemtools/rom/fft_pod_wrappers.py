@@ -292,7 +292,9 @@ def extended_pod_1_homogenous_direction(
     ioh: dict[int, IoHelp] = None,
     ): 
 
-    """"""
+    """
+    Perform extended pod from given modes. The data is read from disk.
+    """
     
     log = Logger(comm=comm, module_name="extended_pod")
     log.write("info", "Starting extended POD in homogenous direction")
