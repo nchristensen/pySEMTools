@@ -1,0 +1,5 @@
+{
+    "spectral_element_mesh_fname" : "/home/adperez/software/pySEMTools/examples/data/sem_data/instantaneous/channel_nelv_512/field0.f01601",
+    "spectral_element_mesh_type_in_memory" : "double"
+    
+}
