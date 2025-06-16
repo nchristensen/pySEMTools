@@ -1,14 +1,8 @@
-#!/usr/bin/env python
-
-import os
-import sys
-sys.path.append("/home/hpc/iwst/iwst115h/forked_git/pySEMTools/pysemtools")
 from mpi4py import MPI
 import numpy as np
 from ..datatypes.msh import Mesh
-from ..datatypes.coef import Coef
-from ..datatypes.field import Field, FieldRegistry
-from .ppymech.neksuite import preadnek, pynekread
+from ..datatypes.field import FieldRegistry
+from .ppymech.neksuite import pynekread
 from .wrappers import read_data
 
 comm = MPI.COMM_WORLD
@@ -16,8 +10,25 @@ rank = comm.Get_rank()
 size = comm.Get_size()
 
 def generate_data(fname_3d: str, fname_out: str):
+    """
+    Loads and processes 3D field data.
 
-    msh_3d = Mesh(comm, create_connectivity=True)
+    This function:
+    - Reads mesh and field data from `fname_3d`.
+    - Extracts global coordinates of elements.
+    - Prepares structured mesh and field registry for further computations.
+
+    Args:
+        fname_3d (str): Path to the input 3D field file.
+        fname_out (str): Path to the output processed field file.
+
+    Returns:
+        assigned_data (np.ndarray): Global coordinates of elements.
+        fld_3d_r (FieldRegistry): Registry containing field mappings.
+        msh_3d (Mesh): Mesh object.
+    """
+
+    msh_3d = Mesh(comm, create_connectivity=False)
     pynekread(fname_3d, comm, data_dtype=np.single, msh=msh_3d)
 
     fld_3d_r = FieldRegistry(comm)
@@ -39,6 +50,20 @@ def generate_data(fname_3d: str, fname_out: str):
 
 # Methods for cal. the difference and normal vectors
 def calculate_face_differences(assigned_data):
+    """
+    Computes face difference vectors for each element.
+
+    The function calculates:
+    - r_diff: Difference between front and back faces.
+    - s_diff: Difference between top and bottom faces.
+    - t_diff: Difference between left and right faces.
+
+    Args:
+        assigned_data (np.ndarray): Array containing element coordinates.
+
+    Returns:
+        Tuple[np.ndarray, np.ndarray, np.ndarray]: Normalized difference vectors for r, s, and t faces.
+    """
     r_diff = np.mean(assigned_data[:, :, :, 0, :] - assigned_data[:, :, :, -1, :], axis=(1, 2))  # Front vs. Back, w/o reduction, shape (N,8,8,3) 
     r_diff = r_diff/np.linalg.norm(r_diff, axis=1, keepdims=True)
     s_diff = np.mean(assigned_data[:, :, 0, :, :] - assigned_data[:, :, -1, :, :], axis=(1, 2))  # Top vs. Bottom, w/o reduction, shape (N,8,8,3)
@@ -47,16 +72,21 @@ def calculate_face_differences(assigned_data):
     t_diff = t_diff/np.linalg.norm(t_diff, axis=1, keepdims=True)
     return r_diff, s_diff, t_diff
 
-def calculate_face_averages(assigned_data):
-    r_avg_diff = np.mean(assigned_data[:, :, :, 0, :], axis=(1, 2)) - np.mean(assigned_data[:, :, :, -1, :], axis=(1, 2)) # Front vs. Back
-    r_avg_diff = r_avg_diff/np.linalg.norm(r_avg_diff, axis=1, keepdims=True)
-    s_avg_diff = np.mean(assigned_data[:, :, 0, :, :], axis=(1, 2)) - np.mean(assigned_data[:, :, -1, :, :], axis=(1, 2)) # Top vs. Bottom
-    s_avg_diff = s_avg_diff/np.linalg.norm(s_avg_diff, axis=1, keepdims=True)
-    t_avg_diff = np.mean(assigned_data[:, 0, :, :, :], axis=(1, 2)) - np.mean(assigned_data[:, -1, :, :, :], axis=(1, 2)) # Left vs. Right
-    t_avg_diff = t_avg_diff/np.linalg.norm(t_avg_diff, axis=1, keepdims=True)
-    return r_avg_diff, s_avg_diff, t_avg_diff
-
 def calculate_face_normals(assigned_data):
+    """
+    Computes normal vectors for each face of an element.
+
+    Extracts:
+    - Front and back face normals.
+    - Left and right face normals.
+    - Top and bottom face normals.
+
+    Args:
+        assigned_data (np.ndarray): Array containing element coordinates.
+
+    Returns:
+        np.ndarray: Array containing normal vectors for each face (Ex: shape [num_elements, 6, 3]).
+    """
     normals = np.zeros((assigned_data.shape[0], 6, 3))  # 6 faces per element
 
     mid = (assigned_data.shape[1]) // 2
@@ -94,7 +124,47 @@ def calculate_face_normals(assigned_data):
 
     return normals
 
+def calculate_face_averages(assigned_data):
+    """
+    Similar to calculate_face_differences, just for re-verification. It computes the average difference vectors for each face.
+
+    The function calculates:
+    - r_avg_diff: Averaged difference between front and back faces.
+    - s_avg_diff: Averaged difference between top and bottom faces.
+    - t_avg_diff: Averaged difference between left and right faces.
+
+    Args:
+        assigned_data (np.ndarray): Array containing element coordinates.
+
+    Returns:
+        Tuple[np.ndarray, np.ndarray, np.ndarray]: Normalized average difference vectors for r, s, and t faces.
+    """
+    r_avg_diff = np.mean(assigned_data[:, :, :, 0, :], axis=(1, 2)) - np.mean(assigned_data[:, :, :, -1, :], axis=(1, 2)) # Front vs. Back
+    r_avg_diff = r_avg_diff/np.linalg.norm(r_avg_diff, axis=1, keepdims=True)
+    s_avg_diff = np.mean(assigned_data[:, :, 0, :, :], axis=(1, 2)) - np.mean(assigned_data[:, :, -1, :, :], axis=(1, 2)) # Top vs. Bottom
+    s_avg_diff = s_avg_diff/np.linalg.norm(s_avg_diff, axis=1, keepdims=True)
+    t_avg_diff = np.mean(assigned_data[:, 0, :, :, :], axis=(1, 2)) - np.mean(assigned_data[:, -1, :, :, :], axis=(1, 2)) # Left vs. Right
+    t_avg_diff = t_avg_diff/np.linalg.norm(t_avg_diff, axis=1, keepdims=True)
+    return r_avg_diff, s_avg_diff, t_avg_diff
+
+# Method: 1
 def face_mappings(cal_r, cal_s, cal_t):
+    """
+    Determines face mappings based on directional differences.
+
+    This function:
+    - Assigns maps local coordinate axes (r,s,t) to global coordinate axes (X,Y,Z).
+    - Determines mappings based on the dominant direction per face.
+    - Ensures unique assignments to avoid duplication.
+
+    Args:
+        cal_r (np.ndarray): Difference vectors for r faces.
+        cal_s (np.ndarray): Difference vectors for s faces.
+        cal_t (np.ndarray): Difference vectors for t faces.
+
+    Returns:
+        List[Tuple[str, str, str]]: Face mappings for each element.
+    """
     num_elements = cal_r.shape[0]
     mappings = []
 
@@ -129,6 +199,17 @@ def face_mappings(cal_r, cal_s, cal_t):
 
 # Compare all methods:
 def compare_mappings(mappings, ref_mapping, method: str):
+    """
+    Compares computed face mappings against a reference mapping.
+
+    Args:
+        mappings (List[Tuple[str, str, str]]): Computed face mappings.
+        ref_mapping (Tuple[str, str, str]): Reference mapping for comparison.
+        method (str): Name of the method for logging results.
+
+    Returns:
+        None: Prints the percentage of matching mappings.
+    """
     num_elements = len(mappings)
     match_count = 0
     for i in range(num_elements):
@@ -144,6 +225,16 @@ def compare_mappings(mappings, ref_mapping, method: str):
     # print(f"Rank {rank} has matching percentage of {method} w.r.t ref_mapping_fd {ref_mapping}: {matching_percentage:.2f}%")
 
 def compare_methods(mappings_fd, mappings_fa):
+    """
+    Compares face difference-based mappings and face average-based mappings.
+
+    Args:
+        mappings_fd (List[Tuple[str, str, str]]): Face difference-based mappings.
+        mappings_fa (List[Tuple[str, str, str]]): Face average-based mappings.
+
+    Returns:
+        None: Prints the percentage of matching mappings.
+    """
     num_elements = len(mappings_fd)
     match_count =0  
     for i in range(num_elements): 
@@ -158,8 +249,22 @@ def compare_methods(mappings_fd, mappings_fa):
     matching_percentage = (match_count / num_elements) * 100
     # print(f"Rank {rank} has matching Percentage b/w mappings_fd & mappings_fa: {matching_percentage:.2f}%")
     
-# Method-3: Face Normals
+# Method-2: Face Normals
 def align_normals(normals, normals_pair, direction_type):
+    """
+    Aligns normal vectors for paired faces.
+
+    - Ensures consistency in direction for paired faces.
+    - Uses a reference normal based on `direction_type` for alignment.
+
+    Args:
+        normals (np.ndarray): Array of normal vectors (shape: [num_elements, 6, 3]).
+        normals_pair (np.ndarray): Array of paired face normals.
+        direction_type (str): Face orientation type ('front_back', 'left_right', or 'top_bottom').
+
+    Returns:
+        np.ndarray: Adjusted paired normal vectors ensuring correct orientation.
+    """
     # reference normal based on direction_type
     if direction_type == "front_back":
         reference_normal = normals[0, 0, :]
@@ -185,6 +290,21 @@ def align_normals(normals, normals_pair, direction_type):
     return normals_pair
 
 def reduce_face_normals(normals):
+    """
+    Computes reduced normals for face pairs by ensuring consistency and averaging.
+
+    This function:
+    - Separates face normals into paired groups (front/back, left/right, top/bottom).
+    - Aligns normals to maintain consistent orientation.
+    - Normalizes the face normal vectors.
+    - Computes averaged normals for each face pair.
+
+    Args:
+        normals (np.ndarray): Array of normal vectors (shape: [num_elements, 6, 3]).
+
+    Returns:
+        np.ndarray: Averaged and aligned normals for each element (shape: [num_elements, 3, 3]).
+    """
     # Separate normals by face pairs
     front_back_normals = normals[:, [0, 1], :] #r
     left_right_normals = normals[:, [4, 5], :] #t
@@ -210,6 +330,20 @@ def reduce_face_normals(normals):
     return averaged_normals
     
 def directions_face_normals(averaged_normals):
+    """
+    Determines face normal mappings and flow directions.
+
+    This function:
+    - Assigns maps local coordinate axes (r,s,t) to global coordinate axes (X,Y,Z) based on dominant normal directions.
+    - Ensures unique directional assignment per element.
+    - Identifies the principal flow direction for each element.
+
+    Args:
+        averaged_normals (np.ndarray): Array of averaged face normals (shape: [num_elements, 3, 3]).
+
+    Returns:
+        Tuple[List[Tuple[str, str, str]], List[int]]: Face mappings and associated flow directions.
+    """
     num_elements = averaged_normals.shape[0]
     mappings = []
     flow_directions = []
@@ -248,6 +382,22 @@ def directions_face_normals(averaged_normals):
 
 # Reordering of subset
 def reorder_assigned_data(assigned_data, mappings_fd, ref_mapping_fd):
+    """
+    Reorders assigned data to match a reference mapping.
+
+    This function:
+    - Identifies mismatches between computed mappings and the reference mapping.
+    - Applies permutation swaps to correct element order.
+    - Ensures consistency in face assignments across all elements.
+
+    Args:
+        assigned_data (np.ndarray): Array of element data.
+        mappings_fd (List[Tuple[str, str, str]]): Computed face difference mappings.
+        ref_mapping_fd (Tuple[str, str, str]): Reference mapping from rank 0.
+
+    Returns:
+        np.ndarray: Reordered element data matching the reference mapping.
+    """
     reference_mapping = ref_mapping_fd  # take reference mapping from rank 0->first element
     num_elements = assigned_data.shape[0]
     dimension = assigned_data.shape[1]
@@ -297,6 +447,26 @@ def reorder_assigned_data(assigned_data, mappings_fd, ref_mapping_fd):
     return assigned_data
 
 def correct_axis_signs(assigned_data_new, extract_reference_r, extract_reference_s, extract_reference_t, r_diff_new, s_diff_new, t_diff_new):
+    """
+    Adjusts the axis signs based on a reference element.
+
+    This function:
+    - Computes sign consistency using dot products.
+    - Flips axes if mismatched with the reference element.
+    - Ensures all elements conform to the correct axis orientation.
+
+    Args:
+        assigned_data_new (np.ndarray): Reordered element data.
+        extract_reference_r (np.ndarray): Reference r-axis direction.
+        extract_reference_s (np.ndarray): Reference s-axis direction.
+        extract_reference_t (np.ndarray): Reference t-axis direction.
+        r_diff_new (np.ndarray): Updated r-axis difference vectors.
+        s_diff_new (np.ndarray): Updated s-axis difference vectors.
+        t_diff_new (np.ndarray): Updated t-axis difference vectors.
+
+    Returns:
+        np.ndarray: Corrected element data with aligned axes.
+    """
     assigned_data_final = np.copy(assigned_data_new)
 
     num_elements = assigned_data_final.shape[0]

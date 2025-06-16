@@ -2,7 +2,6 @@
 
 import os
 import sys
-sys.path.append("/home/hpc/iwst/iwst115h/forked_git/pySEMTools")
 from typing import cast
 from mpi4py import MPI
 
@@ -11,15 +10,19 @@ rank = comm.Get_rank()
 size = comm.Get_size()
 
 if rank == 0:
+    # Read environment variables for configuration as input parameters
+    # These variables are expected to be set in the environment before running the script.
     num_elements_per_section = os.environ.get("num_elements_per_section")
     pattern_factor = os.environ.get("pattern_factor")
     num_pattern_cross_sections = os.environ.get("num_pattern_cross_sections")
     field_name = os.environ.get("field_name")
     
+    # Check if any variable is missing and exit with an error message
     if None in [num_elements_per_section, pattern_factor, num_pattern_cross_sections, field_name]:
         print("Error: Missing required environment variables.", file=sys.stderr)
         sys.exit(1)
 
+    # Convert environment variables to integers
     num_elements_per_section = int(cast(str, num_elements_per_section))
     pattern_factor = int(cast(str, pattern_factor))
     num_pattern_cross_sections = int(cast(str, num_pattern_cross_sections))
@@ -30,32 +33,43 @@ else:
     num_pattern_cross_sections = None
     field_name = None
 
+# Broadcast the configuration variables to all ranks
 num_elements_per_section = comm.bcast(num_elements_per_section, root=0)
 pattern_factor = comm.bcast(pattern_factor, root=0)
 num_pattern_cross_sections = comm.bcast(num_pattern_cross_sections, root=0)
 field_name = comm.bcast(field_name, root=0)
 
 import numpy as np
-from pysemtools.io.reorder_data_test import (
+from pysemtools.io.reorder_data import (
     generate_data, calculate_face_differences, calculate_face_averages, calculate_face_normals,
     face_mappings, compare_mappings, compare_methods, reduce_face_normals, directions_face_normals,
     reorder_assigned_data, correct_axis_signs
 )
-from pysemtools.datatypes.msh import Mesh
 from pysemtools.io.ppymech.neksuite import pynekwrite
 from pysemtools.datatypes.field import FieldRegistry
+from pysemtools.datatypes.msh_partitioning import MeshPartitioner
 
-elem_pattern_crosssections = num_elements_per_section * pattern_factor; # No. of elements in each pattern cross-section
-total_elements = elem_pattern_crosssections * num_pattern_cross_sections # Total elements in the file.
+elem_pattern_cross_sections = num_elements_per_section * pattern_factor; # No. of elements in each pattern cross-section
+total_elements = elem_pattern_cross_sections * num_pattern_cross_sections # Total elements in the file.
 elements_per_rank = total_elements // size  # No. of elements in each rank.
 ranks_per_section = num_elements_per_section // elements_per_rank # No. of ranks per each cross-section
 ranks_per_pattern_section = ranks_per_section * pattern_factor # No. of ranks per each pattern cross-section
 leftover_total = total_elements % size  # Elements that don’t fit evenly in the rank (if any)
-chunk_size_section = elem_pattern_crosssections // size
-leftover_section = elem_pattern_crosssections % size  # Elements that don’t fit evenly in the rank (if any)
+chunk_size_section = elem_pattern_cross_sections // size  # No. of elements each rank holds in the section.
+leftover_section = elem_pattern_cross_sections % size  # Elements that don’t fit evenly in the section (if any)
 
 def validate_rank_size(total_elements: int, size: int, num_elements_per_section: int) -> bool:
-   
+    """
+        Validates whether the total number of elements and sections can be evenly distributed among ranks.
+        
+        Args:
+            total_elements (int): The total number of elements in the dataset.
+            size (int): The number of ranks available for computation.
+            num_elements_per_section (int): The number of elements in each section.
+
+        Returns:
+            bool: True if the distribution is valid, False otherwise.
+        """
     # Criterion 1: elements_per_rank should be exactly divisible
     elements_per_rank = total_elements // size
     if total_elements % size != 0:
@@ -72,7 +86,18 @@ def validate_rank_size(total_elements: int, size: int, num_elements_per_section:
     return True
 
 def find_valid_sizes(total_elements: int, num_elements_per_section: int, min_size=150, max_size=2000):
+    """
+    Finds valid rank sizes for distributing elements evenly across computational processes.
 
+    Args:
+        total_elements (int): Total number of elements.
+        num_elements_per_section (int): Number of elements per section.
+        min_size (int, optional): Minimum size of ranks to consider. Defaults to 150.
+        max_size (int, optional): Maximum size of ranks to consider. Defaults to 2000.
+
+    Returns:
+        list: A list of valid sizes for distributing elements.
+    """
     valid_sizes = []
 
     for size in range(min_size, max_size + 1):
@@ -96,11 +121,31 @@ else:
 check = comm.bcast(check, root=0)
 
 def truncate_reduce(data, decimals):
+    """
+    Applies controlled truncation to refine numerical precision for selected axes.
+
+    Args:
+        data (numpy.ndarray): The input data array.
+        decimals (int): The number of decimal places to retain.
+
+    Returns:
+        numpy.ndarray: Data with adjusted precision for the first two axes.
+    """
     trial = data[:, :, :, :, 0:2]
     factor = 10.0 ** decimals
     return np.floor(trial * factor) / factor
 
 def extracted_fields(fld_3d_r):
+    """
+    Extracts all key fields from the "fname" dynamically.
+
+    Args:
+        fld_3d_r (FieldRegistry): Input data containing various field keys.
+
+    Returns:
+        dict: Extracted field mappings including velocity, pressure, temperature, and any all other
+        additional fields.
+    """
     extracted = {}
     extra_field_counter = 1 
     for key in fld_3d_r.fields.keys():
@@ -119,14 +164,71 @@ def extracted_fields(fld_3d_r):
                 extra_field_counter += 1
     return extracted
 
+def get_rank_for(z_max_elem_index):
+    """
+    Identifies the rank responsible for storing a specific global element index.
+
+    This function:
+    - Determines which rank holds the last element in `elem_pattern_cross_sections`.
+    - Computes the rank ID based on how elements are distributed across ranks.
+    - Ensures boundary conditions are handled correctly.
+
+    Args:
+        z_max_elem_index (int): The global index of the element to locate.
+
+    Returns:
+        int: The rank ID that owns the specified element.
+    """
+    if z_max_elem_index < 0:
+        return 0
+    elif z_max_elem_index >= total_elements:
+        return size - 1
+    else:
+        return (z_max_elem_index // elements_per_rank)-1
+
 def element_grouping() -> None:
+    """
+    Groups elements, processes field data, and manages distributed computation across MPI ranks.
+
+    Notation: A group of cross-sections, when repeated, forms a pattern cross-section. The first pattern cross-section 
+    is designated as the reference pattern cross-section, which serves as the basis for comparisons.
+
+    1. Data Loading & Processing:
+        - Reads input files and computes face differences, averages, and normal vectors.
+        - Applies reordering and axis corrections.
+
+    2. Element Grouping:
+        - Determines a reference pattern cross-section and identifies repeating structures.
+        - Groups elements based on shape consistency, ensuring alignment across computational ranks.
+
+    3. Coordinate Collection & Redistribution:
+        - Retrieves coordinate data from the reference pattern cross-section that is distributed across multiple ranks.
+        - Ensures efficient redistribution of coordinates to all ranks for consistent processing and averaging.
+
+    4. Field Extraction & Inter-Rank Data Exchange:
+        - Extracts relevant fields dynamically for structured storage and processing.
+        - Facilitates communication between ranks, sending and receiving required element data based on groups.
+        - Ensures each rank has access to necessary computational fields.
+
+    5. Group Averaging & Field Registry Management:
+        - Computes field averages across pattern cross-sections.
+        - Adds averaged fields to the registry.
+
+    6. Final Data Writing:
+        - Constructs a subdomain mesh for processed data.
+        - Writes computed fields to output files for continued analysis.
+
+    Args:
+        None
+
+    Returns:
+        None (Processes, distributes, and saves field data)
+    """
+    fname_3d = "../../field0.f00024"
+
+    fname_out = "../../field_out_0.f00024"    
     
-    # fname_3d = "/home/woody/iwst/iwst115h/Work/Checkpoint_files/field0.f00024"
-    fname_3d = "/home/woody/iwst/iwst115h/Work/Checkpoint_files/field0.f00000"
-    
-    # fname_out = "/home/woody/iwst/iwst115h/Work/writefiles/unstruct_new/field_out_0.f00024"
-    fname_out = "/home/woody/iwst/iwst115h/Work/writefiles/field/fieldout0.f00000"
-    
+    # Load data
     assigned_data, fld_3d_r, msh_3d = generate_data(fname_3d, fname_out)
 
     # Methods for cal. the difference and normal vectors
@@ -134,59 +236,54 @@ def element_grouping() -> None:
     assigned_r_avg_diff, assigned_s_avg_diff, assigned_t_avg_diff = calculate_face_averages(assigned_data)
     assigned_normals = calculate_face_normals(assigned_data)
 
-    # Method-1: Face_differences
+    # Generate mappings for comparison
     mappings_fd = face_mappings(assigned_r_diff, assigned_s_diff, assigned_t_diff)
-    # Method-2: Face_averages
     mappings_fa = face_mappings(assigned_r_avg_diff, assigned_s_avg_diff, assigned_t_avg_diff)
     
-
-    if rank == 0:
-        ref_mapping_fd = mappings_fd[0]
-    else:
-        ref_mapping_fd = None
-        
+    # Select reference mapping
+    ref_mapping_fd = mappings_fd[0] if rank == 0 else None
     ref_mapping_fd = comm.bcast(ref_mapping_fd, root=0)
-    
+
+    # Compare mappings before reordering
     compare_mappings(mappings_fa, ref_mapping_fd, "mappings_fa_before_reorder")
     compare_mappings(mappings_fd, ref_mapping_fd, "mappings_fd_before_reorder")
     compare_methods(mappings_fd, mappings_fa)
 
-    # Reordering of subset        
+    # Apply reordering of assigned data
     assigned_data_new = reorder_assigned_data(assigned_data, mappings_fd, ref_mapping_fd)
     r_diff_new, s_diff_new, t_diff_new = calculate_face_differences(assigned_data_new)
-
-    if rank == 0:
-        extract_reference_r = r_diff_new[0]
-        extract_reference_s = s_diff_new[0]
-        extract_reference_t = t_diff_new[0]
-    else:
-        extract_reference_r = None
-        extract_reference_s = None
-        extract_reference_t = None
+    
+    # Extract reference differences
+    extract_reference_r = r_diff_new[0] if rank == 0 else None
+    extract_reference_s = s_diff_new[0] if rank == 0 else None
+    extract_reference_t = t_diff_new[0] if rank == 0 else None
         
     extract_reference_r = comm.bcast(extract_reference_r, root=0)
     extract_reference_s = comm.bcast(extract_reference_s, root=0)
     extract_reference_t = comm.bcast(extract_reference_t, root=0)
     
+    # Apply corrections to axis signs
     assigned_data_final = correct_axis_signs(assigned_data_new, extract_reference_r, extract_reference_s, extract_reference_t, r_diff_new, s_diff_new, t_diff_new)
 
+    # Compute final mappings
     r_diff_final, s_diff_final, t_diff_final = calculate_face_differences(assigned_data_final)
     final_mappings_fd = face_mappings(r_diff_final, s_diff_final, t_diff_final)
-
     r_avg_diff_final, s_avg_diff_final, t_avg_diff_final = calculate_face_averages(assigned_data_final)
     final_mappings_fa = face_mappings(r_avg_diff_final, s_avg_diff_final, t_avg_diff_final)
     
+    # Compute normal vectors and directions
     assigned_normals = calculate_face_normals(assigned_data_final)
     averaged_normals =  reduce_face_normals(assigned_normals)
     final_mappings_fn, flow_directions = directions_face_normals(averaged_normals)
     flow_directions = np. array(flow_directions)
 
-    # Compare all methods:
+    # Compare mappings after reordering
     compare_mappings(final_mappings_fa, ref_mapping_fd, "mappings_fa_after_reorder")
     compare_mappings(final_mappings_fd, ref_mapping_fd, "mappings_fd_after_reorder")
     compare_methods(final_mappings_fd, final_mappings_fa)
     compare_mappings(final_mappings_fn, ref_mapping_fd, "mappings_fn_after_reorder")
     
+    # Compute the starting and ending global indices for each rank.
     if rank == 0:
         idx_ranges = []
         idx_ranges_section =[]
@@ -207,6 +304,7 @@ def element_grouping() -> None:
     idx_ranges = comm.bcast(idx_ranges, root=0)
     idx_ranges_section = comm.bcast(idx_ranges_section, root=0)
 
+    # Determine the "full rank list" which has list of ranks in one reference pattern cross-section.
     full_rank_list = list(range(ranks_per_pattern_section))        
     ndim1, ndim2, ndim3, ndim4 = assigned_data_final.shape[1:]
 
@@ -217,7 +315,12 @@ def element_grouping() -> None:
     
     bundle = {i: [] for i in range(elements_per_rank)}
 
-    #send data to the ranks
+    # Data transmission among ranks: exchanging only relevant sections for comparison
+    # The full_rank_list holds ranks in the reference pattern cross-section. 
+    # Elements in later ranks align with earlier ranks due to repeating patterns in the cross-section.
+    # Example: full_rank_list has [0,1,2,3,4,5] then, Rank 6 aligns with Rank 0, Rank 7 aligns with Rank 1, etc.
+    # This ensures structured comparisons and grouping of elements with identical x, y coordinates.
+    
     if rank in full_rank_list:
         start_index, end_index = idx_ranges[0]
         if assigned_data_final_array is not None:
@@ -253,7 +356,8 @@ def element_grouping() -> None:
                 bundle[source_global_idx].append(target_global_idx)
         else:
             print(f"[NO MATCH] Rank {rank} did not match with {source_rank}")
-            
+    
+    # Gather and broadcast final grouped data        
     all_bundled_data = comm.gather(bundle, root=0)
     bundled_array = None
     if rank == 0:
@@ -272,106 +376,25 @@ def element_grouping() -> None:
         # for row in bundle_array:
         #     print(row)
             
-    bundled_array = comm.bcast(bundled_array, root=0)
-    
+    bundled_array = comm.bcast(bundled_array, root=0)    
     comm.Barrier()
-    x_coords = np.empty((elem_pattern_crosssections, ndim1, ndim2, ndim3))
-    y_coords = np.empty((elem_pattern_crosssections, ndim1, ndim2, ndim3))
-    z_coords = np.empty((elem_pattern_crosssections, ndim1, ndim2, ndim3))
     
-    if rank == 0:
-        gathered_data_x_coords = np.empty((elem_pattern_crosssections, ndim1, ndim2, ndim3))
-        print(f"gathered_data_x_coords shape and same for all other cooords: {gathered_data_x_coords.shape}")
-        gathered_data_y_coords = np.empty((elem_pattern_crosssections, ndim1, ndim2, ndim3))
-        gathered_data_z_coords = np.empty((elem_pattern_crosssections, ndim1, ndim2, ndim3))
-        print(f"full_rank_list: {full_rank_list}")
+    # Determine which rank owns `z_max_elem_index`  
+    z_max_elem_rank = get_rank_for(elem_pattern_cross_sections)
+    print(f"z_max_elem_rank:", z_max_elem_rank) if rank == 0 else None
+    
+    # Determine the local index of `z_max_elem` for the rank that owns it and max value of "z"
+    if rank == z_max_elem_rank:
+        z_max_elem: int = (elem_pattern_cross_sections // (rank + 1)) - 1
+        print(f"Rank {rank} has local index of z_max_elem:",z_max_elem)
+        z_max_elem_value =np.max(assigned_data_final[z_max_elem][:,:,:,2])
+        print(f"Rank {rank} has z_max_elem_value",z_max_elem_value)
     else:
-        gathered_data_x_coords, gathered_data_y_coords, gathered_data_z_coords = None, None, None
+        z_max_elem_value = None
 
-    if rank in full_rank_list:
-        start_index, end_index = idx_ranges[0]
-        x_coords[start_index:end_index] = msh_3d.x[start_index:end_index]
-        y_coords[start_index:end_index] = msh_3d.y[start_index:end_index]
-        z_coords[start_index:end_index] = msh_3d.z[start_index:end_index]
-        data_to_send_x_coords = x_coords[start_index:end_index]
-        data_to_send_y_coords = y_coords[start_index:end_index]
-        data_to_send_z_coords = z_coords[start_index:end_index]
-        
-        if rank != 0: # Non-root ranks send their data        
-            comm.Send(data_to_send_x_coords, dest=0, tag=0)
-            comm.Send(data_to_send_y_coords, dest=0, tag=1)
-            comm.Send(data_to_send_z_coords, dest=0, tag=2)
-        else: # Root already has its data, just copy it to the right place
-            start_index, end_index = idx_ranges[0]
-            gathered_data_x_coords[start_index:end_index] = data_to_send_x_coords
-            gathered_data_y_coords[start_index:end_index] = data_to_send_y_coords
-            gathered_data_z_coords[start_index:end_index] = data_to_send_z_coords
-
-    if rank == 0:
-        for sender_rank in full_rank_list:
-            if sender_rank != 0:  # Skip self
-                start_index, end_index = idx_ranges[sender_rank]
-                size_to_receive = end_index - start_index
-                
-                temp_buffer_x = np.empty((size_to_receive, ndim1, ndim2, ndim3))
-                temp_buffer_y = np.empty((size_to_receive, ndim1, ndim2, ndim3))
-                temp_buffer_z = np.empty((size_to_receive, ndim1, ndim2, ndim3))
-                
-                comm.Recv(temp_buffer_x, source=sender_rank, tag=0)
-                comm.Recv(temp_buffer_y, source=sender_rank, tag=1)
-                comm.Recv(temp_buffer_z, source=sender_rank, tag=2)
-                
-                gathered_data_x_coords[start_index:end_index] = temp_buffer_x
-                gathered_data_y_coords[start_index:end_index] = temp_buffer_y
-                gathered_data_z_coords[start_index:end_index] = temp_buffer_z
-                
-        print(f"Root {rank} has gathered all data with shape: x: {gathered_data_x_coords.shape}, y: {gathered_data_y_coords.shape}, z: {gathered_data_z_coords.shape}")      
+    z_max_elem_value = comm.bcast(z_max_elem_value, root=z_max_elem_rank)
     
-    size_list = list(range(size))
-    if rank == 0:
-        flat_x = gathered_data_x_coords.reshape(len(gathered_data_x_coords), -1)
-        flat_y = gathered_data_y_coords.reshape(len(gathered_data_y_coords), -1)
-        flat_z = gathered_data_z_coords.reshape(len(gathered_data_z_coords), -1)
-
-        # Preparing the data to send for each rank
-        sendcounts = []
-        displs = []
-        flattened_chunks_x, flattened_chunks_y, flattened_chunks_z = [], [], []
-
-        offset = 0
-        for i in range(size):
-            start, end = idx_ranges_section[i]
-            count = end - start
-            sendcounts.append(count * ndim1 * ndim2 * ndim3)
-            displs.append(offset)
-            offset += count * ndim1 * ndim2 * ndim3
-            flattened_chunks_x.append(flat_x[start:end].reshape(-1))
-            flattened_chunks_y.append(flat_y[start:end].reshape(-1))
-            flattened_chunks_z.append(flat_z[start:end].reshape(-1))
-
-        sendbuf_x = np.concatenate(flattened_chunks_x)
-        sendbuf_y = np.concatenate(flattened_chunks_y)
-        sendbuf_z = np.concatenate(flattened_chunks_z)
-    else:
-        sendcounts = None
-        displs = None
-        sendbuf_x = sendbuf_y = sendbuf_z = None
-        
-    recv_count = (idx_ranges_section[rank][1] - idx_ranges_section[rank][0]) * ndim1 * ndim2 * ndim3
-
-    recv_x = np.empty(recv_count, dtype=np.float64)
-    recv_y = np.empty(recv_count, dtype=np.float64)
-    recv_z = np.empty(recv_count, dtype=np.float64)
-    
-    comm.Scatterv([sendbuf_x, sendcounts, displs, MPI.DOUBLE], recv_x, root=0)
-    comm.Scatterv([sendbuf_y, sendcounts, displs, MPI.DOUBLE], recv_y, root=0)
-    comm.Scatterv([sendbuf_z, sendcounts, displs, MPI.DOUBLE], recv_z, root=0)
-    
-    local_count = idx_ranges_section[rank][1] - idx_ranges_section[rank][0]
-    recv_x = recv_x.reshape((local_count, ndim1, ndim2, ndim3))
-    recv_y = recv_y.reshape((local_count, ndim1, ndim2, ndim3))
-    recv_z = recv_z.reshape((local_count, ndim1, ndim2, ndim3))
-
+    # Extract all relevant fields
     fields = extracted_fields(fld_3d_r)
     
     fields_mentioned = []
@@ -395,7 +418,8 @@ def element_grouping() -> None:
             scal_fields = [f's{i+1}' for i in range(length_scal)] 
             fields_mentioned = fields_mentioned + scal_fields
         print(f"Rank {rank} has default field_mentioned:", fields_mentioned) if rank == 0 else None
-
+    
+    # Determine which groups, each rank is responsible for
     if rank == 0:
         owned_groups_split = []
         for i in range(size):
@@ -405,7 +429,8 @@ def element_grouping() -> None:
         owned_groups_split = None
 
     owned_groups = comm.scatter(owned_groups_split, root=0)
-    
+
+    # Determine which elements belonging to which rank
     if rank == 0:
         element_rank_mapping = [(gid, gid // elements_per_rank) for gid in range(total_elements)]
     else:
@@ -413,6 +438,7 @@ def element_grouping() -> None:
     element_rank_mapping = comm.bcast(element_rank_mapping, root=0)
     element_to_rank = dict(element_rank_mapping) 
     
+    # Create a mapping from global element indices to local indices within each rank 
     if rank == 0:
         global_to_local_all = {
             i: {gid: local_idx for local_idx, gid in enumerate(range(i * elements_per_rank, (i + 1) * elements_per_rank))}
@@ -422,6 +448,7 @@ def element_grouping() -> None:
         global_to_local_all = None
     global_to_local_all = comm.bcast(global_to_local_all, root=0)
     
+    # Get list of ranks from which the current rank needs to get data
     recv_requests = {}
     for group in owned_groups:
         for gid in group:
@@ -432,24 +459,27 @@ def element_grouping() -> None:
             
     all_recv_requests = comm.allgather(recv_requests)
     
+    # Get list of ranks to which the current rank needs to send data    
     send_requests = {}
     for r, req_dict in enumerate(all_recv_requests):
         if rank in req_dict:
             send_requests[r] = req_dict[rank]
-            
+    
+    # Send data to the ranks that requested it
     for dst, gids in send_requests.items():
         local_map = global_to_local_all[rank]
         local_idxs = [local_map[gid] for gid in gids]
         data_to_send = {field: fields[field][local_idxs] for field in fields_mentioned}
         comm.send((gids, data_to_send), dest=dst, tag=3)
-        
+    
+    # Receive data from ranks that sent requests
     received_data = {}
     for src, gids in recv_requests.items():
         recv_gids, data = comm.recv(source=src, tag=3)
         received_data[src] = (recv_gids, data)
 
+    # Calculate group averages for each field dynamically
     group_averages = []
-
     for group in owned_groups:
         group_data = {field: [] for field in fields_mentioned}
         for gid in group:
@@ -467,20 +497,23 @@ def element_grouping() -> None:
         avg = {field: np.mean(value, axis=0) for field, value in group_data.items()}
         group_averages.append(avg)
 
+    # Prepare the field variables to be added to the FieldRegistry
     field_keys = {
         'vel': ['u', 'v', 'w'],
         'pres': ['pres'],
         'temp': ['temp'],
         'default': fields_mentioned
     }
-
+    
+    # Initialize all average fields to None
     for key in ['u', 'v', 'w', 'pres', 'temp']:
         globals().setdefault(f"avg_{key}_all", None)
 
     if field_name in field_keys:
         for key in field_keys[field_name]:
             globals()[f"avg_{key}_all"] = None
-            
+    
+    # Assign average values to the field variables
     if field_name in field_keys:
         for key in field_keys[field_name]:
             if field_name == 'default' and key not in fields_mentioned:
@@ -488,37 +521,48 @@ def element_grouping() -> None:
             globals()[f"avg_{key}_all"] = np.array([avg[key] for avg in group_averages], dtype=np.single)
 
     print(f"Adding field using Field registry and coordinates also") if rank == 0 else None
+    
+    # Initializes the field registry
+    fld = FieldRegistry(comm)  
+    
+    # Choose a condition that you want the subdomain to satisfy
+    condition1 = msh_3d.z < z_max_elem_value
+    conidtion2 = msh_3d.z > 0.0
+    cond = condition1 & conidtion2
+    
+    # Initialize the mesh partitioner with the given condition
+    mp = MeshPartitioner(comm, msh=msh_3d, conditions=[cond])
+    
+    # Create the properly partitioned sub mesh and field
+    partitioned_mesh = mp.create_partitioned_mesh(msh_3d, partitioning_algorithm="load_balanced_linear", create_conectivity=False)
+    partitioned_field = mp.create_partitioned_field(fld, partitioning_algorithm="load_balanced_linear")
 
-    fld = FieldRegistry(comm)
-    #Subdomain creation
-    msh_3d_sub = Mesh(comm, x=recv_x, y=recv_y, z=recv_z, create_connectivity=False)
-
-    print(f"fld.fields are", fld.fields.keys()) if rank == 0 else None
+    print(f"fld.fields are", partitioned_field.fields.keys()) if rank == 0 else None
 
     if rank == 0:
-        for key in fld.fields.keys():
-            print(f'Current field "fld" {key} has {len(fld.fields[key])} fields')
+        for key in partitioned_field.fields.keys():
+            print(f'Current field "fld" {key} has {len(partitioned_field.fields[key])} fields')
 
         for key in fld_3d_r.fields.keys():
             print(f'Earlier field "fld_3d" {key} has {len(fld_3d_r.fields[key])} fields')
 
 
-    print(f"Rank {comm.rank} Fields before adding:", fld.registry.keys()) if rank == 0 else None
-
+    print(f"Rank {comm.rank} Fields before adding:", partitioned_field.registry.keys()) if rank == 0 else None
+    
+    # Checks for matching field names and adds fields dynamically
     if field_name in field_keys:
         for key in field_keys[field_name]:
             avg_var = globals().get(f"avg_{key}_all", None)
             if avg_var is not None:
-                fld.add_field(comm, field_name=key, field=avg_var, dtype=np.single)
+                partitioned_field.add_field(comm, field_name=key, field=avg_var, dtype=np.single)
                 if rank == 0:
-                    print(f'Field {key} added to registry and fields directory in pos {fld.registry_pos[key]}')
+                    print(f'Field {key} added to registry and fields directory in pos {partitioned_field.registry_pos[key]}')
 
-    print(f"Rank {comm.rank} Fields after adding:", fld.registry.keys()) if rank == 0 else None
+    print(f"Rank {comm.rank} Fields after adding:", partitioned_field.registry.keys()) if rank == 0 else None
         
     # Write the data in a subdomain
-    fout = "/home/woody/iwst/iwst115h/Work/writefiles/field/fieldout_test_field.f00001"
-    # fout = "/home/woody/iwst/iwst115h/Work/writefiles/unstruct_new/fieldout_test_field.f00024"
-    pynekwrite(fout, comm, msh=msh_3d_sub, fld=fld, write_mesh=True, wdsz=4) 
+    fout = "../../fieldout_field.f00024"    
+    pynekwrite(fout, comm, msh=partitioned_mesh, fld=partitioned_field, write_mesh=True)
     print("Rank{rank} has done adding fields successfully and saved.") if rank == 0 else None
 
 if check:    
