@@ -77,6 +77,6 @@ jobs:
       - name: Archive test report
         uses: actions/upload-artifact@v4
         with:
-          name: test-report-py${{ matrix.python-version }}
+          name: test-report-py${{ matrix.python-version }}_${{ matrix.mpi }}
           path: unit_tests.txt
           retention-days: 5
