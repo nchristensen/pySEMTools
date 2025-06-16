@@ -6,12 +6,14 @@ on:
 
 jobs:
   unit_testing:
-    name: "Unit testing (Python ${{ matrix.python-version }})"
+    name: "Unit testing (Python ${{ matrix.python-version }} - ${{ matrix.mpi }})"
     runs-on: ubuntu-latest
 
     strategy:
       matrix:
         python-version: ['3.10', '3.11', '3.12', '3.13']
+        mpi: ['mpich', 'openmpi']
+
       fail-fast: false
 
     steps:
@@ -26,7 +28,17 @@ jobs:
           
       - name: Setup MPI
         uses: mpi4py/setup-mpi@v1.2.0
-        
+        with:
+          mpi: ${{ matrix.mpi }}
+
+      - name: Show MPI info
+        run:  mpichversion
+        if:   ${{ matrix.mpi == 'mpich' }}
+
+      - name: Show MPI info
+        run:  ompi_info
+        if:   ${{ matrix.mpi == 'openmpi' }}
+
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
