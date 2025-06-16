@@ -11,8 +11,7 @@ from pysemtools.datatypes.msh import Mesh
 from pysemtools.datatypes.field import FieldRegistry
 from pysemtools.io.ppymech.neksuite import pynekread, pynekwrite
 
-
-def main():
+def msh_spacing():
 
     # Read the inputs file
     with open('inputs.json', 'r') as f:
@@ -21,6 +20,7 @@ def main():
     sem_mesh_fname = inputs['spectral_element_mesh_fname']
     sem_mesh_fname = "../../examples/data/sem_data/instantaneous/cylinder_rbc_nelv_600/field0.f00801"
     sem_dtype_str = inputs.get('spectral_element_mesh_type_in_memory', 'single')
+    out_fname = inputs.get('msh_check_output_fname', 'msh_check0.f00001')
 
     if sem_dtype_str == 'single':
         sem_dtype = np.single
@@ -74,7 +74,129 @@ def main():
     fld.add_field(comm, field_name="dy", field=dy, dtype=sem_dtype)
     fld.add_field(comm, field_name="dz", field=dz, dtype=sem_dtype)
     
-    pynekwrite("msh_check0.f00001", comm, msh = msh, fld=fld)
+    pynekwrite(out_fname, comm, msh = msh, fld=fld)
 
-if __name__ == "__main__":
-    main()
+    return dx, dy, dz
+
+def calculate_mean_dissipations():
+    
+    # Read the inputs file
+    with open('inputs.json', 'r') as f:
+        inputs = json.load(f)
+
+    sem_mesh_fname = inputs['spectral_element_mesh_fname']
+    sem_mesh_fname = "../../examples/data/sem_data/instantaneous/cylinder_rbc_nelv_600/field0.f00801"
+    sem_dtype_str = inputs.get('spectral_element_mesh_type_in_memory', 'single')
+    out_fname = inputs.get('msh_check_output_fname', 'msh_check0.f00001')
+    out_fname = f"dissipation_{out_fname}"
+    file_index_fname = inputs.get("file_index", None)
+    calculate_dissipation = inputs.get("calculate_dissipation", True)
+    dissipation_keys = inputs.get("dissipation_keys", [])
+    pr = inputs.get("pr")
+    ra = inputs.get("ra")
+
+    if file_index_fname is None:
+        raise ValueError("The file index must be provided in the inputs.json file")
+
+    if calculate_dissipation is False and dissipation_keys == []:
+        raise ValueError("Either calculate_dissipation must be True or dissipation_keys must be provided")
+
+    if sem_dtype_str == 'single':
+        sem_dtype = np.single
+    elif sem_dtype_str == 'double':
+        sem_dtype = np.double
+    else:
+        raise ValueError(f"Invalid spectral element mesh data type: {sem_dtype_str}")
+
+    with open(file_index_fname, 'r') as f:
+        file_index = json.load(f)
+    file_sequence = []
+    for key in file_index.keys():
+        try:
+            int_key = int(key)
+        except ValueError:
+            continue
+        file_sequence.append(file_index[key]['path'])  
+
+    # Read the mesh
+    msh = Mesh(comm)
+    pynekread(sem_mesh_fname, comm, data_dtype=sem_dtype, msh=msh)
+    coef = Coef(msh, comm)
+
+    uzt = np.zeros_like(msh.x, dtype=sem_dtype)
+    eps_t = np.zeros_like(msh.x, dtype=sem_dtype)
+    eps_k = np.zeros_like(msh.x, dtype=sem_dtype)
+
+    fld = FieldRegistry(comm)
+
+    for fidx, fname in enumerate(file_sequence):
+
+        if calculate_dissipation:
+            # Read the field
+            pynekread(fname, comm, data_dtype=sem_dtype, fld=fld)
+
+            u = fld.registry['u']
+            v = fld.registry['v']
+            w = fld.registry['w']
+            t = fld.registry['t']
+
+            # Convective heat flux
+            uzt_ = w*t
+
+            mu = np.sqrt(pr/ra)
+            lamb = 1 / np.sqrt(ra*pr)
+
+            # Dissipation of kinetic energy
+            #epsv=0.5*(du_i/dx_j+du_j/dx_i)**2*sqrt(Pr/Ra)
+            #epsv = Sij * Sij * 2 * mu
+            dudx = coef.dudxyz(u, coef.drdx, coef.dsdx, coef.dtdx)
+            dudy = coef.dudxyz(u, coef.drdy, coef.dsdy, coef.dtdy)
+            dudz = coef.dudxyz(u, coef.drdz, coef.dsdz, coef.dtdz)
+            dvdx = coef.dudxyz(v, coef.drdx, coef.dsdx, coef.dtdx)
+            dvdy = coef.dudxyz(v, coef.drdy, coef.dsdy, coef.dtdy)
+            dvdz = coef.dudxyz(v, coef.drdz, coef.dsdz, coef.dtdz)
+            dwdx = coef.dudxyz(w, coef.drdx, coef.dsdx, coef.dtdx)
+            dwdy = coef.dudxyz(w, coef.drdy, coef.dsdy, coef.dtdy)
+            dwdz = coef.dudxyz(w, coef.drdz, coef.dsdz, coef.dtdz)
+            sij_sq = np.zeros_like(msh.x, dtype=sem_dtype)
+            sij_sq += (dudx + dudx)**2 + (dudx + dvdx)**2 + (dudz + dwdx)**2
+            sij_sq += (dvdx + dudy)**2 + (dvdy + dvdy)**2 + (dvdz + dwdx)**2
+            sij_sq += (dwdx + dudz)**2 + (dwdy + dvdz)**2 + (dwdz + dwdz)**2
+            sij_sq *= (0.5)**2
+            eps_k_ = sij_sq * 2 * mu
+
+            # Dissipation of thermal energy
+            dtdx = coef.dudxyz(t, coef.drdx, coef.dsdx, coef.dtdx)
+            dtdy = coef.dudxyz(t, coef.drdy, coef.dsdy, coef.dtdy)
+            dtdz = coef.dudxyz(t, coef.drdz, coef.dsdz, coef.dtdz)
+            eps_t_ = (dtdx**2 + dtdy**2 + dtdz**2) * lamb
+            
+        else:
+            # Read the field
+            pynekread(fname, comm, data_dtype=sem_dtype, fld=fld)
+
+            uzt_ = fld.registry[dissipation_keys[0]]
+            eps_k_ = fld.registry[dissipation_keys[1]]
+            eps_t_ = fld.registry[dissipation_keys[2]]
+
+        # Update
+        uzt += uzt_
+        eps_k += eps_k_
+        eps_t += eps_t_
+        fld.clear()
+
+    # Average
+    uzt /= len(file_sequence)
+    eps_k /= len(file_sequence)
+    eps_t /= len(file_sequence)
+    
+    return uzt, eps_k, eps_t
+
+
+# ============
+# Main program
+# ============
+
+dx, dy, dz = msh_spacing()
+
+uzt, eps_k, eps_t = calculate_mean_dissipations()
