@@ -418,6 +418,7 @@ def pod_fourier_1_homogenous_direction(
     distributed_axis: int = None,
     preprocessing_field_operation: list[Callable] = None,
     postprocessing_field_operation: list[Callable] = None,
+    preprocessing_tensor_operation: Callable = None,
 ) -> tuple:
     """
     Perform POD on a sequence of snapshot while applying fft in an homogenous direction of choice.
@@ -451,11 +452,20 @@ def pod_fourier_1_homogenous_direction(
     distributed_axis : int, optional
         Axis to distribute the data over.
         If None, the data will not be distributed.
-    field_operation : list[callable], optional
-        List of operations to perform on the fields before the POD.
-        Handy if some operations are needed to adjust the norm that is optimized.
-
-
+    preprocessing_field_operation : list[Callable], optional
+        List of functions to apply to the fields before the fft.
+        Each function should take a field as input and return the processed field.
+    postprocessing_field_operation : list[Callable], optional
+        List of functions to apply to the modes after the fft.
+        Each function should take a field as input and return the processed field.
+    preprocessing_tensor_operation : Callable, optional
+        Dictionary of functions and settings to apply to the fields before the fft.
+        The inputs passed to this function should have the following:
+        - `fld_data_`: The data expected to be read from the file. It is a dictionary.
+        - `pod_info`: A dictionary that will have the info from the read snapshot and POD settings.
+        This function can, thus, be used for anything that needs to be done before the fft,
+        and it is applied just after reading the snapshot data.
+        
     Returns
     -------
     tuple
@@ -552,6 +562,15 @@ def pod_fourier_1_homogenous_direction(
         #    for field in pod_fields:
         #        fld_data.append(f[field][:])
         fld_data_ = read_data(comm, fname=fname, keys=pod_fields, parallel_io=parallel_io, distributed_axis=distributed_axis)
+
+        # Set up the info of the POD for the current snapshot
+        pod_info = dict(pod_fields=pod_fields, field_shape=field_3d_shape, fft_axis=fft_axis, N_samples=N_samples, distributed_axis=distributed_axis, comm=comm, bm=bm, fname=fname, fidx=j, logger=ioh[0].log)
+
+        # Apply the preprocessing tensor operations if needed:
+        if preprocessing_tensor_operation is not None:
+            fld_data_ = preprocessing_tensor_operation(fld_data_, pod_info)
+
+        # Put the fields in a list
         fld_data = [fld_data_[field] for field in pod_fields]
 
         # Apply the preprocessing field operations if needed:
@@ -861,7 +880,6 @@ def save_pod_state(comm, fname: str,
                 continue
             wavenumbers.append(int(kappa))
         settings["wavenumbers"] = wavenumbers
-        print(settings["wavenumbers"])
         f = h5py.File(f"{prefix}_settings.{extension}", "w")
         f.attrs['settings'] = json.dumps(settings) 
         f.close()
