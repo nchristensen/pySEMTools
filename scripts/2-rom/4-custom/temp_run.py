@@ -56,6 +56,11 @@ def t_pre(field):
     return np.sqrt(cv * field)
 
 def tensor_pre(x, y, z, rotation_function, rotation_matrix, cutoff_index, field_data, info):
+    '''
+    This function applies a rotation to the velocity and also mirrors the velocity and temeprature fields based on symetries.
+    It is important to note that in this case, it is assumed that the fields have already been mirrored spatially through interpolation, thus only the values are changed.
+    That has not been included here.
+    '''
 
     # First rotate the u, v, w components
     info["logger"].write("info", "Rotating the velocity components")
