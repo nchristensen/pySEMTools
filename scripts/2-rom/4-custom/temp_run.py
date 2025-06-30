@@ -55,6 +55,32 @@ def t_pre(field):
     field[field < 0] = 0.0
     return np.sqrt(cv * field)
 
+def tensor_pre(x, y, z, rotation_function, rotation_matrix, cutoff_index, field_data, info):
+
+    # First rotate the u, v, w components
+    info["logger"].write("info", "Rotating the velocity components")
+    tensor = [field_data["u"], field_data["v"], field_data["w"]]   
+    rotated_tensor = rotation_function(x, y, z, tensor, rotation_matrix)
+    field_data["u"] = rotated_tensor[0].copy()
+    field_data["v"] = rotated_tensor[1].copy()
+    field_data["w"] = rotated_tensor[2].copy()
+
+    # Now mirror the necesary components if the snapshot index is appropiate
+    if info["fidx"] >= cutoff_index: # Since it starts at 0, the mirrored snapshots start at cutoff_index
+        info["logger"].write("info", f"Snapshot {info['fidx']} is mirrored, applying mirroring operations")
+        info["logger"].write("info", "Mirroring the v (azimuthal) and w (vertical) velocity components")
+        field_data["v"] = (-field_data["v"]).copy()
+        field_data["w"] = (-field_data["w"]).copy()
+
+        info["logger"].write("info", "Mirroring the temperature")
+        t = field_data["t"] * 2 # Now temp is in range [0, 2]
+        t +=  -1 # Now temp is in range [-1,   1]
+        t *=  -1 # Now temp is mirrored [ 1 , -1]
+        t +=   1 # Now temp is in range [ 2 ,  0]
+        field_data["t"] = (t / 2).copy()
+
+    return field_data
+
 # Get mpi info
 comm = MPI.COMM_WORLD
 
@@ -66,7 +92,7 @@ os.environ["PYSEMTOOLS_HIDE_LOG"] = 'false'
 # =========================
 # Perform the POD
 # =========================
-nsnapshots = 400
+nsnapshots = 10
 file_sequence = [f"../../1-interpolation/2-interpolation_file_sequence/interpolated_fields{str(1+i).zfill(5)}.hdf5" for i in range(0, nsnapshots)]
 pod_fields = ["u", "v", "w", "t"]
 preproc = [v_pre, v_pre, v_pre, t_pre]
@@ -80,12 +106,29 @@ fft_axis = 1
 distributed_axis = 0
 verify_reconstruction = False
 
+# Set up the preprocessing tensor operation
+from pysemtools.io.wrappers import read_data
+from pysemtools.postprocessing.rotations import rotate_rank1_tensor, cartesian_to_cylindrical_rotation_matrix
+msh_data = read_data(comm, fname=mesh_fname, keys=["x", "y", "z"], parallel_io=True, distributed_axis=distributed_axis)
+rotation_function = rotate_rank1_tensor
+rotation_matrix = cartesian_to_cylindrical_rotation_matrix
+cutoff_index = len(file_sequence) # The index of the snapshot where the mirroring starts
+preproc_t = lambda field_data, info: tensor_pre(msh_data["x"], msh_data["y"], msh_data["z"], rotation_function, rotation_matrix, cutoff_index, field_data, info)
+if (cutoff_index - nsnapshots) <= 0:
+    preproc_t = None
 # Import the pysemtools routines
 from pysemtools.rom.fft_pod_wrappers import pod_fourier_1_homogenous_direction, physical_space, extended_pod_1_homogenous_direction, save_pod_state
-from pysemtools.io.wrappers import read_data
 pod, ioh, _3d_bm_shape, number_of_frequencies, N_samples = pod_fourier_1_homogenous_direction(comm, file_sequence, pod_fields, mass_matrix_fname, mass_matrix_key, k, p, fft_axis,
-                                                                                            distributed_axis=distributed_axis, preprocessing_field_operation=preproc, postprocessing_field_operation=postproc)
+                                                                                            distributed_axis=distributed_axis, preprocessing_field_operation=preproc, postprocessing_field_operation=postproc,
+                                                                                            preprocessing_tensor_operation=preproc_t)
 
+# Make sure that the mirrored time coefficients are not included in the POD
+for kappa in pod.keys():
+    try:
+        int(kappa)
+    except:
+        continue  # Skip non-integer keys
+    pod[kappa].vt_1t = pod[kappa].vt_1t[:nsnapshots]
 
 # =========================
 # Perform extended POD
@@ -223,7 +266,7 @@ save_pod_state(comm, "pod_state.hdf5", pod, ioh, pod_fields, fft_axis, N_samples
 # =========================
 comm.Barrier()
 from pysemtools.rom.fft_pod_wrappers import load_pod_state
-if 1 == 1:
+if 1 == 0:
     pod_r, ioh_r, settings_r = load_pod_state(comm, "pod_state.hdf5", parallel_io=True, distributed_axis=distributed_axis)
     for kappa in pod.keys():
         try:
