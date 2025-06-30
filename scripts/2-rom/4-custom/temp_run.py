@@ -133,7 +133,7 @@ for kappa in pod.keys():
         int(kappa)
     except:
         continue  # Skip non-integer keys
-    pod[kappa].vt_1t = pod[kappa].vt_1t[:nsnapshots]
+    pod[kappa].vt_1t = pod[kappa].vt_1t[:, :nsnapshots]
 
 # =========================
 # Perform extended POD
