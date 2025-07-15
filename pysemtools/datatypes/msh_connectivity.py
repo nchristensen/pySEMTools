@@ -20,6 +20,7 @@ from .element_slicing import (
 )
 import sys
 
+__all__ = ['MeshConnectivity']
 
 class MeshConnectivity:
     """
@@ -1392,6 +1393,42 @@ class MeshConnectivity:
         self.log.toc()
 
         return global_dssum_field
+
+    def get_boundary_node_indices(self, msh, masking_function=None):
+        """
+        Return list of (e, k, j, i) indices of GLL nodes lying on boundary edges in a 2D mesh.
+
+        Parameters
+        ----------
+        msh : Mesh
+            The mesh associated with this connectivity object.
+        masking_function : callable or None
+            Optional function with signature (msh, e, k, j, i) → bool.
+            If provided, only nodes for which this returns True are included.
+
+        Returns
+        -------
+        boundary_node_indices : list of tuple
+            Indices in the form (element, z=0, j, i) for all GLL nodes on boundary edges.
+        """
+        assert msh.gdim == 2, "This method only supports 2D meshes."
+
+        boundary_node_indices = []
+
+        for e, edge in zip(self.incomplete_eep_elem, self.incomplete_eep_edge):
+            if (e, edge) not in self.global_shared_eep_to_elem_map:
+                k, j_slice, i_slice = edge_to_slice_map_2d[edge]
+
+                j_range = range(*j_slice.indices(msh.ly)) if isinstance(j_slice, slice) else [j_slice]
+                i_range = range(*i_slice.indices(msh.lx)) if isinstance(i_slice, slice) else [i_slice]
+
+                for j in j_range:
+                    for i in i_range:
+                        if masking_function is None or masking_function(msh, e, 0, j, i):
+                            boundary_node_indices.append((e, 0, j, i))
+
+        return boundary_node_indices
+
 
 
 def find_local_shared_vef(  #

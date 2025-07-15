@@ -9,6 +9,8 @@ else:
     torch = None
 from ..monitoring.logger import Logger
 
+__all__ = ['Coef']
+
 
 class Coef:
     """
