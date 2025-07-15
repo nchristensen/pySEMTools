@@ -1394,7 +1394,7 @@ class MeshConnectivity:
 
         return global_dssum_field
 
-    def get_boundary_node_indices(self, msh, masking_function=None):
+    def get_boundary_node_indices_2d(self, msh, masking_function=None):
         """
         Return list of (e, k, j, i) indices of GLL nodes lying on boundary edges in a 2D mesh.
 
