@@ -1,5 +1,7 @@
 """ Module that contains msh class, which contains relevant data on the domain"""
 
+__all__ = ['Mesh']
+
 import sys
 if 'torch' in sys.modules:
     import torch
@@ -10,6 +12,7 @@ from ..monitoring.logger import Logger
 from .element_slicing import fetch_elem_facet_data as fd
 from .element_slicing import fetch_elem_edge_data as ed
 from .element_slicing import fetch_elem_vertex_data as vd
+
 
 NoneType = type(None)
 

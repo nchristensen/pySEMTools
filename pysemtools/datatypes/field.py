@@ -2,6 +2,9 @@
 
 import sys
 import numpy as np
+
+from .coef import Coef
+
 if 'torch' in sys.modules:
     import torch
     dtype_map = {
@@ -25,6 +28,8 @@ else:
     torch = None
 from ..monitoring.logger import Logger
 from ..io.ppymech.neksuite import pynekread_field, get_file_time
+
+__all__ = ['Field', 'FieldRegistry']
 
 NoneType = type(None)
 
