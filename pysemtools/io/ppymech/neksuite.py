@@ -446,7 +446,6 @@ def pynekread(filename, comm, data_dtype=np.double, msh=None, fld=None, overwrit
     idx = np.zeros(ioh.nelv, dtype=np.int32)
     byte_offset = mpi_offset + ioh.offset_el * mpi_int_size
     fh.Read_at_all(byte_offset, idx, status=None)
-    # data.elmap = idx
     mpi_offset += ioh.glb_nelv * mpi_int_size
 
     # Read the coordinates
@@ -462,7 +461,7 @@ def pynekread(filename, comm, data_dtype=np.double, msh=None, fld=None, overwrit
             z = np.zeros(ioh.nelv * ioh.lxyz, dtype=ioh.pynek_dtype)
             fld_file_read_vector_field(fh, byte_offset, ioh, x=x, y=y, z=z)
 
-            msh.init_from_coords(comm, x, y, z)
+            msh.init_from_coords(comm, x, y, z, elmap=idx)
 
             mpi_offset += ioh.glb_nelv * ioh.gdim * ioh.lxyz * ioh.fld_data_size
         else:
@@ -642,7 +641,6 @@ def pynekread_field(filename, comm, data_dtype=np.double, key=""):
     idx = np.zeros(ioh.nelv, dtype=np.int32)
     byte_offset = mpi_offset + ioh.offset_el * mpi_int_size
     fh.Read_at_all(byte_offset, idx, status=None)
-    # data.elmap = idx
     mpi_offset += ioh.glb_nelv * mpi_int_size
 
     # Read the coordinates
@@ -1129,8 +1127,11 @@ def pynekwrite(filename, comm, msh=None, fld=None, wdsz=4, istep=0, write_mesh=T
 
     # write element mapping
     idx = np.zeros(ioh.nelv, dtype=np.int32)
-    for i in range(0, ioh.nelv):
-        idx[i] = i + ioh.offset_el
+    if (msh is not None) and (msh.elmap is not None):
+        idx[:] = msh.elmap[:]
+    else:
+        for i in range(0, ioh.nelv):
+            idx[i] = i + ioh.offset_el
     byte_offset = mpi_offset + ioh.offset_el * mpi_int_size
     fh.Write_at_all(byte_offset, idx, status=None)
     mpi_offset += ioh.glb_nelv * mpi_int_size
