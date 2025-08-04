@@ -148,7 +148,7 @@ class Interpolator:
                 "info", "Communication pattern selected does not need global tree"
             )
 
-        elif (find_points_comm_pattern == "point_to_point") or (find_points_comm_pattern == "collective"):
+        elif (find_points_comm_pattern == "point_to_point") or (find_points_comm_pattern == "collective") or (find_points_comm_pattern == "rma"):
             self.global_tree_type = global_tree_type
             self.log.write("info", f"Using global_tree of type: {global_tree_type}")
             if global_tree_type == "rank_bbox":
@@ -534,6 +534,16 @@ class Interpolator:
                 batch_size=find_points_iterative[1],
                 max_iter=max_iter,
                 comm_pattern= find_points_comm_pattern,
+                use_oriented_bbox = use_oriented_bbox,
+            )
+        elif find_points_comm_pattern == "rma":
+            self.find_points_iterative_rma(
+                comm,
+                local_data_structure = local_data_structure,
+                test_tol=test_tol,
+                elem_percent_expansion=elem_percent_expansion,
+                tol=tol,
+                max_iter=max_iter,
                 use_oriented_bbox = use_oriented_bbox,
             )
 
@@ -1525,8 +1535,6 @@ class Interpolator:
         elem_percent_expansion=0.01,
         tol=np.finfo(np.double).eps * 10,
         max_iter=50,
-        batch_size=1,
-        comm_pattern = "point_to_point",
         use_oriented_bbox = False,
     ):
         """Find points using the point to point implementation"""
@@ -1537,6 +1545,7 @@ class Interpolator:
         self.log.tic()
         start_time = MPI.Wtime()
 
+        batch_size = 1
         if batch_size != 1:
             raise ValueError(
                 "batch_size != 1 is not supported in the RMA mode"
@@ -1607,21 +1616,7 @@ class Interpolator:
                 search_flag = False
                 break
 
-            self.log.write("info", f"Search iteration: {search_iteration+1}")
-
-            start = int(search_iteration * batch_size)
-            end = int((search_iteration + 1) * batch_size)
-            if end > len(my_dest):
-                end = len(my_dest)
-            try:
-                my_it_dest = my_dest[start:end]
-            except IndexError:
-                my_it_dest = []
-
-            # This should never happen but if it does, make sure it is a list
-            if not isinstance(my_it_dest, list):
-                self.log.write("warning", "my_it_dest is not a list, making it one")
-                my_it_dest = [my_it_dest]
+            self.log.write("info", f"Search iteration: {search_iteration+1} - {comm.Get_size() - int(keep_searching[0])} ranks still searching")
 
             mask = (self.err_code_partition != 1)
             combined_mask = mask
@@ -1721,11 +1716,8 @@ class Interpolator:
                                 if self.global_tree_type == "domain_binning":
                                     self.log.write("warning", "With batch size = 1, we have noticed that domain binning might fail due to non overlapping of bins. If it does fail, select batch size = 2 or higher")
                                 mask = (self.err_code_partition != 1)
-                                if len(my_it_dest) > 0:
-                                    candidate_mask = np.any(candidates_per_point == dest, axis=1)
-                                    combined_mask = mask & candidate_mask
-                                else:
-                                    combined_mask = mask
+                                candidate_mask = np.any(candidates_per_point == dest, axis=1)
+                                combined_mask = mask & candidate_mask
                                 not_found = np.flatnonzero(combined_mask)
                                         
                                 n_not_found = not_found.size
@@ -1762,11 +1754,16 @@ class Interpolator:
                                 MPI.Win.Put(find_rma_test_pattern_window, test_pattern_not_found, dest)
                                 MPI.Win.Flush(find_rma_test_pattern_window, dest)
                                 MPI.Win.Unlock(find_rma_test_pattern_window, dest)
+
+                                MPI.Win.Lock(find_rma_done_window, dest, MPI.LOCK_EXCLUSIVE)
+                                MPI.Win.Put(find_rma_done_window, np.ones(1, dtype=np.int64), dest)
+                                MPI.Win.Flush(find_rma_done_window, dest)
+                                MPI.Win.Unlock(find_rma_done_window, dest)
                                 i_sent_data = True
                                 i_sent_data_to = dest
 
             # Now find points from other ranks if anyone has sent me data
-            if find_rma_busy_buff[0] != -1:
+            if find_rma_busy_buff[0] != -1 and find_rma_done_buff[0] == 1:
                 my_source = [find_rma_busy_buff[0]]
                 # Give it the correct format.
                 buff_probes, buff_probes_rst = unpack_source_data(packed_source_data=[find_rma_p_probes_buff[:find_rma_n_not_found_buff[0]*4*3].copy()], number_of_arrays=2, equal_length=True, final_shape=(-1, 3))
@@ -1775,6 +1772,7 @@ class Interpolator:
                 
                 # Signal that my buffer is now ready to be used to find points
                 find_rma_busy_buff[0] = -1
+                find_rma_done_buff[0] = -1
 
                 # Set the information for the coordinate search in this rank
                 self.log.write("info", "Find rst coordinates for the points")
@@ -1915,6 +1913,7 @@ class Interpolator:
                 # Signal that my buffer is now ready to be used to find points
                 self.ranks_ive_checked.append(verify_rma_busy_buff[0])
                 verify_rma_busy_buff[0] = -1
+                verify_rma_done_buff[0] = -1
 
                 # Now loop through all the points in the buffers that
                 # have been sent back and determine which point was found
