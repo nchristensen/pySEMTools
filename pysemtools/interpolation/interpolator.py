@@ -1607,15 +1607,18 @@ class Interpolator:
         keep_searching = np.zeros((1), dtype=np.int64)
         am_i_done = False
         i_sent_data = False
+        finished_find = False
+        finished_return = False
         i_sent_data_to = -1
         while search_flag:
-            print(f'search iteration {search_iteration+1} - rank {rank} - keep searching: {keep_searching[0]}')     
+            comm.Barrier()
+            print('new search iteration')
             MPI.Win.Lock(search_done_window, 0, MPI.LOCK_SHARED)
             MPI.Win.Get(search_done_window, keep_searching, 0)
             MPI.Win.Flush(search_done_window, 0)
             MPI.Win.Unlock(search_done_window, 0)
 
-            print(f'rank {rank} - keep_searching: {keep_searching[0]}')
+            #print(f'rank {rank} - keep_searching: {keep_searching[0]}')
             if int(keep_searching[0]) == int(self.rt.comm.Get_size()):
                 self.log.write("info", "All ranks are done searching, exiting")
                 search_flag = False
@@ -1625,10 +1628,10 @@ class Interpolator:
 
             mask = (self.err_code_partition != 1)
             combined_mask = mask
-            not_found = np.flatnonzero(combined_mask)        
-            n_not_found = not_found.size
+            not_found_outer = np.flatnonzero(combined_mask)        
+            n_not_found_outer = not_found_outer.size
             
-            if n_not_found <= 0 and not am_i_done:
+            if n_not_found_outer <= 0 and not am_i_done:
                 # Say that this rank is done
                 MPI.Win.Lock(search_done_window, 0, MPI.LOCK_SHARED)
                 MPI.Win.Accumulate(search_done_window, np.ones((1), dtype=np.int64), target_rank=0, op=MPI.SUM)
@@ -1642,7 +1645,7 @@ class Interpolator:
             if search_iteration == 0:
                 # Create a remote access window for data I send and recieve 
                 ## Check the larger buffer across ranks
-                local_pack_info = np.array([n_not_found*2*3, n_not_found*4, n_not_found], dtype=np.int64)
+                local_pack_info = np.array([n_not_found_outer*2*3, n_not_found_outer*4, n_not_found_outer], dtype=np.int64)
                 recvbuff, scounts = self.rt.all_gather(data=local_pack_info, dtype=np.int64)
                 probe_packs = recvbuff[::3]
                 info_packs = recvbuff[1::3]
@@ -1678,10 +1681,15 @@ class Interpolator:
                 verify_rma_p_probes_window = MPI.Win.Create(verify_rma_p_probes_buff, disp_unit=verify_rma_p_probes_buff.itemsize, comm=self.rt.comm)
                 verify_rma_p_info_window = MPI.Win.Create(verify_rma_p_info_buff, disp_unit=verify_rma_p_info_buff.itemsize, comm=self.rt.comm)
                 verify_rma_test_pattern_window = MPI.Win.Create(verify_rma_test_pattern_buff, disp_unit=verify_rma_test_pattern_buff.itemsize, comm=self.rt.comm)
+            
+            self.rt.comm.Barrier()
+            self.log.write("info", "Send data to candidates and recieve from sources")
+            print(f'Rank {rank} - find_rma_busy_buff: {find_rma_busy_buff[0]}, find_rma_done_buff: {find_rma_done_buff[0]}, find_rma_n_not_found_buff: {find_rma_n_not_found_buff[0]}, verify_rma_busy_buff: {verify_rma_busy_buff[0]}, verify_rma_done_buff: {verify_rma_done_buff[0]}, verify_rma_n_not_found_buff: {verify_rma_n_not_found_buff[0]}')
+            print(f'search iteration {search_iteration+1} - rank {rank} - keep searching: {keep_searching[0]}')     
 
             # I still have data that must be checked, so I will send to my candidates
             # Only send data if you have not sent in the previous iteration. This is needed to avoid locking checking data from other ranks
-            if n_not_found > 0 and (len(my_dest) != len(self.ranks_ive_checked)) and (not i_sent_data):
+            if n_not_found_outer > 0 and (len(my_dest) != len(self.ranks_ive_checked)) and (not i_sent_data):
                 
                 for dest in my_dest:
                     if dest not in self.ranks_ive_checked:
@@ -1727,7 +1735,6 @@ class Interpolator:
                                 n_not_found = not_found.size
                                 if n_not_found < 1:
                                     self.ranks_ive_checked.append(dest)
-
                                 else:
                                     probe_not_found = self.probe_partition[not_found]
                                     probe_rst_not_found = self.probe_rst_partition[not_found]
@@ -1772,84 +1779,93 @@ class Interpolator:
                                     break
 
             # Now find points from other ranks if anyone has sent me data
-            time.sleep(2)
+            #time.sleep(2)
+            if finished_find and finished_return:
+                finished_find = False
+                finished_return = False
             if find_rma_busy_buff[0] != -1 and find_rma_done_buff[0] == 1:
-                my_source = [find_rma_busy_buff[0]]
-                # Give it the correct format.
-                buff_probes, buff_probes_rst = unpack_source_data(packed_source_data=[find_rma_p_probes_buff[:find_rma_n_not_found_buff[0]*2*3].copy()], number_of_arrays=2, equal_length=True, final_shape=(-1, 3))
-                buff_el_owner, buff_glb_el_owner, buff_rank_owner, buff_err_code = unpack_source_data(packed_source_data=[find_rma_p_info_buff[:find_rma_n_not_found_buff[0]*4]].copy(), number_of_arrays=4, equal_length=True)
-                buff_test_pattern = [find_rma_test_pattern_buff[:find_rma_n_not_found_buff[0]].copy()]
                 
-                # Set the information for the coordinate search in this rank
-                self.log.write("info", "Find rst coordinates for the points")
-                mesh_info = {}
-                mesh_info["x"] = self.x
-                mesh_info["y"] = self.y
-                mesh_info["z"] = self.z
-                mesh_info["bbox"] = self.my_bbox
-                if hasattr(self, "my_tree"):
-                    mesh_info["kd_tree"] = self.my_tree
-                if hasattr(self, "my_bbox_maxdist"):
-                    mesh_info["bbox_max_dist"] = self.my_bbox_maxdist
-                if hasattr(self, "local_data_structure"):
-                    mesh_info["local_data_structure"] = self.local_data_structure
 
-                settings = {}
-                settings["not_found_code"] = -10
-                settings["use_test_pattern"] = True
-                settings["elem_percent_expansion"] = elem_percent_expansion
-                settings["progress_bar"] = self.progress_bar
-                settings["find_pts_tol"] = tol
-                settings["find_pts_max_iterations"] = max_iter
+                if finished_find:
+                    pass
+                else:
+                    my_source = [find_rma_busy_buff[0]]
+                    # Give it the correct format.
+                    buff_probes, buff_probes_rst = unpack_source_data(packed_source_data=[find_rma_p_probes_buff[:find_rma_n_not_found_buff[0]*2*3].copy()], number_of_arrays=2, equal_length=True, final_shape=(-1, 3))
+                    buff_el_owner, buff_glb_el_owner, buff_rank_owner, buff_err_code = unpack_source_data(packed_source_data=[find_rma_p_info_buff[:find_rma_n_not_found_buff[0]*4]].copy(), number_of_arrays=4, equal_length=True)
+                    buff_test_pattern = [find_rma_test_pattern_buff[:find_rma_n_not_found_buff[0]].copy()]
+                    
+                    # Set the information for the coordinate search in this rank
+                    self.log.write("info", "Find rst coordinates for the points")
+                    mesh_info = {}
+                    mesh_info["x"] = self.x
+                    mesh_info["y"] = self.y
+                    mesh_info["z"] = self.z
+                    mesh_info["bbox"] = self.my_bbox
+                    if hasattr(self, "my_tree"):
+                        mesh_info["kd_tree"] = self.my_tree
+                    if hasattr(self, "my_bbox_maxdist"):
+                        mesh_info["bbox_max_dist"] = self.my_bbox_maxdist
+                    if hasattr(self, "local_data_structure"):
+                        mesh_info["local_data_structure"] = self.local_data_structure
 
-                buffers = {}
-                buffers["r"] = self.r
-                buffers["s"] = self.s
-                buffers["t"] = self.t
-                buffers["test_interp"] = self.test_interp
+                    settings = {}
+                    settings["not_found_code"] = -10
+                    settings["use_test_pattern"] = True
+                    settings["elem_percent_expansion"] = elem_percent_expansion
+                    settings["progress_bar"] = self.progress_bar
+                    settings["find_pts_tol"] = tol
+                    settings["find_pts_max_iterations"] = max_iter
 
-                print(f'rank {comm.Get_rank()} started checking')
-                print(f'ranks ive checked: {self.ranks_ive_checked} out of my destinations: {my_dest}')
+                    buffers = {}
+                    buffers["r"] = self.r
+                    buffers["s"] = self.s
+                    buffers["t"] = self.t
+                    buffers["test_interp"] = self.test_interp
 
-                # Now find the rst coordinates for the points stored in each of the buffers
-                for source_index in range(0, len(my_source)):
+                    print(f'rank {comm.Get_rank()} started checking')
+                    print(f'ranks ive checked: {self.ranks_ive_checked} out of my destinations: {my_dest}')
 
-                    self.log.write(
-                        "debug", f"Processing batch: {source_index} out of {len(my_source)}"
-                    )
+                    # Now find the rst coordinates for the points stored in each of the buffers
+                    for source_index in range(0, len(my_source)):
 
-                    probes_info = {}
-                    probes_info["probes"] = buff_probes[source_index]
-                    probes_info["probes_rst"] = buff_probes_rst[source_index]
-                    probes_info["el_owner"] = buff_el_owner[source_index]
-                    probes_info["glb_el_owner"] = buff_glb_el_owner[source_index]
-                    probes_info["rank_owner"] = buff_rank_owner[source_index]
-                    probes_info["err_code"] = buff_err_code[source_index]
-                    probes_info["test_pattern"] = buff_test_pattern[source_index]
-                    probes_info["rank"] = rank
-                    probes_info["offset_el"] = self.offset_el
-                    [
-                        buff_probes[source_index],
-                        buff_probes_rst[source_index],
-                        buff_el_owner[source_index],
-                        buff_glb_el_owner[source_index],
-                        buff_rank_owner[source_index],
-                        buff_err_code[source_index],
-                        buff_test_pattern[source_index],
-                    ] = self.ei.find_rst(probes_info, mesh_info, settings, buffers=buffers)
-                
-                    print(f'rank: {comm.Get_rank()}, finished checking')
+                        self.log.write(
+                            "debug", f"Processing batch: {source_index} out of {len(my_source)}"
+                        )
 
-                # Set the request to Recieve back the data that I have sent to my candidates
-                #self.log.write("info", "Send data to sources and recieve from candidates")
+                        probes_info = {}
+                        probes_info["probes"] = buff_probes[source_index]
+                        probes_info["probes_rst"] = buff_probes_rst[source_index]
+                        probes_info["el_owner"] = buff_el_owner[source_index]
+                        probes_info["glb_el_owner"] = buff_glb_el_owner[source_index]
+                        probes_info["rank_owner"] = buff_rank_owner[source_index]
+                        probes_info["err_code"] = buff_err_code[source_index]
+                        probes_info["test_pattern"] = buff_test_pattern[source_index]
+                        probes_info["rank"] = rank
+                        probes_info["offset_el"] = self.offset_el
+                        [
+                            buff_probes[source_index],
+                            buff_probes_rst[source_index],
+                            buff_el_owner[source_index],
+                            buff_glb_el_owner[source_index],
+                            buff_rank_owner[source_index],
+                            buff_err_code[source_index],
+                            buff_test_pattern[source_index],
+                        ] = self.ei.find_rst(probes_info, mesh_info, settings, buffers=buffers)
+                    
+                        print(f'rank: {comm.Get_rank()}, finished checking')
 
-                # Pack and send/recv the probe data
-                p_buff_probes = pack_destination_data(destination_data=[buff_probes, buff_probes_rst])
-                p_buff_info = pack_destination_data(destination_data=[buff_el_owner, buff_glb_el_owner, buff_rank_owner, buff_err_code])
+                    # Set the request to Recieve back the data that I have sent to my candidates
+                    #self.log.write("info", "Send data to sources and recieve from candidates")
+
+                    # Pack and send/recv the probe data
+                    p_buff_probes = pack_destination_data(destination_data=[buff_probes, buff_probes_rst])
+                    p_buff_info = pack_destination_data(destination_data=[buff_el_owner, buff_glb_el_owner, buff_rank_owner, buff_err_code])
+
+                    finished_find = True
 
                 # Send the data back to the source rank - Follow the same handshake as before, but this time, do not try to get a new rank if this one is busy. Simply wait until it can recieve data
-                returned_data = False
-                while not returned_data:
+                if not finished_return:
                     print(f'rank {comm.Get_rank()} - trying to send data to rank {my_source[0]}, might be locked')
                     #import sys
                     #sys.exit(1)
@@ -1916,6 +1932,10 @@ class Interpolator:
                             find_rma_done_buff[0] = -1
                             find_rma_n_not_found_buff[0] = 0
 
+                            # Reset to allow the rank enter the loop in next iterations if it needs to
+                            finished_find = True
+                            finished_return = True
+
                             #import sys
                             #sys.exit(1)
 
@@ -1923,66 +1943,44 @@ class Interpolator:
             if not i_sent_data:
                 pass
             else:
-                # Check if I have recieved the data back already
-                data_transfer_done = False
-                while not data_transfer_done:
-                    #print(f' Rank {comm.Get_rank()} - verify_rma_busy_buff: {verify_rma_busy_buff[0]}, verify_rma_done_buff: {verify_rma_done_buff[0]}, might be locked waiting for data from rank {i_sent_data_to}')
-                    if verify_rma_busy_buff[0] != -1 and verify_rma_done_buff[0] == 1:
-                        data_transfer_done = True
+                # Check if I have recieved the data back already 
+                condition = (verify_rma_busy_buff[0] != -1) and (verify_rma_done_buff[0] == 1)
 
-                # The previous loop will wait until there is data here. So we can continue
-                # Give it the correct format.
-                print(f'rank {comm.Get_rank()} is getting {verify_rma_n_not_found_buff[0]} points from rank {verify_rma_busy_buff[0]}')
-                obuff_probes, obuff_probes_rst = unpack_source_data(packed_source_data=[verify_rma_p_probes_buff[:verify_rma_n_not_found_buff[0]*2*3].copy()], number_of_arrays=2, equal_length=True, final_shape=(-1, 3))
-                obuff_el_owner, obuff_glb_el_owner, obuff_rank_owner, obuff_err_code = unpack_source_data(packed_source_data=[verify_rma_p_info_buff[:verify_rma_n_not_found_buff[0]*4]].copy(), number_of_arrays=4, equal_length=True)
-                obuff_test_pattern = [verify_rma_test_pattern_buff[:verify_rma_n_not_found_buff[0]].copy()]
+                if not condition:
+                    pass
+                else:
 
-                # Signal that my buffer is now ready to be used to find points
-                self.ranks_ive_checked.append(verify_rma_busy_buff[0])
-                print(f'rank {comm.Get_rank()} has checked {self.ranks_ive_checked} out of my destinations: {my_dest}')
+                    # The previous loop will wait until there is data here. So we can continue
+                    # Give it the correct format.
+                    print(f'rank {comm.Get_rank()} is getting {verify_rma_n_not_found_buff[0]} points from rank {verify_rma_busy_buff[0]}')
+                    obuff_probes, obuff_probes_rst = unpack_source_data(packed_source_data=[verify_rma_p_probes_buff[:verify_rma_n_not_found_buff[0]*2*3].copy()], number_of_arrays=2, equal_length=True, final_shape=(-1, 3))
+                    obuff_el_owner, obuff_glb_el_owner, obuff_rank_owner, obuff_err_code = unpack_source_data(packed_source_data=[verify_rma_p_info_buff[:verify_rma_n_not_found_buff[0]*4]].copy(), number_of_arrays=4, equal_length=True)
+                    obuff_test_pattern = [verify_rma_test_pattern_buff[:verify_rma_n_not_found_buff[0]].copy()]
 
-                # Now loop through all the points in the buffers that
-                # have been sent back and determine which point was found
-                self.log.write(
-                    "info", "Determine which points were found and find best candidate"
-                )
-                print(f'rank {comm.Get_rank()} determining found points')
-                for relative_point, absolute_point  in enumerate(not_found):
+                    # Signal that my buffer is now ready to be used to find points
+                    self.ranks_ive_checked.append(verify_rma_busy_buff[0])
+                    print(f'rank {comm.Get_rank()} has checked {self.ranks_ive_checked} out of my destinations: {my_dest}')
 
-                    # These are the error code and test patterns for
-                    # this point from all the ranks that sent back
-                    all_err_codes = [arr[relative_point] for arr in obuff_err_code]
-                    all_test_patterns = [arr[relative_point] for arr in obuff_test_pattern]
+                    # Now loop through all the points in the buffers that
+                    # have been sent back and determine which point was found
+                    self.log.write(
+                        "info", "Determine which points were found and find best candidate"
+                    )
+                    print(f'rank {comm.Get_rank()} determining found points')
+                    for relative_point, absolute_point  in enumerate(not_found):
 
-                    # Check if any rank had certainty that it had found the point
-                    found_err_code = np.where(np.array(all_err_codes) == 1)[0]
+                        # These are the error code and test patterns for
+                        # this point from all the ranks that sent back
+                        all_err_codes = [arr[relative_point] for arr in obuff_err_code]
+                        all_test_patterns = [arr[relative_point] for arr in obuff_test_pattern]
 
-                    # If the point was found in any rank, just choose the first
-                    # one in the list (in case there was more than one founder):
-                    if found_err_code.size > 0:
-                        index = found_err_code[0]
-                        self.probe_partition[absolute_point, :] = obuff_probes[index][relative_point, :]
-                        self.probe_rst_partition[absolute_point, :] = obuff_probes_rst[index][relative_point, :]
-                        self.el_owner_partition[absolute_point] = obuff_el_owner[index][relative_point]
-                        self.glb_el_owner_partition[absolute_point] = obuff_glb_el_owner[index][relative_point]
-                        self.rank_owner_partition[absolute_point] = obuff_rank_owner[index][relative_point]
-                        self.err_code_partition[absolute_point] = obuff_err_code[index][relative_point]
-                        self.test_pattern_partition[absolute_point] = obuff_test_pattern[index][relative_point]
+                        # Check if any rank had certainty that it had found the point
+                        found_err_code = np.where(np.array(all_err_codes) == 1)[0]
 
-                        # skip the rest of the loop
-                        continue
-
-                    # If the point was not found with certainty, then choose as
-                    # owner the the one that produced the smaller error in the test pattern
-                    try:
-                        min_test_pattern = np.where(
-                            np.array(all_test_patterns) == np.array(all_test_patterns).min()
-                        )[0]
-                    except ValueError:
-                        min_test_pattern = np.array([])
-                    if min_test_pattern.size > 0:
-                        index = min_test_pattern[0]
-                        if obuff_test_pattern[index][relative_point] < self.test_pattern_partition[absolute_point]:
+                        # If the point was found in any rank, just choose the first
+                        # one in the list (in case there was more than one founder):
+                        if found_err_code.size > 0:
+                            index = found_err_code[0]
                             self.probe_partition[absolute_point, :] = obuff_probes[index][relative_point, :]
                             self.probe_rst_partition[absolute_point, :] = obuff_probes_rst[index][relative_point, :]
                             self.el_owner_partition[absolute_point] = obuff_el_owner[index][relative_point]
@@ -1990,25 +1988,47 @@ class Interpolator:
                             self.rank_owner_partition[absolute_point] = obuff_rank_owner[index][relative_point]
                             self.err_code_partition[absolute_point] = obuff_err_code[index][relative_point]
                             self.test_pattern_partition[absolute_point] = obuff_test_pattern[index][relative_point]
-                
-                print(f'rank {comm.Get_rank()} determined found points')
 
-                # Signal I am ready for more data 
-                verify_rma_busy_buff[0] = -1
-                verify_rma_done_buff[0] = -1
-                verify_rma_n_not_found_buff[0] = 0
-                i_sent_data = False
-                i_sent_data_to = -1
+                            # skip the rest of the loop
+                            continue
 
-                print(f'rank {comm.Get_rank()} Trying to acumulate counter')
-                if len(self.ranks_ive_checked) == len(my_dest) and not am_i_done:
-                    # Say that this rank is done
-                    MPI.Win.Lock(search_done_window, 0, MPI.LOCK_SHARED)
-                    MPI.Win.Accumulate(search_done_window, np.ones((1), dtype=np.int64), target_rank=0, op=MPI.SUM)
-                    MPI.Win.Flush(search_done_window, 0)
-                    MPI.Win.Unlock(search_done_window, 0) 
-                    am_i_done = True
-                print(f'rank {comm.Get_rank()} managed to acumulate counter')
+                        # If the point was not found with certainty, then choose as
+                        # owner the the one that produced the smaller error in the test pattern
+                        try:
+                            min_test_pattern = np.where(
+                                np.array(all_test_patterns) == np.array(all_test_patterns).min()
+                            )[0]
+                        except ValueError:
+                            min_test_pattern = np.array([])
+                        if min_test_pattern.size > 0:
+                            index = min_test_pattern[0]
+                            if obuff_test_pattern[index][relative_point] < self.test_pattern_partition[absolute_point]:
+                                self.probe_partition[absolute_point, :] = obuff_probes[index][relative_point, :]
+                                self.probe_rst_partition[absolute_point, :] = obuff_probes_rst[index][relative_point, :]
+                                self.el_owner_partition[absolute_point] = obuff_el_owner[index][relative_point]
+                                self.glb_el_owner_partition[absolute_point] = obuff_glb_el_owner[index][relative_point]
+                                self.rank_owner_partition[absolute_point] = obuff_rank_owner[index][relative_point]
+                                self.err_code_partition[absolute_point] = obuff_err_code[index][relative_point]
+                                self.test_pattern_partition[absolute_point] = obuff_test_pattern[index][relative_point]
+                    
+                    print(f'rank {comm.Get_rank()} determined found points')
+
+                    # Signal I am ready for more data 
+                    verify_rma_busy_buff[0] = -1
+                    verify_rma_done_buff[0] = -1
+                    verify_rma_n_not_found_buff[0] = 0
+                    i_sent_data = False
+                    i_sent_data_to = -1
+
+                    print(f'rank {comm.Get_rank()} Trying to acumulate counter')
+                    if len(self.ranks_ive_checked) == len(my_dest) and not am_i_done:
+                        # Say that this rank is done
+                        MPI.Win.Lock(search_done_window, 0, MPI.LOCK_SHARED)
+                        MPI.Win.Accumulate(search_done_window, np.ones((1), dtype=np.int64), target_rank=0, op=MPI.SUM)
+                        MPI.Win.Flush(search_done_window, 0)
+                        MPI.Win.Unlock(search_done_window, 0) 
+                        am_i_done = True
+                    print(f'rank {comm.Get_rank()} managed to acumulate counter')
 
 
             search_iteration += 1
