@@ -1606,7 +1606,10 @@ class Interpolator:
         # Check if all ranks are done
         keep_searching = np.zeros((1), dtype=np.int64)
         am_i_done = False
-        while search_flag:     
+        i_sent_data = False
+        i_sent_data_to = -1
+        while search_flag:
+            print(f'search iteration {search_iteration+1} - rank {rank} - keep searching: {keep_searching[0]}')     
             MPI.Win.Lock(search_done_window, 0, MPI.LOCK_SHARED)
             MPI.Win.Get(search_done_window, keep_searching, 0)
             MPI.Win.Flush(search_done_window, 0)
@@ -1677,9 +1680,8 @@ class Interpolator:
                 verify_rma_test_pattern_window = MPI.Win.Create(verify_rma_test_pattern_buff, disp_unit=verify_rma_test_pattern_buff.itemsize, comm=self.rt.comm)
 
             # I still have data that must be checked, so I will send to my candidates
-            i_sent_data = False
-            i_sent_data_to = -1
-            if n_not_found > 0 and (len(my_dest) != len(self.ranks_ive_checked)):
+            # Only send data if you have not sent in the previous iteration. This is needed to avoid locking checking data from other ranks
+            if n_not_found > 0 and (len(my_dest) != len(self.ranks_ive_checked)) and (not i_sent_data):
                 
                 for dest in my_dest:
                     if dest not in self.ranks_ive_checked:
@@ -1723,49 +1725,54 @@ class Interpolator:
                                 not_found = np.flatnonzero(combined_mask)
                                         
                                 n_not_found = not_found.size
-                                probe_not_found = self.probe_partition[not_found]
-                                probe_rst_not_found = self.probe_rst_partition[not_found]
-                                el_owner_not_found = self.el_owner_partition[not_found]
-                                glb_el_owner_not_found = self.glb_el_owner_partition[not_found]
-                                rank_owner_not_found = self.rank_owner_partition[not_found]
-                                err_code_not_found = self.err_code_partition[not_found]
-                                test_pattern_not_found = self.test_pattern_partition[not_found]
-            
-                                # Pack and send/recv the probe data
-                                p_probes = pack_data(array_list=[probe_not_found, probe_rst_not_found])
-                                p_info = pack_data(array_list=[el_owner_not_found, glb_el_owner_not_found, rank_owner_not_found, err_code_not_found])
+                                if n_not_found < 1:
+                                    self.ranks_ive_checked.append(dest)
 
-                                # I can put my data in my destination rank
-                                MPI.Win.Lock(find_rma_n_not_found_window, dest, MPI.LOCK_SHARED)
-                                n_buff = np.ones(1, dtype=np.int64) * n_not_found
-                                MPI.Win.Put(find_rma_n_not_found_window, n_buff, dest)
-                                MPI.Win.Flush(find_rma_n_not_found_window, dest)
-                                MPI.Win.Unlock(find_rma_n_not_found_window, dest)
+                                else:
+                                    probe_not_found = self.probe_partition[not_found]
+                                    probe_rst_not_found = self.probe_rst_partition[not_found]
+                                    el_owner_not_found = self.el_owner_partition[not_found]
+                                    glb_el_owner_not_found = self.glb_el_owner_partition[not_found]
+                                    rank_owner_not_found = self.rank_owner_partition[not_found]
+                                    err_code_not_found = self.err_code_partition[not_found]
+                                    test_pattern_not_found = self.test_pattern_partition[not_found]
+                
+                                    # Pack and send/recv the probe data
+                                    p_probes = pack_data(array_list=[probe_not_found, probe_rst_not_found])
+                                    p_info = pack_data(array_list=[el_owner_not_found, glb_el_owner_not_found, rank_owner_not_found, err_code_not_found])
 
-                                MPI.Win.Lock(find_rma_p_probes_window, dest, MPI.LOCK_SHARED)
-                                MPI.Win.Put(find_rma_p_probes_window, p_probes, dest)
-                                MPI.Win.Flush(find_rma_p_probes_window, dest)
-                                MPI.Win.Unlock(find_rma_p_probes_window, dest)
+                                    # I can put my data in my destination rank
+                                    MPI.Win.Lock(find_rma_n_not_found_window, dest, MPI.LOCK_SHARED)
+                                    n_buff = np.ones(1, dtype=np.int64) * n_not_found
+                                    MPI.Win.Put(find_rma_n_not_found_window, n_buff, dest)
+                                    MPI.Win.Flush(find_rma_n_not_found_window, dest)
+                                    MPI.Win.Unlock(find_rma_n_not_found_window, dest)
 
-                                MPI.Win.Lock(find_rma_p_info_window, dest, MPI.LOCK_SHARED)
-                                MPI.Win.Put(find_rma_p_info_window, p_info, dest)
-                                MPI.Win.Flush(find_rma_p_info_window, dest)
-                                MPI.Win.Unlock(find_rma_p_info_window, dest)
+                                    MPI.Win.Lock(find_rma_p_probes_window, dest, MPI.LOCK_SHARED)
+                                    MPI.Win.Put(find_rma_p_probes_window, p_probes, dest)
+                                    MPI.Win.Flush(find_rma_p_probes_window, dest)
+                                    MPI.Win.Unlock(find_rma_p_probes_window, dest)
 
-                                MPI.Win.Lock(find_rma_test_pattern_window, dest, MPI.LOCK_SHARED)
-                                MPI.Win.Put(find_rma_test_pattern_window, test_pattern_not_found, dest)
-                                MPI.Win.Flush(find_rma_test_pattern_window, dest)
-                                MPI.Win.Unlock(find_rma_test_pattern_window, dest)
+                                    MPI.Win.Lock(find_rma_p_info_window, dest, MPI.LOCK_SHARED)
+                                    MPI.Win.Put(find_rma_p_info_window, p_info, dest)
+                                    MPI.Win.Flush(find_rma_p_info_window, dest)
+                                    MPI.Win.Unlock(find_rma_p_info_window, dest)
 
-                                MPI.Win.Lock(find_rma_done_window, dest, MPI.LOCK_SHARED)
-                                MPI.Win.Put(find_rma_done_window, np.ones(1, dtype=np.int64), dest)
-                                MPI.Win.Flush(find_rma_done_window, dest)
-                                MPI.Win.Unlock(find_rma_done_window, dest)
-                                i_sent_data = True
-                                i_sent_data_to = dest
-                                break
+                                    MPI.Win.Lock(find_rma_test_pattern_window, dest, MPI.LOCK_SHARED)
+                                    MPI.Win.Put(find_rma_test_pattern_window, test_pattern_not_found, dest)
+                                    MPI.Win.Flush(find_rma_test_pattern_window, dest)
+                                    MPI.Win.Unlock(find_rma_test_pattern_window, dest)
+
+                                    MPI.Win.Lock(find_rma_done_window, dest, MPI.LOCK_SHARED)
+                                    MPI.Win.Put(find_rma_done_window, np.ones(1, dtype=np.int64), dest)
+                                    MPI.Win.Flush(find_rma_done_window, dest)
+                                    MPI.Win.Unlock(find_rma_done_window, dest)
+                                    i_sent_data = True
+                                    i_sent_data_to = dest
+                                    break
 
             # Now find points from other ranks if anyone has sent me data
+            time.sleep(2)
             if find_rma_busy_buff[0] != -1 and find_rma_done_buff[0] == 1:
                 my_source = [find_rma_busy_buff[0]]
                 # Give it the correct format.
@@ -1843,6 +1850,9 @@ class Interpolator:
                 # Send the data back to the source rank - Follow the same handshake as before, but this time, do not try to get a new rank if this one is busy. Simply wait until it can recieve data
                 returned_data = False
                 while not returned_data:
+                    print(f'rank {comm.Get_rank()} - trying to send data to rank {my_source[0]}, might be locked')
+                    #import sys
+                    #sys.exit(1)
                     # Check if the rank is busy
                     MPI.Win.Lock(verify_rma_busy_window, my_source[0], MPI.LOCK_SHARED)
                     busy_buff = np.empty((1), dtype=np.int64)
@@ -1906,6 +1916,9 @@ class Interpolator:
                             find_rma_done_buff[0] = -1
                             find_rma_n_not_found_buff[0] = 0
 
+                            #import sys
+                            #sys.exit(1)
+
 
             if not i_sent_data:
                 pass
@@ -1913,6 +1926,7 @@ class Interpolator:
                 # Check if I have recieved the data back already
                 data_transfer_done = False
                 while not data_transfer_done:
+                    #print(f' Rank {comm.Get_rank()} - verify_rma_busy_buff: {verify_rma_busy_buff[0]}, verify_rma_done_buff: {verify_rma_done_buff[0]}, might be locked waiting for data from rank {i_sent_data_to}')
                     if verify_rma_busy_buff[0] != -1 and verify_rma_done_buff[0] == 1:
                         data_transfer_done = True
 
@@ -1983,6 +1997,8 @@ class Interpolator:
                 verify_rma_busy_buff[0] = -1
                 verify_rma_done_buff[0] = -1
                 verify_rma_n_not_found_buff[0] = 0
+                i_sent_data = False
+                i_sent_data_to = -1
 
                 print(f'rank {comm.Get_rank()} Trying to acumulate counter')
                 if len(self.ranks_ive_checked) == len(my_dest) and not am_i_done:
