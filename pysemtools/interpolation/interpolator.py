@@ -1687,8 +1687,8 @@ class Interpolator:
             # Only send data if you have not sent in the previous iteration. This is needed to avoid locking checking data from other ranks
 
             # If I think I have sent the data to another rank, but for some reason the other rank does not detect it, then remove that rank from my list to avoid waiting forever
-            flag = True
-            if i_sent_data and flag:
+            # This should not be needed, as races should be avoided by the handshakes we do. Think more about it later
+            if i_sent_data:
                 MPI.Win.Lock(find_rma_busy_window, i_sent_data_to, MPI.LOCK_SHARED)
                 busy_buff = np.empty((1), dtype=np.int64)
                 MPI.Win.Get(find_rma_busy_window, busy_buff, dest)
