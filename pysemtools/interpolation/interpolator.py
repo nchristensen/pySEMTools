@@ -1685,6 +1685,21 @@ class Interpolator:
 
             # I still have data that must be checked, so I will send to my candidates
             # Only send data if you have not sent in the previous iteration. This is needed to avoid locking checking data from other ranks
+
+            # If I think I have sent the data to another rank, but for some reason the other rank does not detect it, then remove that rank from my list to avoid waiting forever
+            if i_sent_data:
+                MPI.Win.Lock(find_rma_busy_window, i_sent_data_to, MPI.LOCK_SHARED)
+                busy_buff = np.empty((1), dtype=np.int64)
+                MPI.Win.Get(find_rma_busy_window, busy_buff, dest)
+                MPI.Win.Flush(find_rma_busy_window, dest)
+                MPI.Win.Unlock(find_rma_busy_window, dest)
+
+                if busy_buff[0] != self.rt.comm.Get_rank():
+                    # The rank is not processing my data, so try to send again to it or to another
+                    self.ranks_ive_sent_to.remove(i_sent_data_to)
+                    i_sent_data = False
+                    i_sent_data_to = -1
+
             if n_not_found_outer > 0 and (len(my_dest) != len(self.ranks_ive_checked)) and (not i_sent_data):
                 
                 for dest in my_dest:
@@ -1777,6 +1792,12 @@ class Interpolator:
 
             # Now find points from other ranks if anyone has sent me data
             #time.sleep(0.0000001)
+            cycles = 0
+            while find_rma_busy_buff[0] != 1 and cycles < 1000:
+                time.sleep(0.00001)
+                cycles += 1
+            print(f'Rank {rank} - cycles: {cycles} find_rma_busy_buff: {find_rma_busy_buff[0]}, find_rma_done_buff: {find_rma_done_buff[0]}, find_rma_n_not_found_buff: {find_rma_n_not_found_buff[0]}, verify_rma_busy_buff: {verify_rma_busy_buff[0]}, verify_rma_done_buff: {verify_rma_done_buff[0]}, verify_rma_n_not_found_buff: {verify_rma_n_not_found_buff[0]}')
+
             if find_rma_busy_buff[0] != -1 and find_rma_done_buff[0] == 1:
                 my_source = [find_rma_busy_buff[0].copy()]
                 # Give it the correct format.
