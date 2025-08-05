@@ -1687,14 +1687,16 @@ class Interpolator:
             # Only send data if you have not sent in the previous iteration. This is needed to avoid locking checking data from other ranks
 
             # If I think I have sent the data to another rank, but for some reason the other rank does not detect it, then remove that rank from my list to avoid waiting forever
-            if i_sent_data:
+            flag = True
+            if i_sent_data and flag:
                 MPI.Win.Lock(find_rma_busy_window, i_sent_data_to, MPI.LOCK_SHARED)
                 busy_buff = np.empty((1), dtype=np.int64)
                 MPI.Win.Get(find_rma_busy_window, busy_buff, dest)
                 MPI.Win.Flush(find_rma_busy_window, dest)
                 MPI.Win.Unlock(find_rma_busy_window, dest)
 
-                if busy_buff[0] != self.rt.comm.Get_rank():
+                # If it says that the other rank is not busy, but I also do not have the data back, then reset and send agai
+                if busy_buff[0] != self.rt.comm.Get_rank() and verify_rma_busy_buff[0] != i_sent_data_to:
                     # The rank is not processing my data, so try to send again to it or to another
                     self.ranks_ive_sent_to.remove(i_sent_data_to)
                     i_sent_data = False
@@ -1722,7 +1724,7 @@ class Interpolator:
 
                             # Make sure that I was the one that put the data first. This is a handshake to avoid races
                             MPI.Win.Lock(find_rma_busy_window, dest, MPI.LOCK_SHARED)
-                            busy_buff[0] = np.empty((1), dtype=np.int64)
+                            busy_buff = np.empty((1), dtype=np.int64)
                             MPI.Win.Get(find_rma_busy_window, busy_buff, dest)
                             MPI.Win.Flush(find_rma_busy_window, dest)
                             MPI.Win.Unlock(find_rma_busy_window, dest)
@@ -1746,6 +1748,7 @@ class Interpolator:
                                 n_not_found = not_found.size
                                 if n_not_found < 1:
                                     self.ranks_ive_checked.append(dest)
+
                                 else:
                                     probe_not_found = self.probe_partition[not_found]
                                     probe_rst_not_found = self.probe_rst_partition[not_found]
@@ -1792,11 +1795,11 @@ class Interpolator:
 
             # Now find points from other ranks if anyone has sent me data
             #time.sleep(0.0000001)
-            cycles = 0
-            while find_rma_busy_buff[0] != 1 and cycles < 1000:
-                time.sleep(0.00001)
-                cycles += 1
-            print(f'Rank {rank} - cycles: {cycles} find_rma_busy_buff: {find_rma_busy_buff[0]}, find_rma_done_buff: {find_rma_done_buff[0]}, find_rma_n_not_found_buff: {find_rma_n_not_found_buff[0]}, verify_rma_busy_buff: {verify_rma_busy_buff[0]}, verify_rma_done_buff: {verify_rma_done_buff[0]}, verify_rma_n_not_found_buff: {verify_rma_n_not_found_buff[0]}')
+            #cycles = 0
+            #while find_rma_busy_buff[0] != 1 and cycles < 1000:
+            #    time.sleep(0.00001)
+            #    cycles += 1
+            #print(f'Rank {rank} - cycles: {cycles} find_rma_busy_buff: {find_rma_busy_buff[0]}, find_rma_done_buff: {find_rma_done_buff[0]}, find_rma_n_not_found_buff: {find_rma_n_not_found_buff[0]}, verify_rma_busy_buff: {verify_rma_busy_buff[0]}, verify_rma_done_buff: {verify_rma_done_buff[0]}, verify_rma_n_not_found_buff: {verify_rma_n_not_found_buff[0]}')
 
             if find_rma_busy_buff[0] != -1 and find_rma_done_buff[0] == 1:
                 my_source = [find_rma_busy_buff[0].copy()]
@@ -1899,7 +1902,7 @@ class Interpolator:
 
                         # Make sure that I was the one that put the data first. This is a handshake to avoid races
                         MPI.Win.Lock(verify_rma_busy_window, my_source[0], MPI.LOCK_SHARED)
-                        busy_buff[0] = np.empty((1), dtype=np.int64)
+                        busy_buff = np.empty((1), dtype=np.int64)
                         MPI.Win.Get(verify_rma_busy_window, busy_buff, my_source[0])
                         MPI.Win.Flush(verify_rma_busy_window, my_source[0])
                         MPI.Win.Unlock(verify_rma_busy_window, my_source[0])
