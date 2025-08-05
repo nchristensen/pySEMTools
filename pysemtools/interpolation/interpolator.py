@@ -1611,8 +1611,9 @@ class Interpolator:
         finished_find = False
         finished_return = False
         i_sent_data_to = -1
+        epochs = 10000
         while search_flag:
-            if np.mod(search_iteration, 10000) == 0:
+            if np.mod(search_iteration, epochs) == 0:
                 self.log.write("info", f'search iteration {search_iteration+1} - rank {rank} - keep searching: {keep_searching[0]}')
             MPI.Win.Lock(search_done_window, 0, MPI.LOCK_SHARED)
             MPI.Win.Get(search_done_window, keep_searching, 0)
@@ -1915,9 +1916,24 @@ class Interpolator:
                             returned_data = True
                 
                             # Signal that my buffer is now ready to be used to find points
-                            find_rma_busy_buff[0] = -1
-                            find_rma_done_buff[0] = -1
-                            find_rma_n_not_found_buff[0] = 0
+                            MPI.Win.Lock(find_rma_busy_window, comm.Get_rank(), MPI.LOCK_SHARED)
+                            MPI.Win.Put(find_rma_busy_window, np.ones(1, dtype=np.int64)*-1, comm.Get_rank())
+                            MPI.Win.Flush(find_rma_busy_window, comm.Get_rank())
+                            MPI.Win.Unlock(find_rma_busy_window, comm.Get_rank())
+
+                            MPI.Win.Lock(find_rma_done_window, comm.Get_rank(), MPI.LOCK_SHARED)
+                            MPI.Win.Put(find_rma_done_window, np.ones(1, dtype=np.int64)*-1, comm.Get_rank())
+                            MPI.Win.Flush(find_rma_done_window, comm.Get_rank())
+                            MPI.Win.Unlock(find_rma_done_window, comm.Get_rank())
+
+                            MPI.Win.Lock(find_rma_n_not_found_window, comm.Get_rank(), MPI.LOCK_SHARED)
+                            MPI.Win.Put(find_rma_n_not_found_window, np.zeros(1, dtype=np.int64), comm.Get_rank())
+                            MPI.Win.Flush(find_rma_n_not_found_window, comm.Get_rank())
+                            MPI.Win.Unlock(find_rma_n_not_found_window, comm.Get_rank())
+
+                            #find_rma_busy_buff[0] = -1
+                            #find_rma_done_buff[0] = -1
+                            #find_rma_n_not_found_buff[0] = 0
 
                             #import sys
                             #sys.exit(1)
@@ -1996,10 +2012,25 @@ class Interpolator:
                     
                     #print(f'rank {comm.Get_rank()} determined found points')
 
-                    # Signal I am ready for more data 
-                    verify_rma_busy_buff[0] = -1
-                    verify_rma_done_buff[0] = -1
-                    verify_rma_n_not_found_buff[0] = 0
+                    # Signal I am ready for more data
+                    MPI.Win.Lock(verify_rma_busy_window, comm.Get_rank(), MPI.LOCK_SHARED)
+                    MPI.Win.Put(verify_rma_busy_window, np.ones(1, dtype=np.int64)*-1, comm.Get_rank())
+                    MPI.Win.Flush(verify_rma_busy_window, comm.Get_rank())
+                    MPI.Win.Unlock(verify_rma_busy_window, comm.Get_rank())
+
+                    MPI.Win.Lock(verify_rma_done_window, comm.Get_rank(), MPI.LOCK_SHARED)
+                    MPI.Win.Put(verify_rma_done_window, np.ones(1, dtype=np.int64)*-1, comm.Get_rank())
+                    MPI.Win.Flush(verify_rma_done_window, comm.Get_rank())
+                    MPI.Win.Unlock(verify_rma_done_window, comm.Get_rank())
+
+                    MPI.Win.Lock(verify_rma_n_not_found_window, comm.Get_rank(), MPI.LOCK_SHARED)
+                    MPI.Win.Put(verify_rma_n_not_found_window, np.zeros(1, dtype=np.int64), comm.Get_rank())
+                    MPI.Win.Flush(verify_rma_n_not_found_window, comm.Get_rank())
+                    MPI.Win.Unlock(verify_rma_n_not_found_window, comm.Get_rank())
+
+                    #verify_rma_busy_buff[0] = -1
+                    #verify_rma_done_buff[0] = -1
+                    #verify_rma_n_not_found_buff[0] = 0
                     i_sent_data = False
                     i_sent_data_to = -1
 
@@ -2014,7 +2045,7 @@ class Interpolator:
                     #print(f'rank {comm.Get_rank()} managed to acumulate counter')
             
             
-            if np.mod(search_iteration, 10000) == 0:
+            if np.mod(search_iteration, epochs) == 0:
                 print(f'rank {rank} - ranks ive sent to {self.ranks_ive_sent_to}, ranks ive checked {self.ranks_ive_checked}, my dest {my_dest}')
             #print(f'rank {rank} - keep_searching: {keep_searching[0]}')
             if int(keep_searching[0]) == int(self.rt.comm.Get_size()):
