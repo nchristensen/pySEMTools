@@ -1615,7 +1615,7 @@ class Interpolator:
         while search_flag:
             if np.mod(search_iteration, epochs) == 0:
                 self.log.write("info", f'search iteration {search_iteration+1} - rank {rank} - keep searching: {keep_searching[0]}')
-            MPI.Win.Lock(search_done_window, 0, MPI.LOCK_SHARED)
+            MPI.Win.Lock(search_done_window, 0, MPI.LOCK_EXCLUSIVE)
             MPI.Win.Get(search_done_window, keep_searching, 0)
             MPI.Win.Flush(search_done_window, 0)
             MPI.Win.Unlock(search_done_window, 0)
@@ -1629,7 +1629,7 @@ class Interpolator:
             
             if n_not_found_outer <= 0 and not am_i_done:
                 # Say that this rank is done
-                MPI.Win.Lock(search_done_window, 0, MPI.LOCK_SHARED)
+                MPI.Win.Lock(search_done_window, 0, MPI.LOCK_EXCLUSIVE)
                 MPI.Win.Accumulate(search_done_window, np.ones((1), dtype=np.int64), target_rank=0, op=MPI.SUM)
                 MPI.Win.Flush(search_done_window, 0)
                 MPI.Win.Unlock(search_done_window, 0)
@@ -1689,7 +1689,7 @@ class Interpolator:
             # If I think I have sent the data to another rank, but for some reason the other rank does not detect it, then remove that rank from my list to avoid waiting forever
             # This should not be needed, as races should be avoided by the handshakes we do. Think more about it later
             if i_sent_data:
-                MPI.Win.Lock(find_rma_busy_window, i_sent_data_to, MPI.LOCK_SHARED)
+                MPI.Win.Lock(find_rma_busy_window, i_sent_data_to, MPI.LOCK_EXCLUSIVE)
                 busy_buff = np.empty((1), dtype=np.int64)
                 MPI.Win.Get(find_rma_busy_window, busy_buff, dest)
                 MPI.Win.Flush(find_rma_busy_window, dest)
@@ -1707,7 +1707,7 @@ class Interpolator:
                 for dest in my_dest:
                     if dest not in self.ranks_ive_checked:
                         # Check if the rank is busy
-                        MPI.Win.Lock(find_rma_busy_window, dest, MPI.LOCK_SHARED)
+                        MPI.Win.Lock(find_rma_busy_window, dest, MPI.LOCK_EXCLUSIVE)
                         busy_buff = np.empty((1), dtype=np.int64)
                         MPI.Win.Get(find_rma_busy_window, busy_buff, dest)
                         MPI.Win.Flush(find_rma_busy_window, dest)
@@ -1717,13 +1717,13 @@ class Interpolator:
                             pass  # The rank is busy, skip it for now
                         else:
                             # Show that I will put data in that rank
-                            MPI.Win.Lock(find_rma_busy_window, dest, MPI.LOCK_SHARED)
+                            MPI.Win.Lock(find_rma_busy_window, dest, MPI.LOCK_EXCLUSIVE)
                             MPI.Win.Put(find_rma_busy_window, np.ones(1, dtype=np.int64)*self.rt.comm.Get_rank(), dest)
                             MPI.Win.Flush(find_rma_busy_window, dest)
                             MPI.Win.Unlock(find_rma_busy_window, dest)
 
                             # Make sure that I was the one that put the data first. This is a handshake to avoid races
-                            MPI.Win.Lock(find_rma_busy_window, dest, MPI.LOCK_SHARED)
+                            MPI.Win.Lock(find_rma_busy_window, dest, MPI.LOCK_EXCLUSIVE)
                             busy_buff = np.empty((1), dtype=np.int64)
                             MPI.Win.Get(find_rma_busy_window, busy_buff, dest)
                             MPI.Win.Flush(find_rma_busy_window, dest)
@@ -1763,28 +1763,28 @@ class Interpolator:
                                     p_info = pack_data(array_list=[el_owner_not_found, glb_el_owner_not_found, rank_owner_not_found, err_code_not_found])
 
                                     # I can put my data in my destination rank
-                                    MPI.Win.Lock(find_rma_n_not_found_window, dest, MPI.LOCK_SHARED)
+                                    MPI.Win.Lock(find_rma_n_not_found_window, dest, MPI.LOCK_EXCLUSIVE)
                                     n_buff = np.ones(1, dtype=np.int64) * n_not_found
                                     MPI.Win.Put(find_rma_n_not_found_window, n_buff, dest)
                                     MPI.Win.Flush(find_rma_n_not_found_window, dest)
                                     MPI.Win.Unlock(find_rma_n_not_found_window, dest)
 
-                                    MPI.Win.Lock(find_rma_p_probes_window, dest, MPI.LOCK_SHARED)
+                                    MPI.Win.Lock(find_rma_p_probes_window, dest, MPI.LOCK_EXCLUSIVE)
                                     MPI.Win.Put(find_rma_p_probes_window, p_probes, dest)
                                     MPI.Win.Flush(find_rma_p_probes_window, dest)
                                     MPI.Win.Unlock(find_rma_p_probes_window, dest)
 
-                                    MPI.Win.Lock(find_rma_p_info_window, dest, MPI.LOCK_SHARED)
+                                    MPI.Win.Lock(find_rma_p_info_window, dest, MPI.LOCK_EXCLUSIVE)
                                     MPI.Win.Put(find_rma_p_info_window, p_info, dest)
                                     MPI.Win.Flush(find_rma_p_info_window, dest)
                                     MPI.Win.Unlock(find_rma_p_info_window, dest)
 
-                                    MPI.Win.Lock(find_rma_test_pattern_window, dest, MPI.LOCK_SHARED)
+                                    MPI.Win.Lock(find_rma_test_pattern_window, dest, MPI.LOCK_EXCLUSIVE)
                                     MPI.Win.Put(find_rma_test_pattern_window, test_pattern_not_found, dest)
                                     MPI.Win.Flush(find_rma_test_pattern_window, dest)
                                     MPI.Win.Unlock(find_rma_test_pattern_window, dest)
 
-                                    MPI.Win.Lock(find_rma_done_window, dest, MPI.LOCK_SHARED)
+                                    MPI.Win.Lock(find_rma_done_window, dest, MPI.LOCK_EXCLUSIVE)
                                     MPI.Win.Put(find_rma_done_window, np.ones(1, dtype=np.int64), dest)
                                     MPI.Win.Flush(find_rma_done_window, dest)
                                     MPI.Win.Unlock(find_rma_done_window, dest)
@@ -1882,7 +1882,7 @@ class Interpolator:
                     #import sys
                     #sys.exit(1)
                     # Check if the rank is busy
-                    MPI.Win.Lock(verify_rma_busy_window, my_source[0], MPI.LOCK_SHARED)
+                    MPI.Win.Lock(verify_rma_busy_window, my_source[0], MPI.LOCK_EXCLUSIVE)
                     busy_buff = np.empty((1), dtype=np.int64)
                     MPI.Win.Get(verify_rma_busy_window, busy_buff, my_source[0])
                     MPI.Win.Flush(verify_rma_busy_window, my_source[0])
@@ -1895,13 +1895,13 @@ class Interpolator:
                     else:
                         #print(f'rank {comm.Get_rank()} is sending data to rank {my_source[0]} - n points: {find_rma_n_not_found_buff[0]}')
                         # Show that I will put data in that rank
-                        MPI.Win.Lock(verify_rma_busy_window, my_source[0], MPI.LOCK_SHARED)
+                        MPI.Win.Lock(verify_rma_busy_window, my_source[0], MPI.LOCK_EXCLUSIVE)
                         MPI.Win.Put(verify_rma_busy_window, np.ones(1, dtype=np.int64)*self.rt.comm.Get_rank(), my_source[0])
                         MPI.Win.Flush(verify_rma_busy_window, my_source[0])
                         MPI.Win.Unlock(verify_rma_busy_window, my_source[0])
 
                         # Make sure that I was the one that put the data first. This is a handshake to avoid races
-                        MPI.Win.Lock(verify_rma_busy_window, my_source[0], MPI.LOCK_SHARED)
+                        MPI.Win.Lock(verify_rma_busy_window, my_source[0], MPI.LOCK_EXCLUSIVE)
                         busy_buff = np.empty((1), dtype=np.int64)
                         MPI.Win.Get(verify_rma_busy_window, busy_buff, my_source[0])
                         MPI.Win.Flush(verify_rma_busy_window, my_source[0])
@@ -1912,45 +1912,45 @@ class Interpolator:
                             pass
                         else:
                             # I can put my data in my destination rank
-                            MPI.Win.Lock(verify_rma_n_not_found_window, my_source[0], MPI.LOCK_SHARED)
+                            MPI.Win.Lock(verify_rma_n_not_found_window, my_source[0], MPI.LOCK_EXCLUSIVE)
                             n_buff = np.ones(1, dtype=np.int64) * find_rma_n_not_found_buff[0]
                             MPI.Win.Put(verify_rma_n_not_found_window, n_buff, my_source[0])
                             MPI.Win.Flush(verify_rma_n_not_found_window, my_source[0])
                             MPI.Win.Unlock(verify_rma_n_not_found_window, my_source[0])
 
-                            MPI.Win.Lock(verify_rma_p_probes_window, my_source[0], MPI.LOCK_SHARED)
+                            MPI.Win.Lock(verify_rma_p_probes_window, my_source[0], MPI.LOCK_EXCLUSIVE)
                             MPI.Win.Put(verify_rma_p_probes_window, p_buff_probes[0], my_source[0])
                             MPI.Win.Flush(verify_rma_p_probes_window, my_source[0])
                             MPI.Win.Unlock(verify_rma_p_probes_window, my_source[0])
 
-                            MPI.Win.Lock(verify_rma_p_info_window, my_source[0], MPI.LOCK_SHARED)
+                            MPI.Win.Lock(verify_rma_p_info_window, my_source[0], MPI.LOCK_EXCLUSIVE)
                             MPI.Win.Put(verify_rma_p_info_window, p_buff_info[0], my_source[0])
                             MPI.Win.Flush(verify_rma_p_info_window, my_source[0])
                             MPI.Win.Unlock(verify_rma_p_info_window, my_source[0])
 
-                            MPI.Win.Lock(verify_rma_test_pattern_window, my_source[0], MPI.LOCK_SHARED)
+                            MPI.Win.Lock(verify_rma_test_pattern_window, my_source[0], MPI.LOCK_EXCLUSIVE)
                             MPI.Win.Put(verify_rma_test_pattern_window, buff_test_pattern[0], my_source[0])
                             MPI.Win.Flush(verify_rma_test_pattern_window, my_source[0])
                             MPI.Win.Unlock(verify_rma_test_pattern_window, my_source[0])
 
-                            MPI.Win.Lock(verify_rma_done_window, my_source[0], MPI.LOCK_SHARED)
+                            MPI.Win.Lock(verify_rma_done_window, my_source[0], MPI.LOCK_EXCLUSIVE)
                             MPI.Win.Put(verify_rma_done_window, np.ones((1), dtype=np.int64), my_source[0])
                             MPI.Win.Flush(verify_rma_done_window, my_source[0])
                             MPI.Win.Unlock(verify_rma_done_window, my_source[0])
                             returned_data = True
                 
                             # Signal that my buffer is now ready to be used to find points
-                            MPI.Win.Lock(find_rma_busy_window, comm.Get_rank(), MPI.LOCK_SHARED)
+                            MPI.Win.Lock(find_rma_busy_window, comm.Get_rank(), MPI.LOCK_EXCLUSIVE)
                             MPI.Win.Put(find_rma_busy_window, np.ones(1, dtype=np.int64)*-1, comm.Get_rank())
                             MPI.Win.Flush(find_rma_busy_window, comm.Get_rank())
                             MPI.Win.Unlock(find_rma_busy_window, comm.Get_rank())
 
-                            MPI.Win.Lock(find_rma_done_window, comm.Get_rank(), MPI.LOCK_SHARED)
+                            MPI.Win.Lock(find_rma_done_window, comm.Get_rank(), MPI.LOCK_EXCLUSIVE)
                             MPI.Win.Put(find_rma_done_window, np.ones(1, dtype=np.int64)*-1, comm.Get_rank())
                             MPI.Win.Flush(find_rma_done_window, comm.Get_rank())
                             MPI.Win.Unlock(find_rma_done_window, comm.Get_rank())
 
-                            MPI.Win.Lock(find_rma_n_not_found_window, comm.Get_rank(), MPI.LOCK_SHARED)
+                            MPI.Win.Lock(find_rma_n_not_found_window, comm.Get_rank(), MPI.LOCK_EXCLUSIVE)
                             MPI.Win.Put(find_rma_n_not_found_window, np.zeros(1, dtype=np.int64), comm.Get_rank())
                             MPI.Win.Flush(find_rma_n_not_found_window, comm.Get_rank())
                             MPI.Win.Unlock(find_rma_n_not_found_window, comm.Get_rank())
@@ -2037,17 +2037,17 @@ class Interpolator:
                     #print(f'rank {comm.Get_rank()} determined found points')
 
                     # Signal I am ready for more data
-                    MPI.Win.Lock(verify_rma_busy_window, comm.Get_rank(), MPI.LOCK_SHARED)
+                    MPI.Win.Lock(verify_rma_busy_window, comm.Get_rank(), MPI.LOCK_EXCLUSIVE)
                     MPI.Win.Put(verify_rma_busy_window, np.ones(1, dtype=np.int64)*-1, comm.Get_rank())
                     MPI.Win.Flush(verify_rma_busy_window, comm.Get_rank())
                     MPI.Win.Unlock(verify_rma_busy_window, comm.Get_rank())
 
-                    MPI.Win.Lock(verify_rma_done_window, comm.Get_rank(), MPI.LOCK_SHARED)
+                    MPI.Win.Lock(verify_rma_done_window, comm.Get_rank(), MPI.LOCK_EXCLUSIVE)
                     MPI.Win.Put(verify_rma_done_window, np.ones(1, dtype=np.int64)*-1, comm.Get_rank())
                     MPI.Win.Flush(verify_rma_done_window, comm.Get_rank())
                     MPI.Win.Unlock(verify_rma_done_window, comm.Get_rank())
 
-                    MPI.Win.Lock(verify_rma_n_not_found_window, comm.Get_rank(), MPI.LOCK_SHARED)
+                    MPI.Win.Lock(verify_rma_n_not_found_window, comm.Get_rank(), MPI.LOCK_EXCLUSIVE)
                     MPI.Win.Put(verify_rma_n_not_found_window, np.zeros(1, dtype=np.int64), comm.Get_rank())
                     MPI.Win.Flush(verify_rma_n_not_found_window, comm.Get_rank())
                     MPI.Win.Unlock(verify_rma_n_not_found_window, comm.Get_rank())
@@ -2061,7 +2061,7 @@ class Interpolator:
                     #print(f'rank {comm.Get_rank()} Trying to acumulate counter')
                     if len(self.ranks_ive_checked) == len(my_dest) and not am_i_done:
                         # Say that this rank is done
-                        MPI.Win.Lock(search_done_window, 0, MPI.LOCK_SHARED)
+                        MPI.Win.Lock(search_done_window, 0, MPI.LOCK_EXCLUSIVE)
                         MPI.Win.Accumulate(search_done_window, np.ones((1), dtype=np.int64), target_rank=0, op=MPI.SUM)
                         MPI.Win.Flush(search_done_window, 0)
                         MPI.Win.Unlock(search_done_window, 0) 
