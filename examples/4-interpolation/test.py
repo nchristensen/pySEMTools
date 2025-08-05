@@ -69,3 +69,9 @@ probes = Probes(comm, probes = xyz, msh = msh, point_interpolator_type='multiple
 
 profile.disable()
 profile.dump_stats(file=f'probes_rank{comm.Get_rank()}.prof')
+
+probes.interpolate_from_field_list(0, [msh.x], comm, write_data=False)
+
+if comm.Get_rank() == 0:
+    print(xyz.shape, probes.interpolated_fields.shape)
+    print(np.allclose(probes.interpolated_fields[:,1], xyz[:,0]))
