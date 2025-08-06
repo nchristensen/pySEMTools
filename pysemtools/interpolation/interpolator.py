@@ -2098,12 +2098,12 @@ class Interpolator:
                         search_done.put(dest = 0, data = 1, dtype=np.int64, displacement=comm.Get_rank())
                         am_i_done = True
              
+            search_iteration += 1
+            
             if int(keep_searching) == int(self.rt.comm.Get_size()):
                 self.log.write("info", "All ranks are done searching, exiting")
                 search_flag = False
                 continue
-
-            search_iteration += 1
 
         # Go through the points again, if the test pattern was
         #  too large, mark that point as not found
