@@ -1838,8 +1838,8 @@ class Interpolator:
             comm.Barrier()
 
             keep_searching = np.sum(search_done.get(source = 0, displacement=0))
-            if np.mod(search_iteration+1, log_epochs) == 0:
-                self.log.write("info", f'search iteration {search_iteration+1} - rank {rank} - keep searching on : {comm.Get_size() - keep_searching} ranks')            
+            if np.mod(search_iteration+1, log_epochs) == 0 or search_iteration == 0:
+                self.log.write("info", f'search iteration {search_iteration+1} in progress. We keep searching on : {comm.Get_size() - keep_searching} ranks')            
 
             mask = (self.err_code_partition != 1)
             combined_mask = mask
@@ -2019,41 +2019,54 @@ class Interpolator:
                         returned_data = True
 
 
-            if not i_sent_data:
-                pass
-            else:
-                # Check if I have recieved the data back already 
-                condition = (verify_rma_busy.buff[0] == i_sent_data_to) and (verify_rma_done.buff[0] == 1)
+            if i_sent_data and verify_rma_busy.buff[0] == i_sent_data_to and verify_rma_done.buff[0] == 1:
+                # The previous loop will wait until there is data here. So we can continue
+                # Give it the correct format.
+                obuff_probes, obuff_probes_rst = unpack_source_data(packed_source_data=[verify_rma_p_probes.buff[:verify_rma_n_not_found.buff[0]*2*3].copy()], number_of_arrays=2, equal_length=True, final_shape=(-1, 3))
+                obuff_el_owner, obuff_glb_el_owner, obuff_rank_owner, obuff_err_code = unpack_source_data(packed_source_data=[verify_rma_p_info.buff[:verify_rma_n_not_found.buff[0]*4]].copy(), number_of_arrays=4, equal_length=True)
+                obuff_test_pattern = [verify_rma_test_pattern.buff[:verify_rma_n_not_found.buff[0]].copy()]
 
-                if not condition:
-                    pass
-                else:
+                # Signal that my buffer is now ready to be used to find points
+                self.ranks_ive_checked.append(verify_rma_busy.buff[0])
 
-                    # The previous loop will wait until there is data here. So we can continue
-                    # Give it the correct format.
-                    obuff_probes, obuff_probes_rst = unpack_source_data(packed_source_data=[verify_rma_p_probes.buff[:verify_rma_n_not_found.buff[0]*2*3].copy()], number_of_arrays=2, equal_length=True, final_shape=(-1, 3))
-                    obuff_el_owner, obuff_glb_el_owner, obuff_rank_owner, obuff_err_code = unpack_source_data(packed_source_data=[verify_rma_p_info.buff[:verify_rma_n_not_found.buff[0]*4]].copy(), number_of_arrays=4, equal_length=True)
-                    obuff_test_pattern = [verify_rma_test_pattern.buff[:verify_rma_n_not_found.buff[0]].copy()]
+                # Now loop through all the points in the buffers that
+                # have been sent back and determine which point was found
+                for relative_point, absolute_point  in enumerate(not_found_at_this_candidate):
 
-                    # Signal that my buffer is now ready to be used to find points
-                    self.ranks_ive_checked.append(verify_rma_busy.buff[0])
+                    # These are the error code and test patterns for
+                    # this point from all the ranks that sent back
+                    all_err_codes = [arr[relative_point] for arr in obuff_err_code]
+                    all_test_patterns = [arr[relative_point] for arr in obuff_test_pattern]
 
-                    # Now loop through all the points in the buffers that
-                    # have been sent back and determine which point was found
-                    for relative_point, absolute_point  in enumerate(not_found_at_this_candidate):
+                    # Check if any rank had certainty that it had found the point
+                    found_err_code = np.where(np.array(all_err_codes) == 1)[0]
 
-                        # These are the error code and test patterns for
-                        # this point from all the ranks that sent back
-                        all_err_codes = [arr[relative_point] for arr in obuff_err_code]
-                        all_test_patterns = [arr[relative_point] for arr in obuff_test_pattern]
+                    # If the point was found in any rank, just choose the first
+                    # one in the list (in case there was more than one founder):
+                    if found_err_code.size > 0:
+                        index = found_err_code[0]
+                        self.probe_partition[absolute_point, :] = obuff_probes[index][relative_point, :]
+                        self.probe_rst_partition[absolute_point, :] = obuff_probes_rst[index][relative_point, :]
+                        self.el_owner_partition[absolute_point] = obuff_el_owner[index][relative_point]
+                        self.glb_el_owner_partition[absolute_point] = obuff_glb_el_owner[index][relative_point]
+                        self.rank_owner_partition[absolute_point] = obuff_rank_owner[index][relative_point]
+                        self.err_code_partition[absolute_point] = obuff_err_code[index][relative_point]
+                        self.test_pattern_partition[absolute_point] = obuff_test_pattern[index][relative_point]
 
-                        # Check if any rank had certainty that it had found the point
-                        found_err_code = np.where(np.array(all_err_codes) == 1)[0]
+                        # skip the rest of the loop
+                        continue
 
-                        # If the point was found in any rank, just choose the first
-                        # one in the list (in case there was more than one founder):
-                        if found_err_code.size > 0:
-                            index = found_err_code[0]
+                    # If the point was not found with certainty, then choose as
+                    # owner the the one that produced the smaller error in the test pattern
+                    try:
+                        min_test_pattern = np.where(
+                            np.array(all_test_patterns) == np.array(all_test_patterns).min()
+                        )[0]
+                    except ValueError:
+                        min_test_pattern = np.array([])
+                    if min_test_pattern.size > 0:
+                        index = min_test_pattern[0]
+                        if obuff_test_pattern[index][relative_point] < self.test_pattern_partition[absolute_point]:
                             self.probe_partition[absolute_point, :] = obuff_probes[index][relative_point, :]
                             self.probe_rst_partition[absolute_point, :] = obuff_probes_rst[index][relative_point, :]
                             self.el_owner_partition[absolute_point] = obuff_el_owner[index][relative_point]
@@ -2061,42 +2074,20 @@ class Interpolator:
                             self.rank_owner_partition[absolute_point] = obuff_rank_owner[index][relative_point]
                             self.err_code_partition[absolute_point] = obuff_err_code[index][relative_point]
                             self.test_pattern_partition[absolute_point] = obuff_test_pattern[index][relative_point]
+                
+                # Signal I am ready for more data
+                verify_rma_busy.buff[0] = -1
+                verify_rma_done.buff[0] = -1
+                verify_rma_n_not_found.buff[0] = 0
 
-                            # skip the rest of the loop
-                            continue
+                # Reset some of the flags
+                i_sent_data = False
+                i_sent_data_to = -1
 
-                        # If the point was not found with certainty, then choose as
-                        # owner the the one that produced the smaller error in the test pattern
-                        try:
-                            min_test_pattern = np.where(
-                                np.array(all_test_patterns) == np.array(all_test_patterns).min()
-                            )[0]
-                        except ValueError:
-                            min_test_pattern = np.array([])
-                        if min_test_pattern.size > 0:
-                            index = min_test_pattern[0]
-                            if obuff_test_pattern[index][relative_point] < self.test_pattern_partition[absolute_point]:
-                                self.probe_partition[absolute_point, :] = obuff_probes[index][relative_point, :]
-                                self.probe_rst_partition[absolute_point, :] = obuff_probes_rst[index][relative_point, :]
-                                self.el_owner_partition[absolute_point] = obuff_el_owner[index][relative_point]
-                                self.glb_el_owner_partition[absolute_point] = obuff_glb_el_owner[index][relative_point]
-                                self.rank_owner_partition[absolute_point] = obuff_rank_owner[index][relative_point]
-                                self.err_code_partition[absolute_point] = obuff_err_code[index][relative_point]
-                                self.test_pattern_partition[absolute_point] = obuff_test_pattern[index][relative_point]
-                    
-                    # Signal I am ready for more data
-                    verify_rma_busy.buff[0] = -1
-                    verify_rma_done.buff[0] = -1
-                    verify_rma_n_not_found.buff[0] = 0
-
-                    # Reset some of the flags
-                    i_sent_data = False
-                    i_sent_data_to = -1
-
-                    if len(self.ranks_ive_checked) == len(my_dest) and not am_i_done:
-                        # Say that this rank is done
-                        search_done.put(dest = 0, data = 1, dtype=np.int64, displacement=comm.Get_rank())
-                        am_i_done = True
+                if len(self.ranks_ive_checked) == len(my_dest) and not am_i_done:
+                    # Say that this rank is done
+                    search_done.put(dest = 0, data = 1, dtype=np.int64, displacement=comm.Get_rank())
+                    am_i_done = True
              
             search_iteration += 1
             
