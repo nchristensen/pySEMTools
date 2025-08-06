@@ -65,7 +65,7 @@ profile.enable()
 
 probes = Probes(comm, probes = xyz, msh = msh, point_interpolator_type='multiple_point_legendre_numpy', 
                 max_pts=256, find_points_comm_pattern='rma', global_tree_nbins=int(2048*2), local_data_structure='rtree',
-                global_tree_type='rank_bbox', find_points_iterative=[True, 10], find_points_tol=1e-7, elem_percent_expansion=0.01, find_points_max_iter=10)
+                global_tree_type='rank_bbox', find_points_iterative=[True, 1], find_points_tol=1e-7, elem_percent_expansion=0.01, find_points_max_iter=10)
 
 profile.disable()
 profile.dump_stats(file=f'probes_rank{comm.Get_rank()}.prof')
