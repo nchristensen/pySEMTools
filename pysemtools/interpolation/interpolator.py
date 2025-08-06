@@ -2107,8 +2107,6 @@ class Interpolator:
             ):
                 self.err_code_partition[j] = 0
 
-        #comm.Barrier()
-        #print(f'rank {rank} - ranks ive sent to {self.ranks_ive_sent_to}, ranks ive checked {self.ranks_ive_checked}, my dest {my_dest}')
         comm.Barrier()
         self.log.write("info", "Finding points - finished")
         self.log.toc()
