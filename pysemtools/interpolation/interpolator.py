@@ -12,6 +12,7 @@ from ..monitoring.logger import Logger
 from ..comm.router import Router
 from collections import Counter as collections_counter
 import threading
+import time
 
 # check if we have rtree installed
 try :
@@ -128,6 +129,112 @@ class OneSidedComms:
             mpi_dtype = MPI._typedict[data.dtype.char]
             self.win.Lock(dest, MPI.LOCK_EXCLUSIVE) 
             self.win.Put([data, mpi_dtype], dest, [displacement, data.size, mpi_dtype])
+            self.win.Flush(dest)
+            self.win.Unlock(dest)
+
+    def get(self, source: int = None, displacement: int = 0, counts: int = None):
+
+        '''Get data from the buffer at the specified displacement.
+
+        Parameters:
+        -----------
+        source : int
+            The source rank to get the data from.
+        displacement : int
+            The displacement in the buffer where the data should be gotten.
+        counts : int
+            The number of elements to get from the buffer.
+
+        Returns:
+        --------
+        data : np.ndarray
+            The data gotten from the buffer.
+
+        '''
+
+        if counts is None:
+            counts = self.buff.size - displacement
+        elif counts == -1:
+            counts = self.buff.size - displacement
+        elif counts > self.buff.size - displacement:
+            raise ValueError("Counts cannot be greater than the size of the buffer minus the displacement")
+
+        if source == self.rank:
+            return self.buff[displacement:displacement + counts].copy()
+        else:
+            mpi_dtype = MPI._typedict[self.buff.dtype.char]
+            data = np.empty(counts, dtype=self.buff.dtype)
+            self.win.Lock(source, MPI.LOCK_EXCLUSIVE)
+            self.win.Get([data, mpi_dtype], source, [displacement, counts, mpi_dtype])
+            self.win.Flush(source)
+            self.win.Unlock(source)
+            return data.copy()
+        
+    def accumulate(self, dest: int = None, data = None, dtype: np.dtype = None, displacement: int = 0, op="SUM"):
+
+        '''Accumulate data from the buffer at the specified displacement.
+
+        Parameters:
+        -----------
+        dest : int
+            The destination rank to accumulate the data
+        data : np.ndarray or any
+            The data to accumulate. If not an array, it will be converted to one based on the dtype.
+        dtype : np.dtype
+            The data type of the data to accumulate. Required if data is not an array.
+        displacement : int
+            The displacement in the buffer where the data should be accumulated.
+        op : str
+            The operation to perform on the data. Default is "sum". Other options can be "max", "min", etc.
+
+        Returns:
+        --------
+        None
+
+        '''
+
+        OP_TO_FUNC = {
+        "SUM":     np.add,
+        "PROD":    np.multiply,
+        "MAX":     np.maximum,
+        "MIN":     np.minimum,
+        "LAND":    np.logical_and,
+        "LOR":     np.logical_or,
+        "LXOR":    np.logical_xor,
+        "BAND":    np.bitwise_and,
+        "BOR":     np.bitwise_or,
+        "BXOR":    np.bitwise_xor,
+        }
+        
+        OP_TO_MPI = {
+        "SUM":     MPI.SUM,
+        "PROD":    MPI.PROD,
+        "MAX":     MPI.MAX,
+        "MIN":     MPI.MIN,
+        "LAND":    MPI.LAND,
+        "LOR":     MPI.LOR,
+        "LXOR":    MPI.LXOR,
+        "BAND":    MPI.BAND,
+        "BOR":     MPI.BOR,
+        "BXOR":    MPI.BXOR,
+        }
+
+        if not isinstance(data, np.ndarray):
+            if dtype is None:
+                raise TypeError("If passing an individual value, dtype must be specified")
+            else:
+                data = np.array([data], dtype=dtype)
+
+        if data.dtype != self.buff.dtype:
+            raise ValueError("Data to accumulate and local buffer must have the same item size (same dtype)")
+
+        if dest == self.rank:
+            operation = OP_TO_FUNC[op]
+            self.buff[displacement:displacement + data.size] = operation(self.buff[displacement:displacement + data.size], data)
+        else:
+            mpi_dtype = MPI._typedict[data.dtype.char]
+            self.win.Lock(dest, MPI.LOCK_EXCLUSIVE)
+            self.win.Accumulate([data, mpi_dtype], dest, [displacement, data.size, mpi_dtype], op=OP_TO_MPI[op])
             self.win.Flush(dest)
             self.win.Unlock(dest)
 
@@ -1654,10 +1761,6 @@ class Interpolator:
         start_time = MPI.Wtime()
 
         self.log.write("warning", "RMA mode is known to miss some points that can be found otherwise. If you encounter some not found points, consider changing communication pattern")
-        self.log.write("warning", "RMA mode is known to miss some points that can be found otherwise. If you encounter some not found points, consider changing communication pattern")
-        self.log.write("warning", "RMA mode is known to miss some points that can be found otherwise. If you encounter some not found points, consider changing communication pattern")
-        self.log.write("warning", "RMA mode is known to miss some points that can be found otherwise. If you encounter some not found points, consider changing communication pattern")
-        self.log.write("warning", "RMA mode is known to miss some points that can be found otherwise. If you encounter some not found points, consider changing communication pattern")
 
         batch_size = 1
         if batch_size != 1:
@@ -1712,12 +1815,10 @@ class Interpolator:
         for i, row in enumerate(candidate_ranks_list):
             candidates_per_point[i, :len(row)] = row
 
-        number_of_batches = int(np.ceil(max_candidates[0] / batch_size))
-        self.log.write("info", f"Perfoming {number_of_batches} search iterations processing max {batch_size} candidates per iteration")
-
         # Create an array that will be used to say if all the ranks are done.
         search_done_buff = np.zeros((1), dtype=np.int64)
         search_done_window = MPI.Win.Create(search_done_buff, disp_unit=search_done_buff.itemsize, comm=self.rt.comm)
+        search_done = OneSidedComms(self.rt.comm, window_size=comm.Get_size(), dtype=np.int64, fill_value=0)
 
         # Start the search
         search_iteration = 0
@@ -1726,17 +1827,20 @@ class Interpolator:
         keep_searching = np.zeros((1), dtype=np.int64)
         am_i_done = False
         i_sent_data = False
-        finished_find = False
-        finished_return = False
-        i_sent_data_to = -1
-        epochs = 10000
+        log_epochs = 10000
+        
         while search_flag:
-            if np.mod(search_iteration, epochs) == 0:
-                self.log.write("info", f'search iteration {search_iteration+1} - rank {rank} - keep searching: {keep_searching[0]}')
+            keep_searching_ = search_done.get(source = 0, displacement=0)
+            if np.mod(search_iteration, log_epochs) == 0:
+                self.log.write("info", f'search iteration {search_iteration+1} - rank {rank} - keep searching: {keep_searching[0]}, {keep_searching_}, {np.sum(keep_searching_)}')
+            
+            
             MPI.Win.Lock(search_done_window, 0, MPI.LOCK_EXCLUSIVE)
             MPI.Win.Get(search_done_window, keep_searching, 0)
             MPI.Win.Flush(search_done_window, 0)
             MPI.Win.Unlock(search_done_window, 0)
+
+            
 
             #self.log.write("info", f"Search iteration: {search_iteration+1} - {comm.Get_size() - int(keep_searching[0])} ranks still searching")
 
@@ -1747,6 +1851,8 @@ class Interpolator:
             
             if n_not_found_outer <= 0 and not am_i_done:
                 # Say that this rank is done
+                search_done.put(dest = 0, data = 1, dtype=np.int64, displacement=comm.Get_rank())
+                
                 MPI.Win.Lock(search_done_window, 0, MPI.LOCK_EXCLUSIVE)
                 MPI.Win.Accumulate(search_done_window, np.ones((1), dtype=np.int64), target_rank=0, op=MPI.SUM)
                 MPI.Win.Flush(search_done_window, 0)
@@ -2045,6 +2151,7 @@ class Interpolator:
                     #print(f'rank {comm.Get_rank()} Trying to acumulate counter')
                     if len(self.ranks_ive_checked) == len(my_dest) and not am_i_done:
                         # Say that this rank is done
+                        search_done.put(dest = 0, data = 1, dtype=np.int64, displacement=comm.Get_rank())
                         MPI.Win.Lock(search_done_window, 0, MPI.LOCK_EXCLUSIVE)
                         MPI.Win.Accumulate(search_done_window, np.ones((1), dtype=np.int64), target_rank=0, op=MPI.SUM)
                         MPI.Win.Flush(search_done_window, 0)
