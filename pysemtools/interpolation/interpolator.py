@@ -82,9 +82,9 @@ class OneSidedComms:
         if dest == self.rank:
             # Emulated CAS for self-access
             with self._lock:
+                result[0] = self.buff[0].copy()
                 if self.buff[0] == value_to_check:
                     self.buff[0] = value_to_put
-                    result[0] = value_to_check
         else:
             self.win.Lock(dest, MPI.LOCK_EXCLUSIVE)
             self.win.Compare_and_swap(origin, expected, result, dest, target_disp=0)
