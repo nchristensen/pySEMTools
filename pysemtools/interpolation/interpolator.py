@@ -58,14 +58,12 @@ class OneSidedComms:
         self.rank = comm.Get_rank()
         self._lock = threading.Lock()
 
-    def compare_and_swap(self, value_to_check = None, value_to_put = None, dest: int = None, dtype: np.dtype = np.int64):
+    def compare_and_swap(self, value_to_check = None, value_to_put = None, dest: int = None):
+        '''Wrap around compare and swap to do atomic operations on the buffer.'''
 
-        if dtype != self.buff.dtype:
-            raise ValueError("Value to check and local buffer must have the same item size (same dtype)")
-
-        expected = np.array([value_to_check], dtype=dtype)
-        origin = np.array([value_to_put], dtype=dtype)
-        result = np.empty(1, dtype=dtype)
+        expected = np.array([value_to_check], dtype=self.buff.dtype)
+        origin = np.array([value_to_put], dtype=self.buff.dtype)
+        result = np.empty(1, dtype=self.buff.dtype)
 
         if dest == self.rank:
             # Emulated CAS for self-access
@@ -1796,92 +1794,77 @@ class Interpolator:
                 
                 for dest in my_dest:
                     if dest not in self.ranks_ive_checked:
-                        # Check if the rank is busy
-                        MPI.Win.Lock(find_rma_busy_window, dest, MPI.LOCK_EXCLUSIVE)
-                        busy_buff = np.empty((1), dtype=np.int64)
-                        MPI.Win.Get(find_rma_busy_window, busy_buff, dest)
-                        MPI.Win.Flush(find_rma_busy_window, dest)
-                        MPI.Win.Unlock(find_rma_busy_window, dest)
 
-                        if busy_buff[0] != -1:
-                            pass  # The rank is busy, skip it for now
+                        # Check if the destination rank is busy
+                        busy_buff = find_rma_busy.compare_and_swap(value_to_check=-1, value_to_put=self.rt.comm.Get_rank(), dest=dest)
+
+                        if busy_buff != -1:
+                            pass  # The rank is busy, and my rank lost the race, skip it for now
                         else:
-                            # Show that I will put data in that rank
+                            # My rank has already indicated that it will put data at destination, do it.
                             MPI.Win.Lock(find_rma_busy_window, dest, MPI.LOCK_EXCLUSIVE)
                             MPI.Win.Put(find_rma_busy_window, np.ones(1, dtype=np.int64)*self.rt.comm.Get_rank(), dest)
                             MPI.Win.Flush(find_rma_busy_window, dest)
                             MPI.Win.Unlock(find_rma_busy_window, dest)
 
-                            # Make sure that I was the one that put the data first. This is a handshake to avoid races
-                            MPI.Win.Lock(find_rma_busy_window, dest, MPI.LOCK_EXCLUSIVE)
-                            busy_buff = np.empty((1), dtype=np.int64)
-                            MPI.Win.Get(find_rma_busy_window, busy_buff, dest)
-                            MPI.Win.Flush(find_rma_busy_window, dest)
-                            MPI.Win.Unlock(find_rma_busy_window, dest)
+                            # Transfer only the relevant data:
 
-                            if busy_buff[0] != self.rt.comm.Get_rank():
-                                # Some other rank put the data first, so I will skip it for now
-                                pass
+                            # If batch size is 1, only send the actual points that said are in candidate.
+                            # This should always be done, currently it is not to simplify keeping track of things
+                            if self.global_tree_type == "domain_binning":
+                                self.log.write("warning", "With batch size = 1, we have noticed that domain binning might fail due to non overlapping of bins. If it does fail, select batch size = 2 or higher")
+                            mask = (self.err_code_partition != 1)
+                            candidate_mask = np.any(candidates_per_point == dest, axis=1)
+                            combined_mask = mask & candidate_mask
+                            not_found = np.flatnonzero(combined_mask)
+                                    
+                            n_not_found = not_found.size
+                            if n_not_found < 1:
+                                self.ranks_ive_checked.append(dest)
+
                             else:
+                                probe_not_found = self.probe_partition[not_found]
+                                probe_rst_not_found = self.probe_rst_partition[not_found]
+                                el_owner_not_found = self.el_owner_partition[not_found]
+                                glb_el_owner_not_found = self.glb_el_owner_partition[not_found]
+                                rank_owner_not_found = self.rank_owner_partition[not_found]
+                                err_code_not_found = self.err_code_partition[not_found]
+                                test_pattern_not_found = self.test_pattern_partition[not_found]
+            
+                                # Pack and send/recv the probe data
+                                p_probes = pack_data(array_list=[probe_not_found, probe_rst_not_found])
+                                p_info = pack_data(array_list=[el_owner_not_found, glb_el_owner_not_found, rank_owner_not_found, err_code_not_found])
 
-                                # Transfer only the relevant data:
+                                # I can put my data in my destination rank
+                                MPI.Win.Lock(find_rma_n_not_found_window, dest, MPI.LOCK_EXCLUSIVE)
+                                n_buff = np.ones(1, dtype=np.int64) * n_not_found
+                                MPI.Win.Put(find_rma_n_not_found_window, n_buff, dest)
+                                MPI.Win.Flush(find_rma_n_not_found_window, dest)
+                                MPI.Win.Unlock(find_rma_n_not_found_window, dest)
 
-                                # If batch size is 1, only send the actual points that said are in candidate.
-                                # This should always be done, currently it is not to simplify keeping track of things
-                                if self.global_tree_type == "domain_binning":
-                                    self.log.write("warning", "With batch size = 1, we have noticed that domain binning might fail due to non overlapping of bins. If it does fail, select batch size = 2 or higher")
-                                mask = (self.err_code_partition != 1)
-                                candidate_mask = np.any(candidates_per_point == dest, axis=1)
-                                combined_mask = mask & candidate_mask
-                                not_found = np.flatnonzero(combined_mask)
-                                        
-                                n_not_found = not_found.size
-                                if n_not_found < 1:
-                                    self.ranks_ive_checked.append(dest)
+                                MPI.Win.Lock(find_rma_p_probes_window, dest, MPI.LOCK_EXCLUSIVE)
+                                MPI.Win.Put(find_rma_p_probes_window, p_probes, dest)
+                                MPI.Win.Flush(find_rma_p_probes_window, dest)
+                                MPI.Win.Unlock(find_rma_p_probes_window, dest)
 
-                                else:
-                                    probe_not_found = self.probe_partition[not_found]
-                                    probe_rst_not_found = self.probe_rst_partition[not_found]
-                                    el_owner_not_found = self.el_owner_partition[not_found]
-                                    glb_el_owner_not_found = self.glb_el_owner_partition[not_found]
-                                    rank_owner_not_found = self.rank_owner_partition[not_found]
-                                    err_code_not_found = self.err_code_partition[not_found]
-                                    test_pattern_not_found = self.test_pattern_partition[not_found]
-                
-                                    # Pack and send/recv the probe data
-                                    p_probes = pack_data(array_list=[probe_not_found, probe_rst_not_found])
-                                    p_info = pack_data(array_list=[el_owner_not_found, glb_el_owner_not_found, rank_owner_not_found, err_code_not_found])
+                                MPI.Win.Lock(find_rma_p_info_window, dest, MPI.LOCK_EXCLUSIVE)
+                                MPI.Win.Put(find_rma_p_info_window, p_info, dest)
+                                MPI.Win.Flush(find_rma_p_info_window, dest)
+                                MPI.Win.Unlock(find_rma_p_info_window, dest)
 
-                                    # I can put my data in my destination rank
-                                    MPI.Win.Lock(find_rma_n_not_found_window, dest, MPI.LOCK_EXCLUSIVE)
-                                    n_buff = np.ones(1, dtype=np.int64) * n_not_found
-                                    MPI.Win.Put(find_rma_n_not_found_window, n_buff, dest)
-                                    MPI.Win.Flush(find_rma_n_not_found_window, dest)
-                                    MPI.Win.Unlock(find_rma_n_not_found_window, dest)
+                                MPI.Win.Lock(find_rma_test_pattern_window, dest, MPI.LOCK_EXCLUSIVE)
+                                MPI.Win.Put(find_rma_test_pattern_window, test_pattern_not_found, dest)
+                                MPI.Win.Flush(find_rma_test_pattern_window, dest)
+                                MPI.Win.Unlock(find_rma_test_pattern_window, dest)
 
-                                    MPI.Win.Lock(find_rma_p_probes_window, dest, MPI.LOCK_EXCLUSIVE)
-                                    MPI.Win.Put(find_rma_p_probes_window, p_probes, dest)
-                                    MPI.Win.Flush(find_rma_p_probes_window, dest)
-                                    MPI.Win.Unlock(find_rma_p_probes_window, dest)
-
-                                    MPI.Win.Lock(find_rma_p_info_window, dest, MPI.LOCK_EXCLUSIVE)
-                                    MPI.Win.Put(find_rma_p_info_window, p_info, dest)
-                                    MPI.Win.Flush(find_rma_p_info_window, dest)
-                                    MPI.Win.Unlock(find_rma_p_info_window, dest)
-
-                                    MPI.Win.Lock(find_rma_test_pattern_window, dest, MPI.LOCK_EXCLUSIVE)
-                                    MPI.Win.Put(find_rma_test_pattern_window, test_pattern_not_found, dest)
-                                    MPI.Win.Flush(find_rma_test_pattern_window, dest)
-                                    MPI.Win.Unlock(find_rma_test_pattern_window, dest)
-
-                                    MPI.Win.Lock(find_rma_done_window, dest, MPI.LOCK_EXCLUSIVE)
-                                    MPI.Win.Put(find_rma_done_window, np.ones(1, dtype=np.int64), dest)
-                                    MPI.Win.Flush(find_rma_done_window, dest)
-                                    MPI.Win.Unlock(find_rma_done_window, dest)
-                                    i_sent_data = True
-                                    i_sent_data_to = dest
-                                    self.ranks_ive_sent_to.append(dest)
-                                    break
+                                MPI.Win.Lock(find_rma_done_window, dest, MPI.LOCK_EXCLUSIVE)
+                                MPI.Win.Put(find_rma_done_window, np.ones(1, dtype=np.int64), dest)
+                                MPI.Win.Flush(find_rma_done_window, dest)
+                                MPI.Win.Unlock(find_rma_done_window, dest)
+                                i_sent_data = True
+                                i_sent_data_to = dest
+                                self.ranks_ive_sent_to.append(dest)
+                                break
 
             # Now find points from other ranks if anyone has sent me data
             #time.sleep(0.0000001)
@@ -1973,7 +1956,7 @@ class Interpolator:
                     #sys.exit(1)
                     # Check if the rank is busy
                     MPI.Win.Lock(verify_rma_busy_window, my_source[0], MPI.LOCK_EXCLUSIVE)
-                    #busy_buff = np.empty((1), dtype=np.int64)
+                    busy_buff = np.empty((1), dtype=np.int64)
                     MPI.Win.Get(verify_rma_busy_window, busy_buff, my_source[0])
                     MPI.Win.Flush(verify_rma_busy_window, my_source[0])
                     MPI.Win.Unlock(verify_rma_busy_window, my_source[0])
@@ -1992,7 +1975,7 @@ class Interpolator:
 
                         # Make sure that I was the one that put the data first. This is a handshake to avoid races
                         MPI.Win.Lock(verify_rma_busy_window, my_source[0], MPI.LOCK_EXCLUSIVE)
-                        #busy_buff = np.empty((1), dtype=np.int64)
+                        busy_buff = np.empty((1), dtype=np.int64)
                         MPI.Win.Get(verify_rma_busy_window, busy_buff, my_source[0])
                         MPI.Win.Flush(verify_rma_busy_window, my_source[0])
                         MPI.Win.Unlock(verify_rma_busy_window, my_source[0])
@@ -2045,6 +2028,8 @@ class Interpolator:
                             MPI.Win.Flush(find_rma_n_not_found_window, comm.Get_rank())
                             MPI.Win.Unlock(find_rma_n_not_found_window, comm.Get_rank())
 
+                            find_rma_busy.buff[0] = -1
+                            find_rma_done.buff[0] = -1
                             #find_rma_busy_buff[0] = -1
                             #find_rma_done_buff[0] = -1
                             #find_rma_n_not_found_buff[0] = 0
