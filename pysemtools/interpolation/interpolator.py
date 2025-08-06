@@ -1802,7 +1802,6 @@ class Interpolator:
             if d not in my_dest:
                 my_dest.append(d)
 
-        self.log.write("info", "Determining maximun number of candidates")
         max_candidates = np.ones((1), dtype=np.int64) * len(my_dest)
         max_candidates = comm.allreduce(max_candidates, op=MPI.MAX)
         if batch_size > max_candidates[0]: batch_size = max_candidates[0]
@@ -1827,45 +1826,36 @@ class Interpolator:
         keep_searching = np.zeros((1), dtype=np.int64)
         am_i_done = False
         i_sent_data = False
-        log_epochs = 10000
+        log_epochs = 1000
         
         while search_flag:
-            keep_searching_ = search_done.get(source = 0, displacement=0)
-            if np.mod(search_iteration, log_epochs) == 0:
-                self.log.write("info", f'search iteration {search_iteration+1} - rank {rank} - keep searching: {keep_searching[0]}, {keep_searching_}, {np.sum(keep_searching_)}')
-            
-            
-            MPI.Win.Lock(search_done_window, 0, MPI.LOCK_EXCLUSIVE)
-            MPI.Win.Get(search_done_window, keep_searching, 0)
-            MPI.Win.Flush(search_done_window, 0)
-            MPI.Win.Unlock(search_done_window, 0)
 
-            
+            # Sincrhonize once before proceeding
+            # This is currently needed to avoid races.
+            # The flags that are used to indicate if data is availbale seems to not be sufficient
+            # For some reason, the atomic operations are not working as I want. Maybe because of also checking my own rank?
+            # Having a workaround should make everything faster 
+            comm.Barrier()
 
-            #self.log.write("info", f"Search iteration: {search_iteration+1} - {comm.Get_size() - int(keep_searching[0])} ranks still searching")
+            keep_searching = np.sum(search_done.get(source = 0, displacement=0))
+            if np.mod(search_iteration+1, log_epochs) == 0:
+                self.log.write("info", f'search iteration {search_iteration+1} - rank {rank} - keep searching on : {comm.Get_size() - keep_searching} ranks')            
 
             mask = (self.err_code_partition != 1)
             combined_mask = mask
-            not_found_outer = np.flatnonzero(combined_mask)        
-            n_not_found_outer = not_found_outer.size
+            total_not_found = np.flatnonzero(combined_mask)        
+            total_n_not_found = total_not_found.size
             
-            if n_not_found_outer <= 0 and not am_i_done:
+            if total_n_not_found <= 0 and not am_i_done:
                 # Say that this rank is done
-                search_done.put(dest = 0, data = 1, dtype=np.int64, displacement=comm.Get_rank())
-                
-                MPI.Win.Lock(search_done_window, 0, MPI.LOCK_EXCLUSIVE)
-                MPI.Win.Accumulate(search_done_window, np.ones((1), dtype=np.int64), target_rank=0, op=MPI.SUM)
-                MPI.Win.Flush(search_done_window, 0)
-                MPI.Win.Unlock(search_done_window, 0)
+                search_done.put(dest = 0, data = 1, dtype=np.int64, displacement=comm.Get_rank()) 
                 am_i_done = True
 
-            # Send data to my candidates and recieve from ranks where I am candidate
-            #self.log.write("info", "Send data to candidates and recieve from sources")
-            #print(am_i_done) 
+            # Initialize the windows
             if search_iteration == 0:
                 # Create a remote access window for data I send and recieve 
                 ## Check the larger buffer across ranks
-                local_pack_info = np.array([n_not_found_outer*2*3, n_not_found_outer*4, n_not_found_outer], dtype=np.int64)
+                local_pack_info = np.array([total_n_not_found*2*3, total_n_not_found*4, total_n_not_found], dtype=np.int64)
                 recvbuff, scounts = self.rt.all_gather(data=local_pack_info, dtype=np.int64)
                 probe_packs = recvbuff[::3]
                 info_packs = recvbuff[1::3]
@@ -1888,31 +1878,8 @@ class Interpolator:
                 verify_rma_p_info = OneSidedComms(self.rt.comm, window_size=max_info_pack, dtype=np.int64, fill_value=None)
                 verify_rma_test_pattern = OneSidedComms(self.rt.comm, window_size=max_test_pattern_pack, dtype=np.double, fill_value=None)
  
-            #self.rt.comm.Barrier()
-            #self.log.write("info", "Send data to candidates and recieve from sources")
-            #print(f'Rank {rank} - find_rma_busy_buff: {find_rma_busy_buff[0]}, find_rma_done_buff: {find_rma_done_buff[0]}, find_rma_n_not_found_buff: {find_rma_n_not_found_buff[0]}, verify_rma_busy_buff: {verify_rma_busy_buff[0]}, verify_rma_done_buff: {verify_rma_done_buff[0]}, verify_rma_n_not_found_buff: {verify_rma_n_not_found_buff[0]}')
-            #print(f'search iteration {search_iteration+1} - rank {rank} - keep searching: {keep_searching[0]}')     
-
-            # I still have data that must be checked, so I will send to my candidates
-            # Only send data if you have not sent in the previous iteration. This is needed to avoid locking checking data from other ranks
-
-            # If I think I have sent the data to another rank, but for some reason the other rank does not detect it, then remove that rank from my list to avoid waiting forever
-            # This should not be needed, as races should be avoided by the handshakes we do. Think more about it later
-            #if i_sent_data:
-            #    MPI.Win.Lock(find_rma_busy.win, i_sent_data_to, MPI.LOCK_EXCLUSIVE)
-            #    busy_buff = np.empty((1), dtype=np.int64)
-            #    MPI.Win.Get(find_rma_busy.win, busy_buff, dest)
-            #    MPI.Win.Flush(find_rma_busy.win, dest)
-            #    MPI.Win.Unlock(find_rma_busy.win, dest)
-
-            #    # If it says that the other rank is not busy, but I also do not have the data back, then reset and send agai
-            #    if busy_buff[0] != self.rt.comm.Get_rank() and verify_rma_busy.buff[0] != i_sent_data_to:
-            #        # The rank is not processing my data, so try to send again to it or to another
-            #        self.ranks_ive_sent_to.remove(i_sent_data_to)
-            #        i_sent_data = False
-            #        i_sent_data_to = -1
-
-            if n_not_found_outer > 0 and (len(my_dest) != len(self.ranks_ive_checked)) and (not i_sent_data):
+            # Send points if you need to
+            if total_n_not_found > 0 and (len(my_dest) != len(self.ranks_ive_checked)) and (not i_sent_data):
                 for dest in my_dest:
                     if dest not in self.ranks_ive_checked:
                         # Check if the destination rank is busy
@@ -1925,27 +1892,29 @@ class Interpolator:
                         mask = (self.err_code_partition != 1)
                         candidate_mask = np.any(candidates_per_point == dest, axis=1)
                         combined_mask = mask & candidate_mask
-                        not_found = np.flatnonzero(combined_mask)    
-                        n_not_found = not_found.size
-                        if n_not_found < 1:
+                        not_found_at_this_candidate = np.flatnonzero(combined_mask)    
+                        n_not_found_at_this_candidate = not_found_at_this_candidate.size
+                        if n_not_found_at_this_candidate < 1:
+                            # Reset the busy flag
+                            find_rma_busy.put(dest=dest, data=-1, dtype=np.int64)
                             self.ranks_ive_checked.append(dest)
                             continue
 
                         # Get only the relevant data
-                        probe_not_found = self.probe_partition[not_found]
-                        probe_rst_not_found = self.probe_rst_partition[not_found]
-                        el_owner_not_found = self.el_owner_partition[not_found]
-                        glb_el_owner_not_found = self.glb_el_owner_partition[not_found]
-                        rank_owner_not_found = self.rank_owner_partition[not_found]
-                        err_code_not_found = self.err_code_partition[not_found]
-                        test_pattern_not_found = self.test_pattern_partition[not_found]
+                        probe_not_found = self.probe_partition[not_found_at_this_candidate]
+                        probe_rst_not_found = self.probe_rst_partition[not_found_at_this_candidate]
+                        el_owner_not_found = self.el_owner_partition[not_found_at_this_candidate]
+                        glb_el_owner_not_found = self.glb_el_owner_partition[not_found_at_this_candidate]
+                        rank_owner_not_found = self.rank_owner_partition[not_found_at_this_candidate]
+                        err_code_not_found = self.err_code_partition[not_found_at_this_candidate]
+                        test_pattern_not_found = self.test_pattern_partition[not_found_at_this_candidate]
     
                         # Pack and send/recv the probe data
                         p_probes = pack_data(array_list=[probe_not_found, probe_rst_not_found])
                         p_info = pack_data(array_list=[el_owner_not_found, glb_el_owner_not_found, rank_owner_not_found, err_code_not_found])
 
                         # Send the data
-                        find_rma_n_not_found.put(dest=dest, data = n_not_found, dtype=np.int64)
+                        find_rma_n_not_found.put(dest=dest, data = n_not_found_at_this_candidate, dtype=np.int64)
                         find_rma_p_probes.put(dest=dest, data = p_probes)
                         find_rma_p_info.put(dest=dest, data = p_info)
                         find_rma_test_pattern.put(dest=dest, data = test_pattern_not_found)
@@ -1960,13 +1929,6 @@ class Interpolator:
                         break
 
             # Now find points from other ranks if anyone has sent me data
-            #time.sleep(0.0000001)
-            #cycles = 0
-            #while find_rma_busy_buff[0] != 1 and cycles < 1000:
-            #    time.sleep(0.00001)
-            #    cycles += 1
-            #print(f'Rank {rank} - cycles: {cycles} find_rma_busy_buff: {find_rma_busy_buff[0]}, find_rma_done_buff: {find_rma_done_buff[0]}, find_rma_n_not_found_buff: {find_rma_n_not_found_buff[0]}, verify_rma_busy_buff: {verify_rma_busy_buff[0]}, verify_rma_done_buff: {verify_rma_done_buff[0]}, verify_rma_n_not_found_buff: {verify_rma_n_not_found_buff[0]}')
-
             if find_rma_busy.buff[0] != -1 and find_rma_done.buff[0] == 1:
                 my_source = [find_rma_busy.buff[0].copy()]
                 # Give it the correct format.
@@ -1975,7 +1937,6 @@ class Interpolator:
                 buff_test_pattern = [find_rma_test_pattern.buff[:find_rma_n_not_found.buff[0]].copy()]
 
                 # Set the information for the coordinate search in this rank
-                #self.log.write("info", "Find rst coordinates for the points")
                 mesh_info = {}
                 mesh_info["x"] = self.x
                 mesh_info["y"] = self.y
@@ -2001,9 +1962,6 @@ class Interpolator:
                 buffers["s"] = self.s
                 buffers["t"] = self.t
                 buffers["test_interp"] = self.test_interp
-
-                #print(f'rank {comm.Get_rank()} started checking')
-                #print(f'ranks ive checked: {self.ranks_ive_checked} out of my destinations: {my_dest}')
 
                 # Now find the rst coordinates for the points stored in each of the buffers
                 for source_index in range(0, len(my_source)):
@@ -2032,11 +1990,6 @@ class Interpolator:
                         buff_test_pattern[source_index],
                     ] = self.ei.find_rst(probes_info, mesh_info, settings, buffers=buffers)
                 
-                    #print(f'rank: {comm.Get_rank()}, finished checking')
-
-                # Set the request to Recieve back the data that I have sent to my candidates
-                #self.log.write("info", "Send data to sources and recieve from candidates")
-
                 # Pack and send/recv the probe data
                 p_buff_probes = pack_destination_data(destination_data=[buff_probes, buff_probes_rst])
                 p_buff_info = pack_destination_data(destination_data=[buff_el_owner, buff_glb_el_owner, buff_rank_owner, buff_err_code])
@@ -2070,7 +2023,7 @@ class Interpolator:
                 pass
             else:
                 # Check if I have recieved the data back already 
-                condition = (verify_rma_busy.buff[0] != -1) and (verify_rma_done.buff[0] == 1)
+                condition = (verify_rma_busy.buff[0] == i_sent_data_to) and (verify_rma_done.buff[0] == 1)
 
                 if not condition:
                     pass
@@ -2078,22 +2031,16 @@ class Interpolator:
 
                     # The previous loop will wait until there is data here. So we can continue
                     # Give it the correct format.
-                    #print(f'rank {comm.Get_rank()} is getting {verify_rma_n_not_found_buff[0]} points from rank {verify_rma_busy_buff[0]}')
                     obuff_probes, obuff_probes_rst = unpack_source_data(packed_source_data=[verify_rma_p_probes.buff[:verify_rma_n_not_found.buff[0]*2*3].copy()], number_of_arrays=2, equal_length=True, final_shape=(-1, 3))
                     obuff_el_owner, obuff_glb_el_owner, obuff_rank_owner, obuff_err_code = unpack_source_data(packed_source_data=[verify_rma_p_info.buff[:verify_rma_n_not_found.buff[0]*4]].copy(), number_of_arrays=4, equal_length=True)
                     obuff_test_pattern = [verify_rma_test_pattern.buff[:verify_rma_n_not_found.buff[0]].copy()]
 
                     # Signal that my buffer is now ready to be used to find points
                     self.ranks_ive_checked.append(verify_rma_busy.buff[0])
-                    #print(f'rank {comm.Get_rank()} has checked {self.ranks_ive_checked} out of my destinations: {my_dest}')
 
                     # Now loop through all the points in the buffers that
                     # have been sent back and determine which point was found
-                    #self.log.write(
-                        #"info", "Determine which points were found and find best candidate"
-#                    )
-                    #print(f'rank {comm.Get_rank()} determining found points')
-                    for relative_point, absolute_point  in enumerate(not_found):
+                    for relative_point, absolute_point  in enumerate(not_found_at_this_candidate):
 
                         # These are the error code and test patterns for
                         # this point from all the ranks that sent back
@@ -2137,8 +2084,6 @@ class Interpolator:
                                 self.err_code_partition[absolute_point] = obuff_err_code[index][relative_point]
                                 self.test_pattern_partition[absolute_point] = obuff_test_pattern[index][relative_point]
                     
-                    #print(f'rank {comm.Get_rank()} determined found points')
-
                     # Signal I am ready for more data
                     verify_rma_busy.buff[0] = -1
                     verify_rma_done.buff[0] = -1
@@ -2148,23 +2093,15 @@ class Interpolator:
                     i_sent_data = False
                     i_sent_data_to = -1
 
-                    #print(f'rank {comm.Get_rank()} Trying to acumulate counter')
                     if len(self.ranks_ive_checked) == len(my_dest) and not am_i_done:
                         # Say that this rank is done
                         search_done.put(dest = 0, data = 1, dtype=np.int64, displacement=comm.Get_rank())
-                        MPI.Win.Lock(search_done_window, 0, MPI.LOCK_EXCLUSIVE)
-                        MPI.Win.Accumulate(search_done_window, np.ones((1), dtype=np.int64), target_rank=0, op=MPI.SUM)
-                        MPI.Win.Flush(search_done_window, 0)
-                        MPI.Win.Unlock(search_done_window, 0) 
                         am_i_done = True
-                    #print(f'rank {comm.Get_rank()} managed to acumulate counter')
-            
-            
-            if int(keep_searching[0]) == int(self.rt.comm.Get_size()):
+             
+            if int(keep_searching) == int(self.rt.comm.Get_size()):
                 self.log.write("info", "All ranks are done searching, exiting")
                 search_flag = False
                 continue
-
 
             search_iteration += 1
 
