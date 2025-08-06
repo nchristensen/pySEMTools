@@ -2,16 +2,16 @@
 
 import os
 import sys
+from mpi4py import MPI  # for the timer
 from itertools import combinations
 import numpy as np
 from scipy.spatial import KDTree
 from tqdm import tqdm
-from mpi4py import MPI  # for the timer
 from .point_interpolator.point_interpolator_factory import get_point_interpolator
 from ..monitoring.logger import Logger
 from ..comm.router import Router
 from collections import Counter as collections_counter
-import time
+import threading
 
 # check if we have rtree installed
 try :
@@ -23,6 +23,82 @@ NoneType = type(None)
 
 DEBUG = os.getenv("PYSEMTOOLS_DEBUG", "False").lower() in ("true", "1", "t")
 
+class OneSidedComms:
+    '''
+    Wrapper class to handle one-sided communication
+    
+    Parameters:
+    -----------
+    comm : MPI.Comm
+        The MPI communicator to use.
+    rma_win : MPI.Win
+        The MPI window for one-sided communication (Optional, since it can be created if a window size and dtype is provided).
+    rma_buff : np.ndarray
+        The buffer associated with the MPI window. (Optional, since it can be created if a window size and dtype is provided).
+    window_size : int
+        The size of the window buffer. (Optional, since an existing window and buffer can be passed).
+    dtype : np.dtype
+        The data type of the elements in the buffer. (Required if creating a new window and buffer).
+    '''
+
+    def __init__(self, comm: MPI.Comm, rma_win: MPI.Win = None, rma_buff: np.ndarray = None, window_size: int = None, dtype: np.dtype = None, fill_value = None):
+        
+        if rma_win is None and rma_buff is None:
+            if fill_value is None:
+                rma_buff = np.empty((window_size,), dtype=dtype)
+            else:
+                rma_buff = np.full((window_size,), fill_value, dtype=dtype)
+            rma_win = MPI.Win.Create(memory=rma_buff, disp_unit=rma_buff.itemsize, comm=comm) 
+        else:
+            raise ValueError("If not passing an existing window and buffer, window_size and dtype must be provided")
+        
+        self.win = rma_win
+        self.buff = rma_buff
+        self.comm = comm
+        self.rank = comm.Get_rank()
+        self._lock = threading.Lock()
+
+    def compare_and_swap(self, value_to_check = None, value_to_put = None, dest: int = None, dtype: np.dtype = np.int64):
+
+        if dtype != self.buff.dtype:
+            raise ValueError("Value to check and local buffer must have the same item size (same dtype)")
+
+        expected = np.array([value_to_check], dtype=dtype)
+        origin = np.array([value_to_put], dtype=dtype)
+        result = np.empty(1, dtype=dtype)
+
+        if dest == self.rank:
+            # Emulated CAS for self-access
+            with self._lock:
+                if self.buff[0] == value_to_check:
+                    self.buff[0] = value_to_put
+                    result[0] = value_to_check
+        else:
+            self.win.Lock(dest, MPI.LOCK_EXCLUSIVE)
+            self.win.Compare_and_swap(origin, expected, result, dest, target_disp=0)
+            self.win.Flush(dest)
+            self.win.Unlock(dest)
+
+        return result[0]
+
+    def put(self, dest: int = None, data = None, dtype: np.dtype =None, displacement: int = 0):
+
+        if not isinstance(data, np.ndarray):
+            if dtype is None:
+                raise TypeError("If passing an individual value, dtype must be specified")
+            else:
+                data = np.array([data], dtype=dtype)
+
+        if data.dtype != self.buff.dtype:
+            raise ValueError("Data to put and local buffer must have the same item size (same dtype)")
+        
+        if dest == self.rank:
+            self.buff[displacement:displacement + data.size] = data
+        else:
+            self.win.Lock(dest, MPI.LOCK_EXCLUSIVE)
+            self.win.Put(data, dest, [displacement, data.size])
+            self.win.Flush(dest)
+            self.win.Unlock(dest)
 
 class Interpolator:
     """Class that interpolates data from a SEM mesh into a series of points"""
@@ -1650,6 +1726,20 @@ class Interpolator:
                 max_probe_pack = np.max(probe_packs)
                 max_test_pattern_pack = np.max(test_pattern_packs)
 
+                find_rma_busy = OneSidedComms(self.rt.comm, window_size=1, dtype=np.int64, fill_value=-1)
+                find_rma_done = OneSidedComms(self.rt.comm, window_size=1, dtype=np.int64, fill_value=-1)
+                find_rma_n_not_found = OneSidedComms(self.rt.comm, window_size=1, dtype=np.int64, fill_value=0)
+                find_rma_p_probes = OneSidedComms(self.rt.comm, window_size=max_probe_pack, dtype=np.double, fill_value=None)
+                find_rma_p_info = OneSidedComms(self.rt.comm, window_size=max_info_pack, dtype=np.int64, fill_value=None)
+                find_rma_test_pattern = OneSidedComms(self.rt.comm, window_size=max_test_pattern_pack, dtype=np.double, fill_value=None)
+
+                verify_rma_busy = OneSidedComms(self.rt.comm, window_size=1, dtype=np.int64, fill_value=-1)
+                verify_rma_done = OneSidedComms(self.rt.comm, window_size=1, dtype=np.int64, fill_value=-1)
+                verify_rma_n_not_found = OneSidedComms(self.rt.comm, window_size=1, dtype=np.int64, fill_value=0)
+                verify_rma_p_probes = OneSidedComms(self.rt.comm, window_size=max_probe_pack, dtype=np.double, fill_value=None)
+                verify_rma_p_info = OneSidedComms(self.rt.comm, window_size=max_info_pack, dtype=np.int64, fill_value=None)
+                verify_rma_test_pattern = OneSidedComms(self.rt.comm, window_size=max_test_pattern_pack, dtype=np.double, fill_value=None)
+
                 # Create memory buffer to send data
                 find_rma_busy_buff = np.ones(1, dtype=np.int64)*-1 # This will contain the rank where the data is from, -1 means that it is not busy
                 find_rma_done_buff = np.ones(1, dtype=np.int64)*-1 # This will contain the rank where the data is from, -1 means that it is not busy
@@ -1883,7 +1973,7 @@ class Interpolator:
                     #sys.exit(1)
                     # Check if the rank is busy
                     MPI.Win.Lock(verify_rma_busy_window, my_source[0], MPI.LOCK_EXCLUSIVE)
-                    busy_buff = np.empty((1), dtype=np.int64)
+                    #busy_buff = np.empty((1), dtype=np.int64)
                     MPI.Win.Get(verify_rma_busy_window, busy_buff, my_source[0])
                     MPI.Win.Flush(verify_rma_busy_window, my_source[0])
                     MPI.Win.Unlock(verify_rma_busy_window, my_source[0])
@@ -1902,7 +1992,7 @@ class Interpolator:
 
                         # Make sure that I was the one that put the data first. This is a handshake to avoid races
                         MPI.Win.Lock(verify_rma_busy_window, my_source[0], MPI.LOCK_EXCLUSIVE)
-                        busy_buff = np.empty((1), dtype=np.int64)
+                        #busy_buff = np.empty((1), dtype=np.int64)
                         MPI.Win.Get(verify_rma_busy_window, busy_buff, my_source[0])
                         MPI.Win.Flush(verify_rma_busy_window, my_source[0])
                         MPI.Win.Unlock(verify_rma_busy_window, my_source[0])
