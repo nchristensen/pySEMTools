@@ -376,15 +376,18 @@ class RMASubWindow:
 
         if dest == self.rank:
             # Emulated CAS for self-access
+            self.win.Lock_all(MPI.LOCK_EXCLUSIVE)
             with self._lock:
                 result[0] = self.buff[0].copy()
                 if self.buff[0] == value_to_check:
                     self.buff[0] = value_to_put
+            self.win.Flush_all()
+            self.win.Unlock_all()
         else:
-            self.win.Lock(dest, MPI.LOCK_EXCLUSIVE)
+            self.win.Lock_all(MPI.LOCK_EXCLUSIVE)
             self.win.Compare_and_swap(origin, expected, result, dest, target_disp=self.start_offset)
-            self.win.Flush(dest)
-            self.win.Unlock(dest)
+            self.win.Flush_all()
+            self.win.Unlock_all()
 
         return result[0]
 
@@ -418,15 +421,12 @@ class RMASubWindow:
         if data.dtype != self.buff.dtype:
             raise ValueError("Data to put and local buffer must have the same item size (same dtype)")
         
-        if dest == self.rank:
-            self.buff[displacement:displacement + data.size] = data
-        else:
-            byte_displacement = displacement * self.itemsize + self.start_offset
-            byte_count = data.size * self.itemsize
-            if lock: self.win.Lock(dest, MPI.LOCK_EXCLUSIVE)
-            self.win.Put([data.view(np.uint8), MPI.BYTE], dest, [byte_displacement, byte_count, MPI.BYTE]) # Just send bytes
-            if flush: self.win.Flush(dest)
-            if unlock: self.win.Unlock(dest)
+        byte_displacement = displacement * self.itemsize + self.start_offset
+        byte_count = data.size * self.itemsize
+        if lock: self.win.Lock_all(MPI.LOCK_EXCLUSIVE)
+        self.win.Put([data.view(np.uint8), MPI.BYTE], dest, [byte_displacement, byte_count, MPI.BYTE]) # Just send bytes
+        if flush: self.win.Flush_all()
+        if unlock: self.win.Unlock_all()
 
     def get(self, source: int = None, displacement: int = 0, counts: int = None, lock: bool = True, unlock: bool = True, flush: bool = True):
 
@@ -455,18 +455,15 @@ class RMASubWindow:
         elif counts > self.buff.size - displacement:
             raise ValueError("Counts cannot be greater than the size of the buffer minus the displacement")
 
-        if source == self.rank:
-            return self.buff[displacement:displacement + counts].copy()
-        else:
 
-            byte_displacement = displacement * self.itemsize + self.start_offset
-            byte_count = counts * self.itemsize
-            data = np.empty(byte_count, dtype=np.uint8)
-            if lock: self.win.Lock(source, MPI.LOCK_EXCLUSIVE)
-            self.win.Get([data, MPI.BYTE], source, [byte_displacement, byte_count, MPI.BYTE])
-            if flush: self.win.Flush(source)
-            if unlock: self.win.Unlock(source)
-            return data.view(self.dtype).copy()
+        byte_displacement = displacement * self.itemsize + self.start_offset
+        byte_count = counts * self.itemsize
+        data = np.empty(byte_count, dtype=np.uint8)
+        if lock: self.win.Lock_all(MPI.LOCK_EXCLUSIVE)
+        self.win.Get([data, MPI.BYTE], source, [byte_displacement, byte_count, MPI.BYTE])
+        if flush: self.win.Flush_all()
+        if unlock: self.win.Unlock_all()
+        return data.view(self.dtype).copy()
 
 class Interpolator:
     """Class that interpolates data from a SEM mesh into a series of points"""
@@ -2084,7 +2081,7 @@ class Interpolator:
         keep_searching = np.zeros((1), dtype=np.int64)
         am_i_done = False
         i_sent_data = False
-        log_epochs = 1
+        log_epochs = 10000
         while search_flag:
             search_iteration += 1
 
@@ -2093,7 +2090,7 @@ class Interpolator:
             # The flags that are used to indicate if data is availbale seems to not be sufficient
             # For some reason, the atomic operations are not working as I want. Maybe because of also checking my own rank?
             # Having a workaround should make everything faster 
-            comm.Barrier()
+            #comm.Barrier()
 
             #keep_searching_ = rma.search_done.get(source = 0, displacement=0)
             keep_searching = np.sum(rma.search_done.get(source = 0, displacement=0))
