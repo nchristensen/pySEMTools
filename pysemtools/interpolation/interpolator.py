@@ -271,6 +271,260 @@ class OneSidedComms:
             self.win.Flush(dest)
             self.win.Unlock(dest)
 
+
+class AttrDict(dict):
+    """A dict that lets you do .foo as well as ['foo']."""
+    def __getattr__(self, name):
+        try:
+            return self[name]
+        except KeyError:
+            raise AttributeError(f"No such attribute: {name!r}")
+    def __setattr__(self, name, value):
+        self[name] = value
+
+class GroupedOneSidedComms:
+    '''
+    Wrapper class to handle one-sided communication
+
+    Parameters:
+    -----------
+    comm : MPI.Comm
+        The MPI communicator to use.
+    rma_win : MPI.Win
+        The MPI window for one-sided communication (Optional, can be provided).
+    rma_buff : np.ndarray
+        The buffer associated with the MPI window (Optional, can be provided).
+    window_size : int
+        The size of the window buffer (Required if creating a new window).
+    dtype : np.dtype
+        The data type of elements in the buffer (Required if creating a new window).
+    fill_value : scalar
+        Initial fill value for the buffer (Optional).
+    '''
+
+    def __init__(self,
+                 comm: MPI.Comm,
+                 window_members: dict = None):
+        
+        self.comm = comm
+        self.rank = comm.Get_rank()
+        self._mpi_ptr = None
+        self._lock = threading.Lock()
+
+        # Create the window and buffer based on the provided characteristics
+        self.size_bytes = 0
+        for member in window_members.keys():
+            self.__setattr__(member, AttrDict())
+            self.__getattribute__(member).dtype = np.dtype(window_members[member]["dtype"])
+            self.__getattribute__(member).window_size = window_members[member]["window_size"]
+            self.__getattribute__(member).itemsize = self.__getattribute__(member).dtype.itemsize
+            self.__getattribute__(member).size_bytes = self.__getattribute__(member).itemsize * self.__getattribute__(member).window_size
+            self.__getattribute__(member).start_offset = np.copy(self.size_bytes)
+            self.size_bytes += self.__getattribute__(member).size_bytes
+            self.__getattribute__(member).fill_value = window_members[member].get("fill_value", None)
+
+        # Allocate memory via MPI - Trying to avoid any memory address replication from numpy/python
+        self._mpi_ptr = MPI.Alloc_mem(self.size_bytes, MPI.INFO_NULL)
+
+        # Wrap pointer into ctypes buffer so it can be viewed as numpy
+        addr = ctypes.addressof(ctypes.c_char.from_buffer(self._mpi_ptr))
+        buf_type = ctypes.c_char * self.size_bytes
+        raw_buf = buf_type.from_address(addr)
+        byte_arr = np.frombuffer(raw_buf, dtype=np.uint8)
+
+        # Create MPI window over the allocated memory
+        self.win = MPI.Win.Create(self._mpi_ptr, self.size_bytes, MPI.INFO_NULL, self.comm)
+
+        for member in window_members.keys():
+            m = self.__getattribute__(member)
+            start = m.start_offset
+            end = start + m.size_bytes
+            m.buff = byte_arr[start:end].view(m.dtype)
+            if m.fill_value is not None:
+                m.buff[:] = m.fill_value
+
+    def compare_and_swap(self, sub_window: str, value_to_check = None, value_to_put = None, dest: int = None):
+        '''Wrap around compare and swap to do atomic operations on the buffer.
+        
+        Parameters:
+        -----------
+        value_to_check : any
+        value_to_put : any
+        dest : int
+
+        Returns:
+        --------
+        result : any
+            The value that was in the buffer before the operation.
+    
+        '''
+
+        expected = np.array([value_to_check], dtype=self.__getattribute__(sub_window).buff.dtype)
+        origin = np.array([value_to_put], dtype=self.__getattribute__(sub_window).buff.dtype)
+        result = np.empty(1, dtype=self.__getattribute__(sub_window).buff.dtype)
+
+        if dest == self.rank:
+            # Emulated CAS for self-access
+            with self._lock:
+                result[0] = self.__getattribute__(sub_window).buff[0].copy()
+                if self.__getattribute__(sub_window).buff[0] == value_to_check:
+                    self.__getattribute__(sub_window).buff[0] = value_to_put
+        else:
+            self.win.Lock(dest, MPI.LOCK_EXCLUSIVE)
+            self.win.Compare_and_swap(origin, expected, result, dest, target_disp=self.__getattribute__(sub_window).start_offset)
+            self.win.Flush(dest)
+            self.win.Unlock(dest)
+
+        return result[0]
+
+    def put(self, sub_window: str, dest: int = None, data = None, dtype: np.dtype =None, displacement: int = 0):
+
+        '''Put data into the buffer at the specified displacement.
+        
+        Parameters:
+        -----------
+        dest : int
+            The destination rank to put the data into.
+        data : np.ndarray or any
+            The data to put into the buffer. If not an array, it will be converted to one based on the dtype.
+        dtype : np.dtype
+            The data type of the data to put into the buffer. Required if data is not an array.
+        displacement : int
+            The displacement in the buffer where the data should be put.
+
+        Returns:
+        --------
+        None
+            
+        '''
+
+        if not isinstance(data, np.ndarray):
+            if dtype is None:
+                raise TypeError("If passing an individual value, dtype must be specified")
+            else:
+                data = np.array([data], dtype=dtype)
+
+        if data.dtype != self.__getattribute__(sub_window).buff.dtype:
+            raise ValueError("Data to put and local buffer must have the same item size (same dtype)")
+        
+        if dest == self.rank:
+            self.__getattribute__(sub_window).buff[displacement:displacement + data.size] = data
+        else:
+            mpi_dtype = MPI._typedict[data.dtype.char]
+            displacement += self.__getattribute__(sub_window).start_offset
+            self.win.Lock(dest, MPI.LOCK_EXCLUSIVE)
+            self.win.Put([data, mpi_dtype], dest, [displacement, data.size, mpi_dtype])
+            self.win.Flush(dest)
+            self.win.Unlock(dest)
+
+    def get(self, sub_window: str, source: int = None, displacement: int = 0, counts: int = None):
+
+        '''Get data from the buffer at the specified displacement.
+
+        Parameters:
+        -----------
+        source : int
+            The source rank to get the data from.
+        displacement : int
+            The displacement in the buffer where the data should be gotten.
+        counts : int
+            The number of elements to get from the buffer.
+
+        Returns:
+        --------
+        data : np.ndarray
+            The data gotten from the buffer.
+
+        '''
+
+        if counts is None:
+            counts = self.__getattribute__(sub_window).buff.size - displacement
+        elif counts == -1:
+            counts = self.__getattribute__(sub_window).buff.size - displacement
+        elif counts > self.__getattribute__(sub_window).buff.size - displacement:
+            raise ValueError("Counts cannot be greater than the size of the buffer minus the displacement")
+
+        if source == self.rank:
+            return self.__getattribute__(sub_window).buff[displacement:displacement + counts].copy()
+        else:
+            mpi_dtype = MPI._typedict[self.__getattribute__(sub_window).buff.dtype.char]
+            data = np.empty(counts, dtype=self.__getattribute__(sub_window).buff.dtype)
+            displacement += self.__getattribute__(sub_window).start_offset
+            self.win.Lock(source, MPI.LOCK_EXCLUSIVE)
+            self.win.Get([data, mpi_dtype], source, [displacement, counts, mpi_dtype])
+            self.win.Flush(source)
+            self.win.Unlock(source)
+            return data.copy()
+
+    def accumulate(self, sub_window: str, dest: int = None, data = None, dtype: np.dtype = None, displacement: int = 0, op="SUM"):
+
+        '''Accumulate data from the buffer at the specified displacement.
+
+        Parameters:
+        -----------
+        dest : int
+            The destination rank to accumulate the data
+        data : np.ndarray or any
+            The data to accumulate. If not an array, it will be converted to one based on the dtype.
+        dtype : np.dtype
+            The data type of the data to accumulate. Required if data is not an array.
+        displacement : int
+            The displacement in the buffer where the data should be accumulated.
+        op : str
+            The operation to perform on the data. Default is "sum". Other options can be "max", "min", etc.
+
+        Returns:
+        --------
+        None
+
+        '''
+
+        OP_TO_FUNC = {
+        "SUM":     np.add,
+        "PROD":    np.multiply,
+        "MAX":     np.maximum,
+        "MIN":     np.minimum,
+        "LAND":    np.logical_and,
+        "LOR":     np.logical_or,
+        "LXOR":    np.logical_xor,
+        "BAND":    np.bitwise_and,
+        "BOR":     np.bitwise_or,
+        "BXOR":    np.bitwise_xor,
+        }
+        
+        OP_TO_MPI = {
+        "SUM":     MPI.SUM,
+        "PROD":    MPI.PROD,
+        "MAX":     MPI.MAX,
+        "MIN":     MPI.MIN,
+        "LAND":    MPI.LAND,
+        "LOR":     MPI.LOR,
+        "LXOR":    MPI.LXOR,
+        "BAND":    MPI.BAND,
+        "BOR":     MPI.BOR,
+        "BXOR":    MPI.BXOR,
+        }
+
+        if not isinstance(data, np.ndarray):
+            if dtype is None:
+                raise TypeError("If passing an individual value, dtype must be specified")
+            else:
+                data = np.array([data], dtype=dtype)
+
+        if data.dtype != self.__getattribute__(sub_window).buff.dtype:
+            raise ValueError("Data to accumulate and local buffer must have the same item size (same dtype)")
+
+        if dest == self.rank:
+            operation = OP_TO_FUNC[op]
+            self.__getattribute__(sub_window).buff[displacement:displacement + data.size] = operation(self.__getattribute__(sub_window).buff[displacement:displacement + data.size], data)
+        else:
+            mpi_dtype = MPI._typedict[data.dtype.char]
+            displacement += self.__getattribute__(sub_window).start_offset
+            self.win.Lock(dest, MPI.LOCK_EXCLUSIVE)
+            self.win.Accumulate([data, mpi_dtype], dest, [displacement, data.size, mpi_dtype], op=OP_TO_MPI[op])
+            self.win.Flush(dest)
+            self.win.Unlock(dest)
+
 class Interpolator:
     """Class that interpolates data from a SEM mesh into a series of points"""
 
@@ -1846,11 +2100,46 @@ class Interpolator:
         candidates_per_point = np.full((num_rows, max_col), -1, dtype=np.int32)
         for i, row in enumerate(candidate_ranks_list):
             candidates_per_point[i, :len(row)] = row
+ 
+        # Initialize windows
+        ## Find sizes    
+        mask = (self.err_code_partition != 1)
+        combined_mask = mask
+        total_not_found = np.flatnonzero(combined_mask)        
+        total_n_not_found = total_not_found.size
+        local_pack_info = np.array([total_n_not_found*2*3, total_n_not_found*4, total_n_not_found], dtype=np.int64)
+        recvbuff, scounts = self.rt.all_gather(data=local_pack_info, dtype=np.int64)
+        probe_packs = recvbuff[::3]
+        info_packs = recvbuff[1::3]
+        test_pattern_packs = recvbuff[2::3]
+        max_info_pack = np.max(info_packs)
+        max_probe_pack = np.max(probe_packs)
+        max_test_pattern_pack = np.max(test_pattern_packs)
 
-        # Create an array that will be used to say if all the ranks are done.
-        search_done_buff = np.zeros((1), dtype=np.int64)
-        search_done_window = MPI.Win.Create(search_done_buff, disp_unit=search_done_buff.itemsize, comm=self.rt.comm)
+        ## Create windows    
         search_done = OneSidedComms(self.rt.comm, window_size=comm.Get_size(), dtype=np.int64, fill_value=0)
+        find_rma_busy = OneSidedComms(self.rt.comm, window_size=1, dtype=np.int64, fill_value=-1)
+        find_rma_done = OneSidedComms(self.rt.comm, window_size=1, dtype=np.int64, fill_value=-1)
+        find_rma_n_not_found = OneSidedComms(self.rt.comm, window_size=1, dtype=np.int64, fill_value=0)
+        find_rma_p_probes = OneSidedComms(self.rt.comm, window_size=max_probe_pack, dtype=np.double, fill_value=None)
+        find_rma_p_info = OneSidedComms(self.rt.comm, window_size=max_info_pack, dtype=np.int64, fill_value=None)
+        find_rma_test_pattern = OneSidedComms(self.rt.comm, window_size=max_test_pattern_pack, dtype=np.double, fill_value=None)
+        verify_rma_busy = OneSidedComms(self.rt.comm, window_size=1, dtype=np.int64, fill_value=-1)
+        verify_rma_done = OneSidedComms(self.rt.comm, window_size=1, dtype=np.int64, fill_value=-1)
+        verify_rma_n_not_found = OneSidedComms(self.rt.comm, window_size=1, dtype=np.int64, fill_value=0)
+        verify_rma_p_probes = OneSidedComms(self.rt.comm, window_size=max_probe_pack, dtype=np.double, fill_value=None)
+        verify_rma_p_info = OneSidedComms(self.rt.comm, window_size=max_info_pack, dtype=np.int64, fill_value=None)
+        verify_rma_test_pattern = OneSidedComms(self.rt.comm, window_size=max_test_pattern_pack, dtype=np.double, fill_value=None)
+
+        find_rma_inputs = { "search_done": {"window_size": comm.Get_size(), "dtype": np.int64, "fill_value": 0},
+                            "busy": {"window_size": 1, "dtype": np.int64, "fill_value": -1},
+                            "done": {"window_size": 1, "dtype": np.int64, "fill_value": -1},
+                            "n_not_found": {"window_size": 1, "dtype": np.int64, "fill_value": 0},
+                            "p_probes": {"window_size": max_probe_pack, "dtype": np.double, "fill_value": None},
+                            "p_info": {"window_size": max_info_pack, "dtype": np.int64, "fill_value": None},
+                            "test_pattern": {"window_size": max_test_pattern_pack, "dtype": np.double, "fill_value": None}
+                          }
+        find_rma = GroupedOneSidedComms(self.rt.comm, find_rma_inputs)
 
         # Start the search
         search_iteration = -1
@@ -1860,7 +2149,6 @@ class Interpolator:
         am_i_done = False
         i_sent_data = False
         log_epochs = 1000
-        
         while search_flag:
             search_iteration += 1
 
@@ -1884,33 +2172,6 @@ class Interpolator:
                 # Say that this rank is done
                 search_done.put(dest = 0, data = 1, dtype=np.int64, displacement=comm.Get_rank()) 
                 am_i_done = True
-
-            # Initialize the windows
-            if search_iteration == 0:
-                # Create a remote access window for data I send and recieve 
-                ## Check the larger buffer across ranks
-                local_pack_info = np.array([total_n_not_found*2*3, total_n_not_found*4, total_n_not_found], dtype=np.int64)
-                recvbuff, scounts = self.rt.all_gather(data=local_pack_info, dtype=np.int64)
-                probe_packs = recvbuff[::3]
-                info_packs = recvbuff[1::3]
-                test_pattern_packs = recvbuff[2::3]
-                max_info_pack = np.max(info_packs)
-                max_probe_pack = np.max(probe_packs)
-                max_test_pattern_pack = np.max(test_pattern_packs)
-
-                find_rma_busy = OneSidedComms(self.rt.comm, window_size=1, dtype=np.int64, fill_value=-1)
-                find_rma_done = OneSidedComms(self.rt.comm, window_size=1, dtype=np.int64, fill_value=-1)
-                find_rma_n_not_found = OneSidedComms(self.rt.comm, window_size=1, dtype=np.int64, fill_value=0)
-                find_rma_p_probes = OneSidedComms(self.rt.comm, window_size=max_probe_pack, dtype=np.double, fill_value=None)
-                find_rma_p_info = OneSidedComms(self.rt.comm, window_size=max_info_pack, dtype=np.int64, fill_value=None)
-                find_rma_test_pattern = OneSidedComms(self.rt.comm, window_size=max_test_pattern_pack, dtype=np.double, fill_value=None)
-
-                verify_rma_busy = OneSidedComms(self.rt.comm, window_size=1, dtype=np.int64, fill_value=-1)
-                verify_rma_done = OneSidedComms(self.rt.comm, window_size=1, dtype=np.int64, fill_value=-1)
-                verify_rma_n_not_found = OneSidedComms(self.rt.comm, window_size=1, dtype=np.int64, fill_value=0)
-                verify_rma_p_probes = OneSidedComms(self.rt.comm, window_size=max_probe_pack, dtype=np.double, fill_value=None)
-                verify_rma_p_info = OneSidedComms(self.rt.comm, window_size=max_info_pack, dtype=np.int64, fill_value=None)
-                verify_rma_test_pattern = OneSidedComms(self.rt.comm, window_size=max_test_pattern_pack, dtype=np.double, fill_value=None)
  
             # Send points if you need to
             if total_n_not_found > 0 and (len(my_dest) != len(self.ranks_ive_checked)) and (not i_sent_data):
