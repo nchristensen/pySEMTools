@@ -2026,16 +2026,17 @@ class Interpolator:
         # These are the destination ranks
         self.log.write("info", "Obtaining candidate ranks and sources")
         my_dest, candidate_ranks_list = get_candidate_ranks(self, comm)
-        my_dest_ = [comm.Get_rank()] + my_dest
-        my_dest = []
-        for _, d in enumerate(my_dest_):
-            if d not in my_dest:
-                my_dest.append(d)
+        #my_dest_ = [comm.Get_rank()] + my_dest
+        #my_dest = []
+        #for _, d in enumerate(my_dest_):
+        #    if d not in my_dest:
+        #        my_dest.append(d)
 
         max_candidates = np.ones((1), dtype=np.int64) * len(my_dest)
         max_candidates = comm.allreduce(max_candidates, op=MPI.MAX)
         if batch_size > max_candidates[0]: batch_size = max_candidates[0]
-         
+        self.log.write("info", f"Max candidates in a rank was: {max_candidates}")
+ 
         # Obtain the number of columns corresponding to the maximum number of candidates among all points
         # Then create a numpy array padding for points that have less candidates
         num_rows = len(candidate_ranks_list)
@@ -2083,7 +2084,7 @@ class Interpolator:
         keep_searching = np.zeros((1), dtype=np.int64)
         am_i_done = False
         i_sent_data = False
-        log_epochs = 10000
+        log_epochs = 1
         while search_flag:
             search_iteration += 1
 
