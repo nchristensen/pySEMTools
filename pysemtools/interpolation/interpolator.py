@@ -376,7 +376,7 @@ class RMASubWindow:
 
         if dest == self.rank:
             # Emulated CAS for self-access
-            self.win.Lock_all(MPI.LOCK_EXCLUSIVE)
+            self.win.Lock_all()
             with self._lock:
                 result[0] = self.buff[0].copy()
                 if self.buff[0] == value_to_check:
@@ -384,7 +384,7 @@ class RMASubWindow:
             self.win.Flush_all()
             self.win.Unlock_all()
         else:
-            self.win.Lock_all(MPI.LOCK_EXCLUSIVE)
+            self.win.Lock_all()
             self.win.Compare_and_swap(origin, expected, result, dest, target_disp=self.start_offset)
             self.win.Flush_all()
             self.win.Unlock_all()
@@ -423,7 +423,7 @@ class RMASubWindow:
         
         byte_displacement = displacement * self.itemsize + self.start_offset
         byte_count = data.size * self.itemsize
-        if lock: self.win.Lock_all(MPI.LOCK_EXCLUSIVE)
+        if lock: self.win.Lock_all()
         self.win.Put([data.view(np.uint8), MPI.BYTE], dest, [byte_displacement, byte_count, MPI.BYTE]) # Just send bytes
         if flush: self.win.Flush_all()
         if unlock: self.win.Unlock_all()
@@ -459,7 +459,7 @@ class RMASubWindow:
         byte_displacement = displacement * self.itemsize + self.start_offset
         byte_count = counts * self.itemsize
         data = np.empty(byte_count, dtype=np.uint8)
-        if lock: self.win.Lock_all(MPI.LOCK_EXCLUSIVE)
+        if lock: self.win.Lock_all()
         self.win.Get([data, MPI.BYTE], source, [byte_displacement, byte_count, MPI.BYTE])
         if flush: self.win.Flush_all()
         if unlock: self.win.Unlock_all()
