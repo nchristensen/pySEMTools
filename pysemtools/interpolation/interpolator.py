@@ -2060,29 +2060,21 @@ class Interpolator:
         max_test_pattern_pack = np.max(test_pattern_packs)
 
         ## Create windows    
-        search_done = OneSidedComms(self.rt.comm, window_size=comm.Get_size(), dtype=np.int64, fill_value=0)
-        find_rma_busy = OneSidedComms(self.rt.comm, window_size=1, dtype=np.int64, fill_value=-1)
-        find_rma_done = OneSidedComms(self.rt.comm, window_size=1, dtype=np.int64, fill_value=-1)
-        find_rma_n_not_found = OneSidedComms(self.rt.comm, window_size=1, dtype=np.int64, fill_value=0)
-        find_rma_p_probes = OneSidedComms(self.rt.comm, window_size=max_probe_pack, dtype=np.double, fill_value=None)
-        find_rma_p_info = OneSidedComms(self.rt.comm, window_size=max_info_pack, dtype=np.int64, fill_value=None)
-        find_rma_test_pattern = OneSidedComms(self.rt.comm, window_size=max_test_pattern_pack, dtype=np.double, fill_value=None)
-        verify_rma_busy = OneSidedComms(self.rt.comm, window_size=1, dtype=np.int64, fill_value=-1)
-        verify_rma_done = OneSidedComms(self.rt.comm, window_size=1, dtype=np.int64, fill_value=-1)
-        verify_rma_n_not_found = OneSidedComms(self.rt.comm, window_size=1, dtype=np.int64, fill_value=0)
-        verify_rma_p_probes = OneSidedComms(self.rt.comm, window_size=max_probe_pack, dtype=np.double, fill_value=None)
-        verify_rma_p_info = OneSidedComms(self.rt.comm, window_size=max_info_pack, dtype=np.int64, fill_value=None)
-        verify_rma_test_pattern = OneSidedComms(self.rt.comm, window_size=max_test_pattern_pack, dtype=np.double, fill_value=None)
-
-        find_rma_inputs = { "search_done": {"window_size": comm.Get_size(), "dtype": np.int64, "fill_value": 0},
-                            "find_busy": {"window_size": 1, "dtype": np.int64, "fill_value": -1},
-                            "find_done": {"window_size": 1, "dtype": np.int64, "fill_value": -1},
-                            "find_n_not_found": {"window_size": 1, "dtype": np.int64, "fill_value": 0},
-                            "find_p_probes": {"window_size": max_probe_pack, "dtype": np.double, "fill_value": None},
-                            "find_p_info": {"window_size": max_info_pack, "dtype": np.int64, "fill_value": None},
-                            "find_test_pattern": {"window_size": max_test_pattern_pack, "dtype": np.double, "fill_value": None}
-                          }
-        rma = RMAWindow(self.rt.comm, find_rma_inputs)
+        rma_inputs = { "search_done": {"window_size": comm.Get_size(), "dtype": np.int64, "fill_value": 0},
+                        "find_busy": {"window_size": 1, "dtype": np.int64, "fill_value": -1},
+                        "find_done": {"window_size": 1, "dtype": np.int64, "fill_value": -1},
+                        "find_n_not_found": {"window_size": 1, "dtype": np.int64, "fill_value": 0},
+                        "find_p_probes": {"window_size": max_probe_pack, "dtype": np.double, "fill_value": None},
+                        "find_p_info": {"window_size": max_info_pack, "dtype": np.int64, "fill_value": None},
+                        "find_test_pattern": {"window_size": max_test_pattern_pack, "dtype": np.double, "fill_value": None},
+                        "verify_busy": {"window_size": 1, "dtype": np.int64, "fill_value": -1},
+                        "verify_done": {"window_size": 1, "dtype": np.int64, "fill_value": -1},
+                        "verify_n_not_found": {"window_size": 1, "dtype": np.int64, "fill_value": 0},
+                        "verify_p_probes": {"window_size": max_probe_pack, "dtype": np.double, "fill_value": None},
+                        "verify_p_info": {"window_size": max_info_pack, "dtype": np.int64, "fill_value": None},
+                        "verify_test_pattern": {"window_size": max_test_pattern_pack, "dtype": np.double, "fill_value": None}
+                      }
+        rma = RMAWindow(self.rt.comm, rma_inputs)
 
         # Start the search
         search_iteration = -1
@@ -2091,7 +2083,7 @@ class Interpolator:
         keep_searching = np.zeros((1), dtype=np.int64)
         am_i_done = False
         i_sent_data = False
-        log_epochs = 1
+        log_epochs = 10000
         while search_flag:
             search_iteration += 1
 
@@ -2102,10 +2094,10 @@ class Interpolator:
             # Having a workaround should make everything faster 
             comm.Barrier()
 
-            keep_searching_ = rma.search_done.get(source = 0, displacement=0)
+            #keep_searching_ = rma.search_done.get(source = 0, displacement=0)
             keep_searching = np.sum(rma.search_done.get(source = 0, displacement=0))
             if np.mod(search_iteration+1, log_epochs) == 0 or search_iteration == 0:
-                self.log.write("info", f'search iteration {search_iteration+1} in progress. We keep searching on : {comm.Get_size() - keep_searching} ranks, with status {keep_searching_}')            
+                self.log.write("info", f'search iteration {search_iteration+1} in progress. We keep searching on : {comm.Get_size() - keep_searching} ranks')            
 
             mask = (self.err_code_partition != 1)
             combined_mask = mask
@@ -2238,18 +2230,19 @@ class Interpolator:
                 while not returned_data:
 
                     # Check if the destination rank is busy
-                    busy_buff = verify_rma_busy.compare_and_swap(value_to_check=-1, value_to_put=self.rt.comm.Get_rank(), dest=my_source[0])
+                    busy_buff = rma.verify_busy.compare_and_swap(value_to_check=-1, value_to_put=self.rt.comm.Get_rank(), dest=my_source[0])
 
                     if busy_buff != -1:
                         pass  # The rank is busy, and my rank lost the race, skip it for now
                     else:
                         
                         # Put the data back
-                        verify_rma_n_not_found.put(dest=my_source[0], data = np.copy(rma.find_n_not_found.buff[0]), dtype=np.int64)
-                        verify_rma_p_probes.put(dest=my_source[0], data = p_buff_probes[0])
-                        verify_rma_p_info.put(dest=my_source[0], data = p_buff_info[0])
-                        verify_rma_test_pattern.put(dest=my_source[0], data = buff_test_pattern[0])
-                        verify_rma_done.put(dest=my_source[0], data = 1, dtype=np.int64)
+                        n_checked = rma.find_n_not_found.buff[0]
+                        rma.verify_n_not_found.put(dest=my_source[0], data = n_checked, dtype=np.int64)
+                        rma.verify_p_probes.put(dest=my_source[0], data = p_buff_probes[0])
+                        rma.verify_p_info.put(dest=my_source[0], data = p_buff_info[0])
+                        rma.verify_test_pattern.put(dest=my_source[0], data = buff_test_pattern[0])
+                        rma.verify_done.put(dest=my_source[0], data = 1, dtype=np.int64)
 
                         # Signal that my buffer is now ready to be used to find points
                         rma.find_busy.buff[0] = -1
@@ -2258,15 +2251,15 @@ class Interpolator:
                         returned_data = True
 
 
-            if i_sent_data and verify_rma_busy.buff[0] == i_sent_data_to and verify_rma_done.buff[0] == 1:
+            if i_sent_data and rma.verify_busy.buff[0] == i_sent_data_to and rma.verify_done.buff[0] == 1:
                 # The previous loop will wait until there is data here. So we can continue
                 # Give it the correct format.
-                obuff_probes, obuff_probes_rst = unpack_source_data(packed_source_data=[verify_rma_p_probes.buff[:verify_rma_n_not_found.buff[0]*2*3].copy()], number_of_arrays=2, equal_length=True, final_shape=(-1, 3))
-                obuff_el_owner, obuff_glb_el_owner, obuff_rank_owner, obuff_err_code = unpack_source_data(packed_source_data=[verify_rma_p_info.buff[:verify_rma_n_not_found.buff[0]*4]].copy(), number_of_arrays=4, equal_length=True)
-                obuff_test_pattern = [verify_rma_test_pattern.buff[:verify_rma_n_not_found.buff[0]].copy()]
+                obuff_probes, obuff_probes_rst = unpack_source_data(packed_source_data=[rma.verify_p_probes.buff[:rma.verify_n_not_found.buff[0]*2*3].copy()], number_of_arrays=2, equal_length=True, final_shape=(-1, 3))
+                obuff_el_owner, obuff_glb_el_owner, obuff_rank_owner, obuff_err_code = unpack_source_data(packed_source_data=[rma.verify_p_info.buff[:rma.verify_n_not_found.buff[0]*4]].copy(), number_of_arrays=4, equal_length=True)
+                obuff_test_pattern = [rma.verify_test_pattern.buff[:rma.verify_n_not_found.buff[0]].copy()]
 
                 # Signal that my buffer is now ready to be used to find points
-                self.ranks_ive_checked.append(verify_rma_busy.buff[0])
+                self.ranks_ive_checked.append(rma.verify_busy.buff[0])
 
                 # Now loop through all the points in the buffers that
                 # have been sent back and determine which point was found
@@ -2315,9 +2308,9 @@ class Interpolator:
                             self.test_pattern_partition[absolute_point] = obuff_test_pattern[index][relative_point]
                 
                 # Signal I am ready for more data
-                verify_rma_busy.buff[0] = -1
-                verify_rma_done.buff[0] = -1
-                verify_rma_n_not_found.buff[0] = 0
+                rma.verify_busy.buff[0] = -1
+                rma.verify_done.buff[0] = -1
+                rma.verify_n_not_found.buff[0] = 0
 
                 # Reset some of the flags
                 i_sent_data = False
