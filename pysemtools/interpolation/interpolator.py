@@ -13,6 +13,7 @@ from ..comm.router import Router
 from collections import Counter as collections_counter
 import threading
 import time
+import ctypes
 
 # check if we have rtree installed
 try :
@@ -27,38 +28,70 @@ DEBUG = os.getenv("PYSEMTOOLS_DEBUG", "False").lower() in ("true", "1", "t")
 class OneSidedComms:
     '''
     Wrapper class to handle one-sided communication
-    
+
     Parameters:
     -----------
     comm : MPI.Comm
         The MPI communicator to use.
     rma_win : MPI.Win
-        The MPI window for one-sided communication (Optional, since it can be created if a window size and dtype is provided).
+        The MPI window for one-sided communication (Optional, can be provided).
     rma_buff : np.ndarray
-        The buffer associated with the MPI window. (Optional, since it can be created if a window size and dtype is provided).
+        The buffer associated with the MPI window (Optional, can be provided).
     window_size : int
-        The size of the window buffer. (Optional, since an existing window and buffer can be passed).
+        The size of the window buffer (Required if creating a new window).
     dtype : np.dtype
-        The data type of the elements in the buffer. (Required if creating a new window and buffer).
+        The data type of elements in the buffer (Required if creating a new window).
+    fill_value : scalar
+        Initial fill value for the buffer (Optional).
     '''
 
-    def __init__(self, comm: MPI.Comm, rma_win: MPI.Win = None, rma_buff: np.ndarray = None, window_size: int = None, dtype: np.dtype = None, fill_value = None):
-        
-        if rma_win is None and rma_buff is None:
-            if fill_value is None:
-                rma_buff = np.empty((window_size,), dtype=dtype)
-            else:
-                rma_buff = np.full((window_size,), fill_value, dtype=dtype)
-            rma_win = MPI.Win.Create(memory=rma_buff, disp_unit=rma_buff.itemsize, comm=comm) 
-        else:
-            raise ValueError("If not passing an existing window and buffer, window_size and dtype must be provided")
-        
-        self.win = rma_win
-        self.buff = rma_buff
+    def __init__(self,
+                 comm: MPI.Comm,
+                 rma_win: MPI.Win = None,
+                 rma_buff: np.ndarray = None,
+                 window_size: int = None,
+                 dtype: np.dtype = None,
+                 fill_value=None):
         self.comm = comm
         self.rank = comm.Get_rank()
-        self._lock = threading.Lock()
+        self._mpi_ptr = None
 
+        # Determine creation or usage of provided window/buffer
+        if rma_win is None and rma_buff is None:
+            if window_size is None or dtype is None:
+                raise ValueError("window_size and dtype must be provided when not passing rma_win and rma_buff")
+
+            # Allocate memory via MPI - Trying to avoid any memory address replication from numpy/python
+            self.dtype = np.dtype(dtype)
+            self.window_size = window_size
+            self.itemsize = self.dtype.itemsize
+            self.size_bytes = self.itemsize * self.window_size
+            self._mpi_ptr = MPI.Alloc_mem(self.size_bytes, MPI.INFO_NULL)
+
+            # Wrap pointer into ctypes buffer so it can be viewed as numpy
+            addr = ctypes.addressof(ctypes.c_char.from_buffer(self._mpi_ptr))
+            buf_type = ctypes.c_char * self.size_bytes
+            raw_buf = buf_type.from_address(addr)
+
+            self.buff = np.ctypeslib.as_array(raw_buf).view(self.dtype)
+            if fill_value is not None:
+                self.buff[:] = fill_value
+
+            # Create MPI window over the allocated memory
+            self.win = MPI.Win.Create(self._mpi_ptr, self.itemsize, MPI.INFO_NULL, self.comm)
+
+        elif rma_win is not None and rma_buff is not None:
+            # Use provided window and buffer
+            self.win = rma_win
+            self.buff = rma_buff
+            self.dtype = self.buff.dtype
+            self.window_size = self.buff.size
+        else:
+            # One provided but not the other
+            raise ValueError("Both rma_win and rma_buff must be provided together")
+
+        self._lock = threading.Lock()
+    
     def compare_and_swap(self, value_to_check = None, value_to_put = None, dest: int = None):
         '''Wrap around compare and swap to do atomic operations on the buffer.
         
@@ -1820,7 +1853,7 @@ class Interpolator:
         search_done = OneSidedComms(self.rt.comm, window_size=comm.Get_size(), dtype=np.int64, fill_value=0)
 
         # Start the search
-        search_iteration = 0
+        search_iteration = -1
         search_flag = True  
         # Check if all ranks are done
         keep_searching = np.zeros((1), dtype=np.int64)
@@ -1829,6 +1862,7 @@ class Interpolator:
         log_epochs = 1000
         
         while search_flag:
+            search_iteration += 1
 
             # Sincrhonize once before proceeding
             # This is currently needed to avoid races.
@@ -2089,7 +2123,6 @@ class Interpolator:
                     search_done.put(dest = 0, data = 1, dtype=np.int64, displacement=comm.Get_rank())
                     am_i_done = True
              
-            search_iteration += 1
             
             if int(keep_searching) == int(self.rt.comm.Get_size()):
                 self.log.write("info", "All ranks are done searching, exiting")
