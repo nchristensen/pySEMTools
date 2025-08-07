@@ -388,7 +388,7 @@ class RMASubWindow:
 
         return result[0]
 
-    def put(self, dest: int = None, data = None, dtype: np.dtype =None, displacement: int = 0):
+    def put(self, dest: int = None, data = None, dtype: np.dtype =None, displacement: int = 0, lock: bool = True, unlock: bool = True, flush: bool = True):
 
         '''Put data into the buffer at the specified displacement.
         
@@ -423,12 +423,12 @@ class RMASubWindow:
         else:
             byte_displacement = displacement * self.itemsize + self.start_offset
             byte_count = data.size * self.itemsize
-            self.win.Lock(dest, MPI.LOCK_EXCLUSIVE)
+            if lock: self.win.Lock(dest, MPI.LOCK_EXCLUSIVE)
             self.win.Put([data.view(np.uint8), MPI.BYTE], dest, [byte_displacement, byte_count, MPI.BYTE]) # Just send bytes
-            self.win.Flush(dest)
-            self.win.Unlock(dest)
+            if flush: self.win.Flush(dest)
+            if unlock: self.win.Unlock(dest)
 
-    def get(self, source: int = None, displacement: int = 0, counts: int = None):
+    def get(self, source: int = None, displacement: int = 0, counts: int = None, lock: bool = True, unlock: bool = True, flush: bool = True):
 
         '''Get data from the buffer at the specified displacement.
 
@@ -462,10 +462,10 @@ class RMASubWindow:
             byte_displacement = displacement * self.itemsize + self.start_offset
             byte_count = counts * self.itemsize
             data = np.empty(byte_count, dtype=np.uint8)
-            self.win.Lock(source, MPI.LOCK_EXCLUSIVE)
+            if lock: self.win.Lock(source, MPI.LOCK_EXCLUSIVE)
             self.win.Get([data, MPI.BYTE], source, [byte_displacement, byte_count, MPI.BYTE])
-            self.win.Flush(source)
-            self.win.Unlock(source)
+            if flush: self.win.Flush(source)
+            if unlock: self.win.Unlock(source)
             return data.view(self.dtype).copy()
 
 class Interpolator:
@@ -2144,12 +2144,12 @@ class Interpolator:
                         p_probes = pack_data(array_list=[probe_not_found, probe_rst_not_found])
                         p_info = pack_data(array_list=[el_owner_not_found, glb_el_owner_not_found, rank_owner_not_found, err_code_not_found])
 
-                        # Send the data
-                        rma.find_n_not_found.put(dest=dest, data = n_not_found_at_this_candidate, dtype=np.int64)
-                        rma.find_p_probes.put(dest=dest, data = p_probes)
-                        rma.find_p_info.put(dest=dest, data = p_info)
-                        rma.find_test_pattern.put(dest=dest, data = test_pattern_not_found)
-                        rma.find_done.put(dest=dest, data = 1, dtype=np.int64)
+                        # Send the data - Lock communication in first instance and flush/unlock in the last one
+                        rma.find_n_not_found.put(dest=dest, data = n_not_found_at_this_candidate, dtype=np.int64, lock=True, flush=False, unlock=False)
+                        rma.find_p_probes.put(dest=dest, data = p_probes, lock=False, flush=False, unlock=False)
+                        rma.find_p_info.put(dest=dest, data = p_info, lock=False, flush=False, unlock=False)
+                        rma.find_test_pattern.put(dest=dest, data = test_pattern_not_found, lock=False, flush=False, unlock=False)
+                        rma.find_done.put(dest=dest, data = 1, dtype=np.int64, lock=False, flush=True, unlock=True)
 
                         # Store variables for later
                         i_sent_data = True
@@ -2235,14 +2235,14 @@ class Interpolator:
                     if busy_buff != -1:
                         pass  # The rank is busy, and my rank lost the race, skip it for now
                     else:
-                        
-                        # Put the data back
+
+                        # Put the data back - Lock communication in first instance and flush/unlock in the last one
                         n_checked = rma.find_n_not_found.buff[0]
-                        rma.verify_n_not_found.put(dest=my_source[0], data = n_checked, dtype=np.int64)
-                        rma.verify_p_probes.put(dest=my_source[0], data = p_buff_probes[0])
-                        rma.verify_p_info.put(dest=my_source[0], data = p_buff_info[0])
-                        rma.verify_test_pattern.put(dest=my_source[0], data = buff_test_pattern[0])
-                        rma.verify_done.put(dest=my_source[0], data = 1, dtype=np.int64)
+                        rma.verify_n_not_found.put(dest=my_source[0], data = n_checked, dtype=np.int64, lock=True, flush=False, unlock=False)
+                        rma.verify_p_probes.put(dest=my_source[0], data = p_buff_probes[0], lock=False, flush=False, unlock=False)
+                        rma.verify_p_info.put(dest=my_source[0], data = p_buff_info[0], lock=False, flush=False, unlock=False)
+                        rma.verify_test_pattern.put(dest=my_source[0], data = buff_test_pattern[0], lock=False, flush=False, unlock=False)
+                        rma.verify_done.put(dest=my_source[0], data = 1, dtype=np.int64, lock=False, flush=True, unlock=True)
 
                         # Signal that my buffer is now ready to be used to find points
                         rma.find_busy.buff[0] = -1
