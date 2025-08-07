@@ -333,7 +333,7 @@ class GroupedOneSidedComms:
         byte_arr = np.frombuffer(raw_buf, dtype=np.uint8)
 
         # Create MPI window over the allocated memory
-        self.win = MPI.Win.Create(self._mpi_ptr, self.size_bytes, MPI.INFO_NULL, self.comm)
+        self.win = MPI.Win.Create(self._mpi_ptr, 1, MPI.INFO_NULL, self.comm)
 
         for member in window_members.keys():
             m = self.__getattribute__(member)
@@ -410,10 +410,10 @@ class GroupedOneSidedComms:
         if dest == self.rank:
             self.__getattribute__(sub_window).buff[displacement:displacement + data.size] = data
         else:
-            mpi_dtype = MPI._typedict[data.dtype.char]
-            displacement += self.__getattribute__(sub_window).start_offset
+            byte_displacement = displacement * self.__getattribute__(sub_window).itemsize + self.__getattribute__(sub_window).start_offset
+            byte_count = data.size * self.__getattribute__(sub_window).itemsize
             self.win.Lock(dest, MPI.LOCK_EXCLUSIVE)
-            self.win.Put([data, mpi_dtype], dest, [displacement, data.size, mpi_dtype])
+            self.win.Put([data.view(np.uint8), MPI.BYTE], dest, [byte_displacement, byte_count, MPI.BYTE]) # Just send bytes
             self.win.Flush(dest)
             self.win.Unlock(dest)
 
@@ -447,14 +447,15 @@ class GroupedOneSidedComms:
         if source == self.rank:
             return self.__getattribute__(sub_window).buff[displacement:displacement + counts].copy()
         else:
-            mpi_dtype = MPI._typedict[self.__getattribute__(sub_window).buff.dtype.char]
-            data = np.empty(counts, dtype=self.__getattribute__(sub_window).buff.dtype)
-            displacement += self.__getattribute__(sub_window).start_offset
+            
+            byte_displacement = displacement * self.__getattribute__(sub_window).itemsize + self.__getattribute__(sub_window).start_offset
+            byte_count = counts * self.__getattribute__(sub_window).itemsize
+            data = np.empty(byte_count, dtype=np.uint8)
             self.win.Lock(source, MPI.LOCK_EXCLUSIVE)
-            self.win.Get([data, mpi_dtype], source, [displacement, counts, mpi_dtype])
+            self.win.Get([data, MPI.BYTE], source, [byte_displacement, byte_count, MPI.BYTE])
             self.win.Flush(source)
             self.win.Unlock(source)
-            return data.copy()
+            return data.view(self.__getattribute__(sub_window).dtype).copy()
 
     def accumulate(self, sub_window: str, dest: int = None, data = None, dtype: np.dtype = None, displacement: int = 0, op="SUM"):
 
@@ -2148,7 +2149,7 @@ class Interpolator:
         keep_searching = np.zeros((1), dtype=np.int64)
         am_i_done = False
         i_sent_data = False
-        log_epochs = 1000
+        log_epochs = 1
         while search_flag:
             search_iteration += 1
 
@@ -2159,9 +2160,10 @@ class Interpolator:
             # Having a workaround should make everything faster 
             comm.Barrier()
 
-            keep_searching = np.sum(search_done.get(source = 0, displacement=0))
+            keep_searching_ = find_rma.get("search_done", source = 0, displacement=0)
+            keep_searching = np.sum(find_rma.get("search_done", source = 0, displacement=0))
             if np.mod(search_iteration+1, log_epochs) == 0 or search_iteration == 0:
-                self.log.write("info", f'search iteration {search_iteration+1} in progress. We keep searching on : {comm.Get_size() - keep_searching} ranks')            
+                self.log.write("info", f'search iteration {search_iteration+1} in progress. We keep searching on : {comm.Get_size() - keep_searching} ranks, with status {keep_searching_}')            
 
             mask = (self.err_code_partition != 1)
             combined_mask = mask
@@ -2170,7 +2172,7 @@ class Interpolator:
             
             if total_n_not_found <= 0 and not am_i_done:
                 # Say that this rank is done
-                search_done.put(dest = 0, data = 1, dtype=np.int64, displacement=comm.Get_rank()) 
+                find_rma.put("search_done", dest = 0, data = 1, dtype=np.int64, displacement=comm.Get_rank()) 
                 am_i_done = True
  
             # Send points if you need to
@@ -2178,7 +2180,7 @@ class Interpolator:
                 for dest in my_dest:
                     if dest not in self.ranks_ive_checked:
                         # Check if the destination rank is busy
-                        busy_buff = find_rma_busy.compare_and_swap(value_to_check=-1, value_to_put=self.rt.comm.Get_rank(), dest=dest)
+                        busy_buff = find_rma.compare_and_swap("busy", value_to_check=-1, value_to_put=self.rt.comm.Get_rank(), dest=dest)
 
                         if busy_buff != -1:
                             continue  # The rank is busy, and my rank lost the race, skip it for now
@@ -2191,7 +2193,7 @@ class Interpolator:
                         n_not_found_at_this_candidate = not_found_at_this_candidate.size
                         if n_not_found_at_this_candidate < 1:
                             # Reset the busy flag
-                            find_rma_busy.put(dest=dest, data=-1, dtype=np.int64)
+                            find_rma.put("busy", dest=dest, data=-1, dtype=np.int64)
                             self.ranks_ive_checked.append(dest)
                             continue
 
@@ -2209,11 +2211,11 @@ class Interpolator:
                         p_info = pack_data(array_list=[el_owner_not_found, glb_el_owner_not_found, rank_owner_not_found, err_code_not_found])
 
                         # Send the data
-                        find_rma_n_not_found.put(dest=dest, data = n_not_found_at_this_candidate, dtype=np.int64)
-                        find_rma_p_probes.put(dest=dest, data = p_probes)
-                        find_rma_p_info.put(dest=dest, data = p_info)
-                        find_rma_test_pattern.put(dest=dest, data = test_pattern_not_found)
-                        find_rma_done.put(dest=dest, data = 1, dtype=np.int64)
+                        find_rma.put("n_not_found", dest=dest, data = n_not_found_at_this_candidate, dtype=np.int64)
+                        find_rma.put("p_probes", dest=dest, data = p_probes)
+                        find_rma.put("p_info", dest=dest, data = p_info)
+                        find_rma.put("test_pattern", dest=dest, data = test_pattern_not_found)
+                        find_rma.put("done", dest=dest, data = 1, dtype=np.int64)
 
                         # Store variables for later
                         i_sent_data = True
@@ -2224,12 +2226,12 @@ class Interpolator:
                         break
 
             # Now find points from other ranks if anyone has sent me data
-            if find_rma_busy.buff[0] != -1 and find_rma_done.buff[0] == 1:
-                my_source = [find_rma_busy.buff[0].copy()]
+            if find_rma.busy.buff[0] != -1 and find_rma.done.buff[0] == 1:
+                my_source = [find_rma.busy.buff[0].copy()]
                 # Give it the correct format.
-                buff_probes, buff_probes_rst = unpack_source_data(packed_source_data=[find_rma_p_probes.buff[:find_rma_n_not_found.buff[0]*2*3].copy()], number_of_arrays=2, equal_length=True, final_shape=(-1, 3))
-                buff_el_owner, buff_glb_el_owner, buff_rank_owner, buff_err_code = unpack_source_data(packed_source_data=[find_rma_p_info.buff[:find_rma_n_not_found.buff[0]*4]].copy(), number_of_arrays=4, equal_length=True)
-                buff_test_pattern = [find_rma_test_pattern.buff[:find_rma_n_not_found.buff[0]].copy()]
+                buff_probes, buff_probes_rst = unpack_source_data(packed_source_data=[find_rma.p_probes.buff[:find_rma.n_not_found.buff[0]*2*3].copy()], number_of_arrays=2, equal_length=True, final_shape=(-1, 3))
+                buff_el_owner, buff_glb_el_owner, buff_rank_owner, buff_err_code = unpack_source_data(packed_source_data=[find_rma.p_info.buff[:find_rma.n_not_found.buff[0]*4]].copy(), number_of_arrays=4, equal_length=True)
+                buff_test_pattern = [find_rma.test_pattern.buff[:find_rma.n_not_found.buff[0]].copy()]
 
                 # Set the information for the coordinate search in this rank
                 mesh_info = {}
@@ -2301,16 +2303,16 @@ class Interpolator:
                     else:
                         
                         # Put the data back
-                        verify_rma_n_not_found.put(dest=my_source[0], data = np.copy(find_rma_n_not_found.buff[0]), dtype=np.int64)
+                        verify_rma_n_not_found.put(dest=my_source[0], data = np.copy(find_rma.n_not_found.buff[0]), dtype=np.int64)
                         verify_rma_p_probes.put(dest=my_source[0], data = p_buff_probes[0])
                         verify_rma_p_info.put(dest=my_source[0], data = p_buff_info[0])
                         verify_rma_test_pattern.put(dest=my_source[0], data = buff_test_pattern[0])
                         verify_rma_done.put(dest=my_source[0], data = 1, dtype=np.int64)
 
                         # Signal that my buffer is now ready to be used to find points
-                        find_rma_busy.buff[0] = -1
-                        find_rma_done.buff[0] = -1
-                        find_rma_n_not_found.buff[0] = 0
+                        find_rma.busy.buff[0] = -1
+                        find_rma.done.buff[0] = -1
+                        find_rma.n_not_found.buff[0] = 0
                         returned_data = True
 
 
@@ -2381,7 +2383,7 @@ class Interpolator:
 
                 if len(self.ranks_ive_checked) == len(my_dest) and not am_i_done:
                     # Say that this rank is done
-                    search_done.put(dest = 0, data = 1, dtype=np.int64, displacement=comm.Get_rank())
+                    find_rma.put("search_done", dest = 0, data = 1, dtype=np.int64, displacement=comm.Get_rank())
                     am_i_done = True
              
             
