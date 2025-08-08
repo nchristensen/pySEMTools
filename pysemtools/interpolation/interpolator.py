@@ -2101,6 +2101,7 @@ class Interpolator:
             keep_searching = np.sum(rma.search_done.get(source = 0, displacement=0))
             log_time = int(np.floor(MPI.Wtime() - start_time))
             if (np.mod(log_time, INTERPOLATION_LOG_TIME) == 0 and log_time != last_log) or search_iteration == 0:
+                if search_iteration == 0: self.log.write("info", f"Starting search iterations. Rank 0 will attempt to log every {INTERPOLATION_LOG_TIME} seconds unless it is busy processing data")
                 self.log.write("info", f'Log entry: {log_entry}, search iteration {search_iteration+1} in progress. We keep searching on : {comm.Get_size() - keep_searching} ranks')            
                 last_log = log_time
                 log_entry += 1
