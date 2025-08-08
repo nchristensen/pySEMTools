@@ -24,6 +24,7 @@ except ImportError:
 NoneType = type(None)
 
 DEBUG = os.getenv("PYSEMTOOLS_DEBUG", "False").lower() in ("true", "1", "t")
+INTERPOLATION_LOG_TIME = int(os.getenv("PYSEMTOOLS_INTERPOLATION_LOG_TIME", "60"))
 
 class OneSidedComms:
     '''
@@ -2083,7 +2084,9 @@ class Interpolator:
         keep_searching = np.zeros((1), dtype=np.int64)
         am_i_done = False
         i_sent_data = False
-        log_epochs = 10000
+        search_time = 0.0
+        last_log = 0
+        log_entry = 1
         while search_flag:
             search_iteration += 1
 
@@ -2096,8 +2099,11 @@ class Interpolator:
 
             #keep_searching_ = rma.search_done.get(source = 0, displacement=0)
             keep_searching = np.sum(rma.search_done.get(source = 0, displacement=0))
-            if np.mod(search_iteration+1, log_epochs) == 0 or search_iteration == 0:
-                self.log.write("info", f'search iteration {search_iteration+1} in progress. We keep searching on : {comm.Get_size() - keep_searching} ranks')            
+            log_time = int(np.floor(MPI.Wtime() - start_time))
+            if (np.mod(log_time, INTERPOLATION_LOG_TIME) == 0 and log_time != last_log) or search_iteration == 0:
+                self.log.write("info", f'Log entry: {log_entry}, search iteration {search_iteration+1} in progress. We keep searching on : {comm.Get_size() - keep_searching} ranks')            
+                last_log = log_time
+                log_entry += 1
 
             mask = (self.err_code_partition != 1)
             combined_mask = mask
