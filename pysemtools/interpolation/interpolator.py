@@ -2120,11 +2120,11 @@ class Interpolator:
                         combined_mask = mask & candidate_mask
                         not_found_at_this_candidate = np.flatnonzero(combined_mask)    
                         n_not_found_at_this_candidate = not_found_at_this_candidate.size
-                        if n_not_found_at_this_candidate < 1:
-                            # Reset the busy flag
-                            rma.find_busy.put(dest=dest, data=-1, dtype=np.int32)
-                            self.ranks_ive_checked.append(dest)
-                            continue
+                        #if n_not_found_at_this_candidate < 1:
+                        #    # Reset the busy flag
+                        #    rma.find_busy.put(dest=dest, data=-1, dtype=np.int32)
+                        #    self.ranks_ive_checked.append(dest)
+                        #    continue
 
                         # Get only the relevant data
                         probe_not_found = self.probe_partition[not_found_at_this_candidate]
@@ -2196,25 +2196,27 @@ class Interpolator:
                         "debug", f"Processing batch: {source_index} out of {len(my_source)}"
                     )
 
-                    probes_info = {}
-                    probes_info["probes"] = buff_probes[source_index]
-                    probes_info["probes_rst"] = buff_probes_rst[source_index]
-                    probes_info["el_owner"] = buff_el_owner[source_index]
-                    probes_info["glb_el_owner"] = buff_glb_el_owner[source_index]
-                    probes_info["rank_owner"] = buff_rank_owner[source_index]
-                    probes_info["err_code"] = buff_err_code[source_index]
-                    probes_info["test_pattern"] = buff_test_pattern[source_index]
-                    probes_info["rank"] = rank
-                    probes_info["offset_el"] = self.offset_el
-                    [
-                        buff_probes[source_index],
-                        buff_probes_rst[source_index],
-                        buff_el_owner[source_index],
-                        buff_glb_el_owner[source_index],
-                        buff_rank_owner[source_index],
-                        buff_err_code[source_index],
-                        buff_test_pattern[source_index],
-                    ] = self.ei.find_rst(probes_info, mesh_info, settings, buffers=buffers)
+                    if rma.find_n_not_found.buff[0] != 0:
+
+                        probes_info = {}
+                        probes_info["probes"] = buff_probes[source_index]
+                        probes_info["probes_rst"] = buff_probes_rst[source_index]
+                        probes_info["el_owner"] = buff_el_owner[source_index]
+                        probes_info["glb_el_owner"] = buff_glb_el_owner[source_index]
+                        probes_info["rank_owner"] = buff_rank_owner[source_index]
+                        probes_info["err_code"] = buff_err_code[source_index]
+                        probes_info["test_pattern"] = buff_test_pattern[source_index]
+                        probes_info["rank"] = rank
+                        probes_info["offset_el"] = self.offset_el
+                        [
+                            buff_probes[source_index],
+                            buff_probes_rst[source_index],
+                            buff_el_owner[source_index],
+                            buff_glb_el_owner[source_index],
+                            buff_rank_owner[source_index],
+                            buff_err_code[source_index],
+                            buff_test_pattern[source_index],
+                        ] = self.ei.find_rst(probes_info, mesh_info, settings, buffers=buffers)
                 
                 # Pack and send/recv the probe data
                 p_buff_probes = pack_destination_data(destination_data=[buff_probes, buff_probes_rst])
