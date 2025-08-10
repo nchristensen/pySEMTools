@@ -24,7 +24,7 @@ def main():
         description="Extract a box-shaped subdomain from a field file",
         epilog="""Example usage:
 
-    mpirun -n 4 python script.py --input_file input.fld --output_file output.fld --bounds "1.0,2.0,3.0,4.0,5.0,6.0" --fields "field1,field2,field3"
+    mpirun -n 4 python pysemtools_extract_subdomain --input_file input.fld --output_file output.fld --bounds=1.0,2.0,3.0,4.0,5.0,6.0 --fields=field1,field2,field3
     """,
     )
 
@@ -79,3 +79,6 @@ def main():
             [bounds[4], bounds[5]],
         ],
     )
+
+if __name__ == "__main__":
+    main()

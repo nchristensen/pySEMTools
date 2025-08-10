@@ -5,11 +5,14 @@ Contains the mesh re partitioner class.
 import sys
 from typing import Union
 import numpy as np
+
+from . import MeshConnectivity
 from .msh import Mesh
 from .field import Field, FieldRegistry
 from ..comm.router import Router
 from ..monitoring.logger import Logger
 
+__all__ = ['MeshPartitioner']
 
 class MeshPartitioner:
     """

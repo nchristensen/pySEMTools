@@ -1,5 +1,7 @@
 """ Module that contains msh class, which contains relevant data on the domain"""
 
+__all__ = ['Mesh']
+
 import sys
 if 'torch' in sys.modules:
     import torch
@@ -10,6 +12,7 @@ from ..monitoring.logger import Logger
 from .element_slicing import fetch_elem_facet_data as fd
 from .element_slicing import fetch_elem_edge_data as ed
 from .element_slicing import fetch_elem_vertex_data as vd
+
 
 NoneType = type(None)
 
@@ -33,6 +36,8 @@ class Mesh:
         Y coordinates of the domain. shape is (nelv, lz, ly, lx).
     z : ndarray, optional
         Z coordinates of the domain. shape is (nelv, lz, ly, lx).
+    elmap : ndarray, optional
+        1D ndarray of global element ids. shape is (nelv,).
     create_connectivity : bool, optional
         If True, the connectivity of the domain will be created. (Memory intensive).
 
@@ -78,7 +83,7 @@ class Mesh:
     """
 
     def __init__(
-        self, comm, data=None, x=None, y=None, z=None, create_connectivity=False, bckend="numpy"
+        self, comm, data=None, x=None, y=None, z=None, elmap=None, create_connectivity=False, bckend="numpy"
     ):
 
         self.log = Logger(comm=comm, module_name="Mesh")
@@ -97,7 +102,7 @@ class Mesh:
             and not isinstance(y, NoneType)
             and not isinstance(z, NoneType)
         ):
-            self.init_from_coords(comm, x, y, z)
+            self.init_from_coords(comm, x, y, z, elmap=elmap)
 
         else:
             self.log.write("info", "Initializing empty Mesh object.")
@@ -124,6 +129,7 @@ class Mesh:
         self.log.write("info", "Initializing Mesh object from HexaData object.")
 
         self.x, self.y, self.z = get_coordinates_from_hexadata(data)
+        self.elmap = data.elmap if hasattr(data, 'elmap') else None
 
         self.init_common(comm)
 
@@ -131,7 +137,7 @@ class Mesh:
         self.log.write("info", f"Mesh data is of type: {self.x.dtype}")
         self.log.toc()
 
-    def init_from_coords(self, comm, x, y, z):
+    def init_from_coords(self, comm, x, y, z, elmap=None):
         """
         Initialize from coordinates.
 
@@ -147,6 +153,8 @@ class Mesh:
             Y coordinates of the domain. shape is (nelv, lz, ly, lx).
         z : ndarray
             Z coordinates of the domain. shape is (nelv, lz, ly, lx).
+        elmap : ndarray, optional
+            1D ndarray of global element ids. shape is (nelv,). If not provided, it will be set to None.
 
         Returns
         -------
@@ -160,6 +168,7 @@ class Mesh:
         self.x = x
         self.y = y
         self.z = z
+        self.elmap = elmap
 
         self.init_common(comm)
 
