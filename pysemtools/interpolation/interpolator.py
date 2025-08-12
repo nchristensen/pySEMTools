@@ -2072,9 +2072,12 @@ class Interpolator:
         keep_searching = np.zeros((1), dtype=np.int64)
         am_i_done = False
         i_sent_data = False
-        search_time = 0.0
         last_log = 0
         log_entry = 1
+        self.data_in_transit = {"dummy": False}
+        self.points_sent = {}
+        checked_data = False
+        returned_data = False
         while search_flag:
             search_iteration += 1
 
@@ -2105,9 +2108,9 @@ class Interpolator:
                 am_i_done = True
  
             # Send points if you need to
-            if total_n_not_found > 0 and (len(my_dest) != len(self.ranks_ive_checked)) and (not i_sent_data):
+            if total_n_not_found > 0 and (len(my_dest) != len(self.ranks_ive_checked)):
                 for dest in my_dest:
-                    if dest not in self.ranks_ive_checked:
+                    if dest not in self.ranks_ive_checked and dest not in self.ranks_ive_sent_to:
                         # Check if the destination rank is busy
                         busy_buff = rma.find_busy.compare_and_swap(value_to_check=-1, value_to_put=self.rt.comm.Get_rank(), dest=dest)
 
@@ -2147,84 +2150,85 @@ class Interpolator:
                         rma.find_done.put(dest=dest, data = 1, dtype=np.int32, lock=False, flush=True, unlock=True)
 
                         # Store variables for later
-                        i_sent_data = True
-                        i_sent_data_to = dest
-                        self.ranks_ive_sent_to.append(dest)
-                        
-                        # Break the loop so only send to one rank
-                        break
+                        self.ranks_ive_sent_to.append(dest) 
+                        self.data_in_transit[int(dest)] = True
+                        self.points_sent[int(dest)] = not_found_at_this_candidate
 
             # Now find points from other ranks if anyone has sent me data
             if rma.find_busy.buff[0] != -1 and rma.find_done.buff[0] == 1:
-                my_source = [rma.find_busy.buff[0].copy()]
-                # Give it the correct format.
-                buff_probes, buff_probes_rst = unpack_source_data(packed_source_data=[rma.find_p_probes.buff[:rma.find_n_not_found.buff[0]*2*3].copy()], number_of_arrays=2, equal_length=True, final_shape=(-1, 3))
-                buff_el_owner, buff_glb_el_owner, buff_rank_owner, buff_err_code = unpack_source_data(packed_source_data=[rma.find_p_info.buff[:rma.find_n_not_found.buff[0]*4]].copy(), number_of_arrays=4, equal_length=True)
-                buff_test_pattern = [rma.find_test_pattern.buff[:rma.find_n_not_found.buff[0]].copy()]
+                if not checked_data:
+                    my_source = [rma.find_busy.buff[0].copy()]
+                    # Give it the correct format.
+                    buff_probes, buff_probes_rst = unpack_source_data(packed_source_data=[rma.find_p_probes.buff[:rma.find_n_not_found.buff[0]*2*3].copy()], number_of_arrays=2, equal_length=True, final_shape=(-1, 3))
+                    buff_el_owner, buff_glb_el_owner, buff_rank_owner, buff_err_code = unpack_source_data(packed_source_data=[rma.find_p_info.buff[:rma.find_n_not_found.buff[0]*4]].copy(), number_of_arrays=4, equal_length=True)
+                    buff_test_pattern = [rma.find_test_pattern.buff[:rma.find_n_not_found.buff[0]].copy()]
 
-                # Set the information for the coordinate search in this rank
-                mesh_info = {}
-                mesh_info["x"] = self.x
-                mesh_info["y"] = self.y
-                mesh_info["z"] = self.z
-                mesh_info["bbox"] = self.my_bbox
-                if hasattr(self, "my_tree"):
-                    mesh_info["kd_tree"] = self.my_tree
-                if hasattr(self, "my_bbox_maxdist"):
-                    mesh_info["bbox_max_dist"] = self.my_bbox_maxdist
-                if hasattr(self, "local_data_structure"):
-                    mesh_info["local_data_structure"] = self.local_data_structure
+                    # Set the information for the coordinate search in this rank
+                    mesh_info = {}
+                    mesh_info["x"] = self.x
+                    mesh_info["y"] = self.y
+                    mesh_info["z"] = self.z
+                    mesh_info["bbox"] = self.my_bbox
+                    if hasattr(self, "my_tree"):
+                        mesh_info["kd_tree"] = self.my_tree
+                    if hasattr(self, "my_bbox_maxdist"):
+                        mesh_info["bbox_max_dist"] = self.my_bbox_maxdist
+                    if hasattr(self, "local_data_structure"):
+                        mesh_info["local_data_structure"] = self.local_data_structure
 
-                settings = {}
-                settings["not_found_code"] = -10
-                settings["use_test_pattern"] = True
-                settings["elem_percent_expansion"] = elem_percent_expansion
-                settings["progress_bar"] = self.progress_bar
-                settings["find_pts_tol"] = tol
-                settings["find_pts_max_iterations"] = max_iter
+                    settings = {}
+                    settings["not_found_code"] = -10
+                    settings["use_test_pattern"] = True
+                    settings["elem_percent_expansion"] = elem_percent_expansion
+                    settings["progress_bar"] = self.progress_bar
+                    settings["find_pts_tol"] = tol
+                    settings["find_pts_max_iterations"] = max_iter
 
-                buffers = {}
-                buffers["r"] = self.r
-                buffers["s"] = self.s
-                buffers["t"] = self.t
-                buffers["test_interp"] = self.test_interp
+                    buffers = {}
+                    buffers["r"] = self.r
+                    buffers["s"] = self.s
+                    buffers["t"] = self.t
+                    buffers["test_interp"] = self.test_interp
 
-                # Now find the rst coordinates for the points stored in each of the buffers
-                for source_index in range(0, len(my_source)):
+                    # Now find the rst coordinates for the points stored in each of the buffers
+                    for source_index in range(0, len(my_source)):
 
-                    self.log.write(
-                        "debug", f"Processing batch: {source_index} out of {len(my_source)}"
-                    )
+                        self.log.write(
+                            "debug", f"Processing batch: {source_index} out of {len(my_source)}"
+                        )
 
-                    if rma.find_n_not_found.buff[0] != 0:
+                        if rma.find_n_not_found.buff[0] != 0:
 
-                        probes_info = {}
-                        probes_info["probes"] = buff_probes[source_index]
-                        probes_info["probes_rst"] = buff_probes_rst[source_index]
-                        probes_info["el_owner"] = buff_el_owner[source_index]
-                        probes_info["glb_el_owner"] = buff_glb_el_owner[source_index]
-                        probes_info["rank_owner"] = buff_rank_owner[source_index]
-                        probes_info["err_code"] = buff_err_code[source_index]
-                        probes_info["test_pattern"] = buff_test_pattern[source_index]
-                        probes_info["rank"] = rank
-                        probes_info["offset_el"] = self.offset_el
-                        [
-                            buff_probes[source_index],
-                            buff_probes_rst[source_index],
-                            buff_el_owner[source_index],
-                            buff_glb_el_owner[source_index],
-                            buff_rank_owner[source_index],
-                            buff_err_code[source_index],
-                            buff_test_pattern[source_index],
-                        ] = self.ei.find_rst(probes_info, mesh_info, settings, buffers=buffers)
-                
-                # Pack and send/recv the probe data
-                p_buff_probes = pack_destination_data(destination_data=[buff_probes, buff_probes_rst])
-                p_buff_info = pack_destination_data(destination_data=[buff_el_owner, buff_glb_el_owner, buff_rank_owner, buff_err_code])
+                            probes_info = {}
+                            probes_info["probes"] = buff_probes[source_index]
+                            probes_info["probes_rst"] = buff_probes_rst[source_index]
+                            probes_info["el_owner"] = buff_el_owner[source_index]
+                            probes_info["glb_el_owner"] = buff_glb_el_owner[source_index]
+                            probes_info["rank_owner"] = buff_rank_owner[source_index]
+                            probes_info["err_code"] = buff_err_code[source_index]
+                            probes_info["test_pattern"] = buff_test_pattern[source_index]
+                            probes_info["rank"] = rank
+                            probes_info["offset_el"] = self.offset_el
+                            [
+                                buff_probes[source_index],
+                                buff_probes_rst[source_index],
+                                buff_el_owner[source_index],
+                                buff_glb_el_owner[source_index],
+                                buff_rank_owner[source_index],
+                                buff_err_code[source_index],
+                                buff_test_pattern[source_index],
+                            ] = self.ei.find_rst(probes_info, mesh_info, settings, buffers=buffers)
+                    
+                    # Pack and send/recv the probe data
+                    p_buff_probes = pack_destination_data(destination_data=[buff_probes, buff_probes_rst])
+                    p_buff_info = pack_destination_data(destination_data=[buff_el_owner, buff_glb_el_owner, buff_rank_owner, buff_err_code])
+
+                    # Reset the flag
+                    checked_data = True
+                    returned_data = False
 
                 # Send the data back to the source rank - Follow the same handshake as before, but this time, do not try to get a new rank if this one is busy. Simply wait until it can recieve data
-                returned_data = False
-                while not returned_data:
+                if not returned_data:
 
                     # Check if the destination rank is busy
                     busy_buff = rma.verify_busy.compare_and_swap(value_to_check=-1, value_to_put=self.rt.comm.Get_rank(), dest=my_source[0])
@@ -2245,10 +2249,13 @@ class Interpolator:
                         rma.find_busy.put(dest=self.rt.comm.Get_rank(), data=-1, dtype=np.int32, lock=True, flush=False, unlock=False)
                         rma.find_done.put(dest=self.rt.comm.Get_rank(), data=-1, dtype=np.int32, lock=False, flush=False, unlock=False)
                         rma.find_n_not_found.put(dest=self.rt.comm.Get_rank(), data= 0, dtype=np.int64, lock=False, flush=True, unlock=True)
+                        
+                        # Reset flags
+                        checked_data = False
                         returned_data = True
 
-
-            if i_sent_data and rma.verify_busy.buff[0] == i_sent_data_to and rma.verify_done.buff[0] == 1:
+            i_sent_data = np.any([self.data_in_transit[dest_] for dest_ in self.ranks_ive_sent_to])
+            if i_sent_data and rma.verify_busy.buff[0] != -1 and rma.verify_done.buff[0] == 1:
                 # The previous loop will wait until there is data here. So we can continue
                 # Give it the correct format.
                 obuff_probes, obuff_probes_rst = unpack_source_data(packed_source_data=[rma.verify_p_probes.buff[:rma.verify_n_not_found.buff[0]*2*3].copy()], number_of_arrays=2, equal_length=True, final_shape=(-1, 3))
@@ -2256,11 +2263,11 @@ class Interpolator:
                 obuff_test_pattern = [rma.verify_test_pattern.buff[:rma.verify_n_not_found.buff[0]].copy()]
 
                 # Signal that my buffer is now ready to be used to find points
-                self.ranks_ive_checked.append(rma.verify_busy.buff[0])
+                self.ranks_ive_checked.append(int(rma.verify_busy.buff[0]))
 
                 # Now loop through all the points in the buffers that
                 # have been sent back and determine which point was found
-                for relative_point, absolute_point  in enumerate(not_found_at_this_candidate):
+                for relative_point, absolute_point  in enumerate(self.points_sent[int(rma.verify_busy.buff[0])]):
 
                     # These are the error code and test patterns for
                     # this point from all the ranks that sent back
@@ -2310,8 +2317,7 @@ class Interpolator:
                 rma.verify_n_not_found.put(dest = self.rt.comm.Get_rank(), data = 0, dtype=np.int64, lock=False, flush=True, unlock=True)
 
                 # Reset some of the flags
-                i_sent_data = False
-                i_sent_data_to = -1
+                self.data_in_transit[int(rma.verify_busy.buff[0])] = False
 
                 if len(self.ranks_ive_checked) == len(my_dest) and not am_i_done:
                     # Say that this rank is done
