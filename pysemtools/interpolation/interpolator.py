@@ -2014,11 +2014,13 @@ class Interpolator:
         # These are the destination ranks
         self.log.write("info", "Obtaining candidate ranks and sources")
         my_dest, candidate_ranks_list = get_candidate_ranks(self, comm)
-        #my_dest_ = [comm.Get_rank()] + my_dest
-        #my_dest = []
-        #for _, d in enumerate(my_dest_):
-        #    if d not in my_dest:
-        #        my_dest.append(d)
+        # Put my own rank first if it is in the list
+        if comm.Get_rank() in my_dest:
+            my_dest_ = [comm.Get_rank()] + my_dest
+            my_dest = []
+            for _, d in enumerate(my_dest_):
+                if d not in my_dest:
+                    my_dest.append(d)
 
         max_candidates = np.ones((1), dtype=np.int64) * len(my_dest)
         max_candidates = comm.allreduce(max_candidates, op=MPI.MAX)
@@ -2078,6 +2080,7 @@ class Interpolator:
         self.points_sent = {}
         checked_data = False
         returned_data = False
+        comm.Barrier()
         while search_flag:
             search_iteration += 1
 
