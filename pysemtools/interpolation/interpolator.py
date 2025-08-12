@@ -2302,7 +2302,7 @@ class Interpolator:
                         min_test_pattern = np.array([])
                     if min_test_pattern.size > 0:
                         index = min_test_pattern[0]
-                        if obuff_test_pattern[index][relative_point] < self.test_pattern_partition[absolute_point]:
+                        if (obuff_test_pattern[index][relative_point] < self.test_pattern_partition[absolute_point]) and (self.err_code_partition[absolute_point] != 1):
                             self.probe_partition[absolute_point, :] = obuff_probes[index][relative_point, :]
                             self.probe_rst_partition[absolute_point, :] = obuff_probes_rst[index][relative_point, :]
                             self.el_owner_partition[absolute_point] = obuff_el_owner[index][relative_point]
