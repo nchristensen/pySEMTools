@@ -429,24 +429,26 @@ class RMASubWindow:
             idx = np.flatnonzero(mask)
             strides = np.array(data.strides, dtype = np.intp)
             row_size = idx.shape[0]
-            try :
-                col_size = data.shape[1]
-            except IndexError:
-                col_size = 1
-                    
-            # Get the displacements in memory for each entry
-            disps = idx * strides[0]
-            if col_size > 1:
-                col_disp = np.arange(col_size, dtype=np.intp) * strides[1] 
-                disps = (disps[:, None] + col_disp).ravel()
-
-            masked_dtype = MPI.BYTE.Create_hindexed_block(blocklength=data.itemsize, displacements=disps)
-            masked_dtype.Commit()
- 
-            byte_displacement = displacement * self.itemsize + self.start_offset
-            byte_count = row_size * col_size * self.itemsize
+            
+            # Perform a chunked send over the mask to avoid memory issues
             if lock: self.win.Lock(dest, MPI.LOCK_EXCLUSIVE)
-            self.win.Put([data, 1, masked_dtype], dest, [byte_displacement, byte_count, MPI.BYTE]) # Just send bytes
+
+            max_message_size = 100 * 1024 * 1024 # 100MB
+            bytes_per_row = strides[0]
+            row_chunk_size = max_message_size // strides[0]
+            byte_displacement = displacement * self.itemsize + self.start_offset
+            for row_chunk in range(0, row_size, row_chunk_size):
+                row_ids = idx[row_chunk:row_chunk + row_chunk_size]
+                row_displacements = row_ids * strides[0]
+                # Create a data type with len(row_displacements) entries long and bytes_per_row in each entry. The data is taken from the original input at the given displacement
+                row_dtype =  MPI.BYTE.Create_hindexed_block(blocklength=bytes_per_row, displacements=row_displacements)
+                row_dtype.Commit()
+                # Send
+                byte_count = row_ids.size * bytes_per_row
+                self.win.Put([data.view(np.uint8), 1, row_dtype], dest, [byte_displacement, byte_count, MPI.BYTE]) # Just send bytes
+                row_dtype.Free()
+                byte_displacement += byte_count
+
             if flush: self.win.Flush(dest)
             if unlock: self.win.Unlock(dest)
     
