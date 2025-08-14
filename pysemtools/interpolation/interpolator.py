@@ -446,7 +446,10 @@ class RMASubWindow:
                 # Send
                 byte_count = row_ids.size * bytes_per_row
                 data_ = data.view()
-                data_.shape = data.size
+                try:
+                    data_.shape = data.size
+                except AttributeError:
+                    raise AttributeError("Error while reshaping the data to send. Make sure your probes are C contiguous")
                 self.win.Put([data_.view(np.uint8), 1, row_dtype], dest, [byte_displacement, byte_count, MPI.BYTE]) # Just send bytes
                 row_dtype.Free()
                 byte_displacement += byte_count
