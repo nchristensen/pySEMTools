@@ -2186,9 +2186,9 @@ class Interpolator:
                 if not checked_data:
                     my_source = [rma.find_busy.buff[0].copy()]
                     # Give it the correct format.
-                    buff_probes, buff_probes_rst = unpack_source_data(packed_source_data=[rma.find_p_probes.buff[:rma.find_n_not_found.buff[0]*2*3].copy()], number_of_arrays=2, equal_length=True, final_shape=(-1, 3))
-                    buff_el_owner, buff_glb_el_owner, buff_rank_owner, buff_err_code = unpack_source_data(packed_source_data=[rma.find_p_info.buff[:rma.find_n_not_found.buff[0]*4]].copy(), number_of_arrays=4, equal_length=True)
-                    buff_test_pattern = [rma.find_test_pattern.buff[:rma.find_n_not_found.buff[0]].copy()]
+                    buff_probes, buff_probes_rst = unpack_source_data(packed_source_data=[rma.find_p_probes.buff[:rma.find_n_not_found.buff[0]*2*3].view()], number_of_arrays=2, equal_length=True, final_shape=(-1, 3))
+                    buff_el_owner, buff_glb_el_owner, buff_rank_owner, buff_err_code = unpack_source_data(packed_source_data=[rma.find_p_info.buff[:rma.find_n_not_found.buff[0]*4].view()], number_of_arrays=4, equal_length=True)
+                    buff_test_pattern = [rma.find_test_pattern.buff[:rma.find_n_not_found.buff[0]].view()]
 
                     # Set the information for the coordinate search in this rank
                     mesh_info = {}
@@ -2284,9 +2284,9 @@ class Interpolator:
             if i_sent_data and rma.verify_busy.buff[0] != -1 and rma.verify_done.buff[0] == 1:
                 # The previous loop will wait until there is data here. So we can continue
                 # Give it the correct format.
-                obuff_probes, obuff_probes_rst = unpack_source_data(packed_source_data=[rma.verify_p_probes.buff[:rma.verify_n_not_found.buff[0]*2*3].copy()], number_of_arrays=2, equal_length=True, final_shape=(-1, 3))
-                obuff_el_owner, obuff_glb_el_owner, obuff_rank_owner, obuff_err_code = unpack_source_data(packed_source_data=[rma.verify_p_info.buff[:rma.verify_n_not_found.buff[0]*4]].copy(), number_of_arrays=4, equal_length=True)
-                obuff_test_pattern = [rma.verify_test_pattern.buff[:rma.verify_n_not_found.buff[0]].copy()]
+                obuff_probes, obuff_probes_rst = unpack_source_data(packed_source_data=[rma.verify_p_probes.buff[:rma.verify_n_not_found.buff[0]*2*3].view()], number_of_arrays=2, equal_length=True, final_shape=(-1, 3))
+                obuff_el_owner, obuff_glb_el_owner, obuff_rank_owner, obuff_err_code = unpack_source_data(packed_source_data=[rma.verify_p_info.buff[:rma.verify_n_not_found.buff[0]*4].view()], number_of_arrays=4, equal_length=True)
+                obuff_test_pattern = [rma.verify_test_pattern.buff[:rma.verify_n_not_found.buff[0]].view()]
 
                 # Signal that my buffer is now ready to be used to find points
                 self.ranks_ive_checked.append(int(rma.verify_busy.buff[0]))
@@ -3094,9 +3094,10 @@ def unpack_data(packed_data: np.ndarray = None, number_of_arrays: int = None, eq
         for i in range(number_of_arrays):
             start_index = i * array_size
             end_index = (i + 1) * array_size
-            upacked = packed_data[start_index:end_index]
+            upacked = packed_data[start_index:end_index].view()
             if final_shape is not None:
-                unpacked_data.append(upacked.reshape(final_shape))
+                upacked.shape = final_shape
+                unpacked_data.append(upacked)
             else:   
                 unpacked_data.append(upacked)
     else:
