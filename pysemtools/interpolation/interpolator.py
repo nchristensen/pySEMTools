@@ -382,7 +382,7 @@ class RMASubWindow:
 
         return result[0]
 
-    def put(self, dest: int = None, data = None, dtype: np.dtype =None, displacement: int = 0, lock: bool = True, unlock: bool = True, flush: bool = True):
+    def put(self, dest: int = None, data = None, dtype: np.dtype =None, displacement: int = 0, lock: bool = True, unlock: bool = True, flush: bool = True, mask: np.ndarray = None):
 
         '''Put data into the buffer at the specified displacement.
         
@@ -411,13 +411,50 @@ class RMASubWindow:
 
         if data.dtype != self.buff.dtype:
             raise ValueError("Data to put and local buffer must have the same item size (same dtype)")
-        
-        byte_displacement = displacement * self.itemsize + self.start_offset
-        byte_count = data.size * self.itemsize
-        if lock: self.win.Lock(dest, MPI.LOCK_EXCLUSIVE)
-        self.win.Put([data.view(np.uint8), MPI.BYTE], dest, [byte_displacement, byte_count, MPI.BYTE]) # Just send bytes
-        if flush: self.win.Flush(dest)
-        if unlock: self.win.Unlock(dest)
+
+        # Send data if no mask is given 
+        mask_size = mask.size if mask is not None else 0
+        if mask is None or mask_size == 0:
+            byte_displacement = displacement * self.itemsize + self.start_offset
+            byte_count = data.size * self.itemsize
+            if lock: self.win.Lock(dest, MPI.LOCK_EXCLUSIVE)
+            self.win.Put([data.view(np.uint8), MPI.BYTE], dest, [byte_displacement, byte_count, MPI.BYTE]) # Just send bytes
+            if flush: self.win.Flush(dest)
+            if unlock: self.win.Unlock(dest)
+
+        # Send masked data if needed without duplicating data
+        elif isinstance(mask, np.ndarray):
+
+            # Determine the masked indices
+            idx = np.flatnonzero(mask)
+            strides = np.array(data.strides, dtype = np.intp)
+            row_size = idx.shape[0]
+            try :
+                col_size = data.shape[1]
+            except IndexError:
+                col_size = 1
+                    
+            # Get the displacements in memory for each entry
+            disps = idx * strides[0]
+            if col_size > 1:
+                col_disp = np.arange(col_size, dtype=np.intp) * strides[1] 
+                disps = (disps[:, None] + col_disp).ravel()
+
+            masked_dtype = MPI.BYTE.Create_hindexed_block(blocklength=data.itemsize, displacements=disps)
+            masked_dtype.Commit()
+ 
+            byte_displacement = displacement * self.itemsize + self.start_offset
+            byte_count = row_size * col_size * self.itemsize
+            if lock: self.win.Lock(dest, MPI.LOCK_EXCLUSIVE)
+            self.win.Put([data, 1, masked_dtype], dest, [byte_displacement, byte_count, MPI.BYTE]) # Just send bytes
+            if flush: self.win.Flush(dest)
+            if unlock: self.win.Unlock(dest)
+    
+    def put_sequence(self, dest: int = None, data : list = None, dtype: np.dtype =None, displacement: int = 0, lock: bool = True, unlock: bool = True, flush: bool = True, mask: np.ndarray = None):
+
+        for idx in range(0, len(data)): 
+            self.put(dest, data[idx], dtype=dtype, displacement=displacement, lock=lock, unlock=unlock, flush=flush, mask=mask)
+            displacement += data[idx].size
 
     def get(self, source: int = None, displacement: int = 0, counts: int = None, lock: bool = True, unlock: bool = True, flush: bool = True):
 
@@ -454,7 +491,7 @@ class RMASubWindow:
         self.win.Get([data, MPI.BYTE], source, [byte_displacement, byte_count, MPI.BYTE])
         if flush: self.win.Flush(source)
         if unlock: self.win.Unlock(source)
-        return data.view(self.dtype).copy()
+        return data.view(self.dtype)
 
 class Interpolator:
     """Class that interpolates data from a SEM mesh into a series of points"""
@@ -2131,25 +2168,12 @@ class Interpolator:
                         #    rma.find_busy.put(dest=dest, data=-1, dtype=np.int32)
                         #    self.ranks_ive_checked.append(dest)
                         #    continue
-
-                        # Get only the relevant data
-                        probe_not_found = self.probe_partition[not_found_at_this_candidate]
-                        probe_rst_not_found = self.probe_rst_partition[not_found_at_this_candidate]
-                        el_owner_not_found = self.el_owner_partition[not_found_at_this_candidate]
-                        glb_el_owner_not_found = self.glb_el_owner_partition[not_found_at_this_candidate]
-                        rank_owner_not_found = self.rank_owner_partition[not_found_at_this_candidate]
-                        err_code_not_found = self.err_code_partition[not_found_at_this_candidate]
-                        test_pattern_not_found = self.test_pattern_partition[not_found_at_this_candidate]
-    
-                        # Pack and send/recv the probe data
-                        p_probes = pack_data(array_list=[probe_not_found, probe_rst_not_found])
-                        p_info = pack_data(array_list=[el_owner_not_found, glb_el_owner_not_found, rank_owner_not_found, err_code_not_found])
-
+ 
                         # Send the data - Lock communication in first instance and flush/unlock in the last one
                         rma.find_n_not_found.put(dest=dest, data = n_not_found_at_this_candidate, dtype=np.int64, lock=True, flush=False, unlock=False)
-                        rma.find_p_probes.put(dest=dest, data = p_probes, lock=False, flush=False, unlock=False)
-                        rma.find_p_info.put(dest=dest, data = p_info, lock=False, flush=False, unlock=False)
-                        rma.find_test_pattern.put(dest=dest, data = test_pattern_not_found, lock=False, flush=False, unlock=False)
+                        rma.find_p_probes.put_sequence(dest, data = [self.probe_partition, self.probe_rst_partition], lock=False, flush=False, unlock=False, mask=combined_mask)
+                        rma.find_p_info.put_sequence(dest, data = [self.el_owner_partition, self.glb_el_owner_partition, self.rank_owner_partition, self.err_code_partition], lock=False, flush=False, unlock=False, mask=combined_mask)
+                        rma.find_test_pattern.put(dest=dest, data = self.test_pattern_partition, lock=False, flush=False, unlock=False, mask = combined_mask)
                         rma.find_done.put(dest=dest, data = 1, dtype=np.int32, lock=False, flush=True, unlock=True)
 
                         # Store variables for later
@@ -2222,10 +2246,6 @@ class Interpolator:
                                 buff_test_pattern[source_index],
                             ] = self.ei.find_rst(probes_info, mesh_info, settings, buffers=buffers)
                     
-                    # Pack and send/recv the probe data
-                    p_buff_probes = pack_destination_data(destination_data=[buff_probes, buff_probes_rst])
-                    p_buff_info = pack_destination_data(destination_data=[buff_el_owner, buff_glb_el_owner, buff_rank_owner, buff_err_code])
-
                     # Reset the flag
                     checked_data = True
                     returned_data = False
@@ -2242,10 +2262,13 @@ class Interpolator:
 
                         # Put the data back - Lock communication in first instance and flush/unlock in the last one
                         n_checked = rma.find_n_not_found.buff[0]
+                        # Mask to send all the data
+                        mask = np.ones((n_checked,), dtype=bool)
+
                         rma.verify_n_not_found.put(dest=my_source[0], data = n_checked, dtype=np.int64, lock=True, flush=False, unlock=False)
-                        rma.verify_p_probes.put(dest=my_source[0], data = p_buff_probes[0], lock=False, flush=False, unlock=False)
-                        rma.verify_p_info.put(dest=my_source[0], data = p_buff_info[0], lock=False, flush=False, unlock=False)
-                        rma.verify_test_pattern.put(dest=my_source[0], data = buff_test_pattern[0], lock=False, flush=False, unlock=False)
+                        rma.verify_p_probes.put_sequence(dest=my_source[0], data = [buff_probes[0], buff_probes_rst[0]], lock=False, flush=False, unlock=False, mask=mask)
+                        rma.verify_p_info.put_sequence(dest=my_source[0], data = [buff_el_owner[0], buff_glb_el_owner[0], buff_rank_owner[0], buff_err_code[0]], lock=False, flush=False, unlock=False, mask=mask)
+                        rma.verify_test_pattern.put(dest=my_source[0], data = buff_test_pattern[0], lock=False, flush=False, unlock=False) 
                         rma.verify_done.put(dest=my_source[0], data = 1, dtype=np.int32, lock=False, flush=True, unlock=True)
 
                         # Signal that my buffer is now ready to be used to find points
