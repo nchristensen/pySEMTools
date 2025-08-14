@@ -445,7 +445,7 @@ class RMASubWindow:
                 row_dtype.Commit()
                 # Send
                 byte_count = row_ids.size * bytes_per_row
-                self.win.Put([data.view(np.uint8), 1, row_dtype], dest, [byte_displacement, byte_count, MPI.BYTE]) # Just send bytes
+                self.win.Put([data, 1, row_dtype], dest, [byte_displacement, byte_count, MPI.BYTE]) # Just send bytes
                 row_dtype.Free()
                 byte_displacement += byte_count
 
