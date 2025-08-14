@@ -2076,8 +2076,14 @@ class Interpolator:
         ## Find sizes    
         mask = (self.err_code_partition != 1)
         combined_mask = mask
-        total_not_found = np.flatnonzero(combined_mask)        
-        total_n_not_found = total_not_found.size
+        total_n_not_found = 0
+        for dest in my_dest:
+            candidate_mask = np.any(candidates_per_point == dest, axis=1)
+            combined_mask = mask & candidate_mask
+            nsize_ = np.flatnonzero(combined_mask).size
+            if (nsize_ > total_n_not_found): 
+                total_not_found = np.flatnonzero(combined_mask)
+                total_n_not_found = nsize_
         local_pack_info = np.array([total_n_not_found*2*3, total_n_not_found*4, total_n_not_found], dtype=np.int64)
         recvbuff, scounts = self.rt.all_gather(data=local_pack_info, dtype=np.int64)
         probe_packs = recvbuff[::3]
