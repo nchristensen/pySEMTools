@@ -830,12 +830,12 @@ class Interpolator:
             # Set the necesary arrays for identification of point
             number_of_points = self.probes.shape[0]
             self.probes_rst = np.zeros((number_of_points, 3), dtype=np.double)
-            self.el_owner = np.zeros((number_of_points), dtype=np.int64)
-            self.glb_el_owner = np.zeros((number_of_points), dtype=np.int64)
-            # self.rank_owner = np.zeros((number_of_points), dtype = np.int64)
-            self.rank_owner = np.ones((number_of_points), dtype=np.int64) * -1000
+            self.el_owner = np.zeros((number_of_points), dtype=np.int32)
+            self.glb_el_owner = np.zeros((number_of_points), dtype=np.int32)
+            # self.rank_owner = np.zeros((number_of_points), dtype = np.int32)
+            self.rank_owner = np.ones((number_of_points), dtype=np.int32) * -1000
             self.err_code = np.zeros(
-                (number_of_points), dtype=np.int64
+                (number_of_points), dtype=np.int32
             )  # 0 not found, 1 is found
             self.test_pattern = np.ones(
                 (number_of_points), dtype=np.double
@@ -863,16 +863,16 @@ class Interpolator:
         self.probe_rst_partition = tmp.reshape((int(tmp.size / 3), 3))
         ## Int
         self.el_owner_partition = self.rt.scatter_from_root(
-            self.el_owner, probe_partition_sendcount, io_rank, np.int64
+            self.el_owner, probe_partition_sendcount, io_rank, np.int32
         )
         self.glb_el_owner_partition = self.rt.scatter_from_root(
-            self.glb_el_owner, probe_partition_sendcount, io_rank, np.int64
+            self.glb_el_owner, probe_partition_sendcount, io_rank, np.int32
         )
         self.rank_owner_partition = self.rt.scatter_from_root(
-            self.rank_owner, probe_partition_sendcount, io_rank, np.int64
+            self.rank_owner, probe_partition_sendcount, io_rank, np.int32
         )
         self.err_code_partition = self.rt.scatter_from_root(
-            self.err_code, probe_partition_sendcount, io_rank, np.int64
+            self.err_code, probe_partition_sendcount, io_rank, np.int32
         )
         ## Double
         self.test_pattern_partition = self.rt.scatter_from_root(
@@ -893,12 +893,12 @@ class Interpolator:
         # Set the necesary arrays for identification of point
         number_of_points = self.probes.shape[0]
         self.probes_rst = np.zeros((number_of_points, 3), dtype=np.double)
-        self.el_owner = np.zeros((number_of_points), dtype=np.int64)
-        self.glb_el_owner = np.zeros((number_of_points), dtype=np.int64)
-        # self.rank_owner = np.zeros((number_of_points), dtype = np.int64)
-        self.rank_owner = np.ones((number_of_points), dtype=np.int64) * -1000
+        self.el_owner = np.zeros((number_of_points), dtype=np.int32)
+        self.glb_el_owner = np.zeros((number_of_points), dtype=np.int32)
+        # self.rank_owner = np.zeros((number_of_points), dtype = np.int32)
+        self.rank_owner = np.ones((number_of_points), dtype=np.int32) * -1000
         self.err_code = np.zeros(
-            (number_of_points), dtype=np.int64
+            (number_of_points), dtype=np.int32
         )  # 0 not found, 1 is found
         self.test_pattern = np.ones(
             (number_of_points), dtype=np.double
@@ -933,19 +933,19 @@ class Interpolator:
         if not isinstance(recvbuf, NoneType):
             self.probes_rst[:, :] = recvbuf.reshape((int(recvbuf.size / 3), 3))[:, :]
         sendbuf = self.el_owner_partition
-        recvbuf, _ = self.rt.gather_in_root(sendbuf, root, np.int64)
+        recvbuf, _ = self.rt.gather_in_root(sendbuf, root, np.int32)
         if not isinstance(recvbuf, NoneType):
             self.el_owner[:] = recvbuf[:]
         sendbuf = self.glb_el_owner_partition
-        recvbuf, _ = self.rt.gather_in_root(sendbuf, root, np.int64)
+        recvbuf, _ = self.rt.gather_in_root(sendbuf, root, np.int32)
         if not isinstance(recvbuf, NoneType):
             self.glb_el_owner[:] = recvbuf[:]
         sendbuf = self.rank_owner_partition
-        recvbuf, _ = self.rt.gather_in_root(sendbuf, root, np.int64)
+        recvbuf, _ = self.rt.gather_in_root(sendbuf, root, np.int32)
         if not isinstance(recvbuf, NoneType):
             self.rank_owner[:] = recvbuf[:]
         sendbuf = self.err_code_partition
-        recvbuf, _ = self.rt.gather_in_root(sendbuf, root, np.int64)
+        recvbuf, _ = self.rt.gather_in_root(sendbuf, root, np.int32)
         if not isinstance(recvbuf, NoneType):
             self.err_code[:] = recvbuf[:]
         sendbuf = self.test_pattern_partition
@@ -1106,11 +1106,11 @@ class Interpolator:
                 test_pattern_not_found = self.test_pattern_partition[not_found]
 
                 # Tell every rank in the broadcaster of the local communicator their actual rank
-                broadcaster_global_rank = np.ones((1), dtype=np.int64) * rank
+                broadcaster_global_rank = np.ones((1), dtype=np.int32) * rank
                 search_comm.Bcast(broadcaster_global_rank, root=broadcaster)
 
                 # Tell every rank how much they need to allocate for the broadcaster bounding boxes
-                nelv_in_broadcaster = np.ones((1), dtype=np.int64) * nelv
+                nelv_in_broadcaster = np.ones((1), dtype=np.int32) * nelv
                 search_comm.Bcast(nelv_in_broadcaster, root=broadcaster)
 
                 # Allocate the recieve buffer for bounding boxes
@@ -1259,16 +1259,16 @@ class Interpolator:
                     el_owner_broadcaster_has,
                     el_owner_sendcount_broadcaster_is_candidate,
                 ) = search_rt.gather_in_root(
-                    el_owner_broadcaster_is_candidate, root, np.int64
+                    el_owner_broadcaster_is_candidate, root, np.int32
                 )
                 glb_el_owner_broadcaster_has, _ = search_rt.gather_in_root(
-                    glb_el_owner_broadcaster_is_candidate, root, np.int64
+                    glb_el_owner_broadcaster_is_candidate, root, np.int32
                 )
                 rank_owner_broadcaster_has, _ = search_rt.gather_in_root(
-                    rank_owner_broadcaster_is_candidate, root, np.int64
+                    rank_owner_broadcaster_is_candidate, root, np.int32
                 )
                 err_code_broadcaster_has, _ = search_rt.gather_in_root(
-                    err_code_broadcaster_is_candidate, root, np.int64
+                    err_code_broadcaster_is_candidate, root, np.int32
                 )
                 test_pattern_broadcaster_has, _ = search_rt.gather_in_root(
                     test_pattern_broadcaster_is_candidate, root, np.double
@@ -1365,7 +1365,7 @@ class Interpolator:
                     sendbuf,
                     el_owner_sendcount_broadcaster_is_candidate,
                     root,
-                    np.int64,
+                    np.int32,
                 )
                 el_owner_broadcaster_is_candidate[:] = recvbuf[:]
                 if search_rank == root:
@@ -1377,7 +1377,7 @@ class Interpolator:
                     sendbuf,
                     el_owner_sendcount_broadcaster_is_candidate,
                     root,
-                    np.int64,
+                    np.int32,
                 )
                 glb_el_owner_broadcaster_is_candidate[:] = recvbuf[:]
                 if search_rank == root:
@@ -1388,7 +1388,7 @@ class Interpolator:
                     sendbuf,
                     el_owner_sendcount_broadcaster_is_candidate,
                     root,
-                    np.int64,
+                    np.int32,
                 )
                 rank_owner_broadcaster_is_candidate[:] = recvbuf[:]
                 if search_rank == root:
@@ -1399,7 +1399,7 @@ class Interpolator:
                     sendbuf,
                     el_owner_sendcount_broadcaster_is_candidate,
                     root,
-                    np.int64,
+                    np.int32,
                 )
                 err_code_broadcaster_is_candidate[:] = recvbuf[:]
                 if search_rank == root:
@@ -1550,7 +1550,7 @@ class Interpolator:
             destination=my_dest, data=p_probes, dtype=np.double, tag=1
         )
         _, buff_p_info = self.rt.transfer_data(comm_pattern,
-            destination=my_dest, data=p_info, dtype=np.int64, tag=2
+            destination=my_dest, data=p_info, dtype=np.int32, tag=2
         )
         _, buff_test_pattern = self.rt.transfer_data(comm_pattern,
             destination=my_dest, data=test_pattern_not_found, dtype=np.double, tag=3
@@ -1628,7 +1628,7 @@ class Interpolator:
             destination=my_source, data=p_buff_probes, dtype=np.double, tag=11
         )
         _, obuff_p_info = self.rt.transfer_data( comm_pattern,
-            destination=my_source, data=p_buff_info, dtype=np.int64, tag=12
+            destination=my_source, data=p_buff_info, dtype=np.int32, tag=12
         )
         _, obuff_test_pattern = self.rt.transfer_data( comm_pattern,
             destination=my_source, data=buff_test_pattern, dtype=np.double, tag=13
@@ -1763,7 +1763,7 @@ class Interpolator:
         my_dest, candidate_ranks_list = get_candidate_ranks(self, comm)
         
         self.log.write("info", "Determining maximun number of candidates")
-        max_candidates = np.ones((1), dtype=np.int64) * len(my_dest)
+        max_candidates = np.ones((1), dtype=np.int32) * len(my_dest)
         max_candidates = comm.allreduce(max_candidates, op=MPI.MAX)
         if batch_size > max_candidates[0]: batch_size = max_candidates[0]
          
@@ -1833,7 +1833,7 @@ class Interpolator:
                 destination=my_it_dest, data=p_probes, dtype=np.double, tag=1
             )
             _, buff_p_info = self.rt.transfer_data(comm_pattern,
-                destination=my_it_dest, data=p_info, dtype=np.int64, tag=2
+                destination=my_it_dest, data=p_info, dtype=np.int32, tag=2
             )
             _, buff_test_pattern = self.rt.transfer_data(comm_pattern,
                 destination=my_it_dest, data=test_pattern_not_found, dtype=np.double, tag=3
@@ -1911,7 +1911,7 @@ class Interpolator:
                 destination=my_source, data=p_buff_probes, dtype=np.double, tag=11
             )
             _, obuff_p_info = self.rt.transfer_data( comm_pattern,
-                destination=my_source, data=p_buff_info, dtype=np.int64, tag=12
+                destination=my_source, data=p_buff_info, dtype=np.int32, tag=12
             )
             _, obuff_test_pattern = self.rt.transfer_data( comm_pattern,
                 destination=my_source, data=buff_test_pattern, dtype=np.double, tag=13
@@ -2069,7 +2069,7 @@ class Interpolator:
                 if d not in my_dest:
                     my_dest.append(d)
 
-        max_candidates = np.ones((1), dtype=np.int64) * len(my_dest)
+        max_candidates = np.ones((1), dtype=np.int32) * len(my_dest)
         max_candidates = comm.allreduce(max_candidates, op=MPI.MAX)
         if batch_size > max_candidates[0]: batch_size = max_candidates[0]
         self.log.write("info", f"Max candidates in a rank was: {max_candidates}")
@@ -2107,13 +2107,13 @@ class Interpolator:
                         "find_done": {"window_size": 1, "dtype": np.int32, "fill_value": -1},
                         "find_n_not_found": {"window_size": 1, "dtype": np.int64, "fill_value": 0},
                         "find_p_probes": {"window_size": max_probe_pack, "dtype": np.double, "fill_value": None},
-                        "find_p_info": {"window_size": max_info_pack, "dtype": np.int64, "fill_value": None},
+                        "find_p_info": {"window_size": max_info_pack, "dtype": np.int32, "fill_value": None},
                         "find_test_pattern": {"window_size": max_test_pattern_pack, "dtype": np.double, "fill_value": None},
                         "verify_busy": {"window_size": 1, "dtype": np.int32, "fill_value": -1},
                         "verify_done": {"window_size": 1, "dtype": np.int32, "fill_value": -1},
                         "verify_n_not_found": {"window_size": 1, "dtype": np.int64, "fill_value": 0},
                         "verify_p_probes": {"window_size": max_probe_pack, "dtype": np.double, "fill_value": None},
-                        "verify_p_info": {"window_size": max_info_pack, "dtype": np.int64, "fill_value": None},
+                        "verify_p_info": {"window_size": max_info_pack, "dtype": np.int32, "fill_value": None},
                         "verify_test_pattern": {"window_size": max_test_pattern_pack, "dtype": np.double, "fill_value": None}
                       }
         rma = RMAWindow(self.rt.comm, rma_inputs)
@@ -2122,7 +2122,7 @@ class Interpolator:
         search_iteration = -1
         search_flag = True  
         # Check if all ranks are done
-        keep_searching = np.zeros((1), dtype=np.int64)
+        keep_searching = np.zeros((1), dtype=np.int32)
         am_i_done = False
         i_sent_data = False
         last_log = 0
@@ -2458,7 +2458,7 @@ class Interpolator:
             sendbuf = sorted_err_code.reshape((sorted_err_code.size))
         else:
             sendbuf = None
-        recvbuf = self.rt.scatter_from_root(sendbuf, sendcounts, root, np.int64)
+        recvbuf = self.rt.scatter_from_root(sendbuf, sendcounts, root, np.int32)
         my_err_code = recvbuf
 
         # Redistribute el_owner
@@ -2468,7 +2468,7 @@ class Interpolator:
             # print(sendbuf)
         else:
             sendbuf = None
-        recvbuf = self.rt.scatter_from_root(sendbuf, sendcounts, root, np.int64)
+        recvbuf = self.rt.scatter_from_root(sendbuf, sendcounts, root, np.int32)
         # print(recvbuf)
         my_el_owner = recvbuf
 
@@ -2478,7 +2478,7 @@ class Interpolator:
             sendbuf = sorted_rank_owner.reshape((sorted_rank_owner.size))
         else:
             sendbuf = None
-        recvbuf = self.rt.scatter_from_root(sendbuf, sendcounts, root, np.int64)
+        recvbuf = self.rt.scatter_from_root(sendbuf, sendcounts, root, np.int32)
         my_rank_owner = recvbuf
 
         self.log.write("info", "Assigning my data")
