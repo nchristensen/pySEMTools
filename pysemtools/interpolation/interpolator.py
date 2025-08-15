@@ -461,7 +461,10 @@ class RMASubWindow:
 
         for idx in range(0, len(data)): 
             self.put(dest, data[idx], dtype=dtype, displacement=displacement, lock=lock, unlock=unlock, flush=flush, mask=mask)
-            displacement += data[idx].size
+            if mask is None:
+                displacement += data[idx].size
+            else:
+                displacement += np.flatnonzero(mask).size * data[idx].strides[0] / data[idx].itemsize # This way since we only mask rows
 
     def get(self, source: int = None, displacement: int = 0, counts: int = None, lock: bool = True, unlock: bool = True, flush: bool = True):
 
@@ -2082,18 +2085,22 @@ class Interpolator:
         # Initialize windows
         ## Find sizes    
         mask = (self.err_code_partition != 1)
-        combined_mask = mask
-        total_not_found = np.flatnonzero(combined_mask)        
+        total_not_found = np.flatnonzero(mask)     
         total_n_not_found = total_not_found.size
-        local_pack_info = np.array([total_n_not_found*2*3, total_n_not_found*4, total_n_not_found], dtype=np.int64)
-        recvbuff, scounts = self.rt.all_gather(data=local_pack_info, dtype=np.int64)
-        probe_packs = recvbuff[::3]
-        info_packs = recvbuff[1::3]
-        test_pattern_packs = recvbuff[2::3]
-        max_info_pack = np.max(info_packs)
-        max_probe_pack = np.max(probe_packs)
-        max_test_pattern_pack = np.max(test_pattern_packs)
-
+        ## Check how many points need to be send to the most popular rank
+        max_points_to_send = 0
+        for dest in my_dest:    
+            candidate_mask = np.any(candidates_per_point == dest, axis=1)
+            combined_mask = mask & candidate_mask
+            not_found_at_this_candidate = np.flatnonzero(combined_mask)    
+            n_not_found_at_this_candidate = not_found_at_this_candidate.size
+            if max_points_to_send < n_not_found_at_this_candidate:
+                max_points_to_send = n_not_found_at_this_candidate
+        ## see how much memory should be allocated per window (in number of items of a data type to be defined later)
+        max_points_to_allocate = self.rt.comm.allreduce(max_points_to_send, op=MPI.MAX)
+        max_probe_pack = max_points_to_allocate*2*3
+        max_info_pack = max_points_to_allocate*4 
+        max_test_pattern_pack = max_points_to_allocate
         ## Create windows    
         rma_inputs = { "search_done": {"window_size": comm.Get_size(), "dtype": np.int32, "fill_value": 0},
                         "find_busy": {"window_size": 1, "dtype": np.int32, "fill_value": -1},
