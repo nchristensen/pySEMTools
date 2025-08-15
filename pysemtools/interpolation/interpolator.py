@@ -3429,87 +3429,94 @@ class dstructure_hashtable(dstructure):
 
         return element_candidates
 
-def refine_candidates(probes, candidate_elements, bboxes, rel_tol = 0.01):
+def refine_candidates(probes, candidate_elements, bboxes, rel_tol = 0.01, max_batch_size = 256):
     """
     Refine candidate elements for each probe by keeping only those where the probe 
     lies within the corresponding expanded bounding box.
     
     """
-    # Flatten the candidate_elements lists, creating arrays that record for each candidate
-    # the corresponding probe index and candidate bbox index.
-    probe_indices = []
-    candidate_indices = []
-    
-    for i, cands in enumerate(candidate_elements):
-        if cands:  # if this probe has candidate bbox indices
-            probe_indices.extend([i] * len(cands))
-            candidate_indices.extend(cands)
-            
-    probe_indices = np.array(probe_indices)  # shape: (total_num_candidates,)
-    candidate_indices = np.array(candidate_indices)  # shape: (total_num_candidates,)
-    
-    # If no candidates exist overall, return a list of empty lists.
-    if probe_indices.size == 0:
-        return [[] for _ in range(probes.shape[0])]
-    
-    # Get the corresponding probes and bounding boxes for all candidate pairs.
-    pts = probes[probe_indices]           # shape: (total_num_candidates, 3)
-    candidate_bboxes = bboxes[candidate_indices]  # shape: (total_num_candidates, 6)
-    
-    # Compute the expanded boundaries for each candidate bbox.
-    if rel_tol > 1e-6:
-        # For x dimension:
-        dx = candidate_bboxes[:, 1] - candidate_bboxes[:, 0]
-        tol_x = dx * rel_tol / 2.0
-        lower_x = candidate_bboxes[:, 0] - tol_x
-        upper_x = candidate_bboxes[:, 1] + tol_x
-
-        # For y dimension:
-        dy = candidate_bboxes[:, 3] - candidate_bboxes[:, 2]
-        tol_y = dy * rel_tol / 2.0
-        lower_y = candidate_bboxes[:, 2] - tol_y
-        upper_y = candidate_bboxes[:, 3] + tol_y
-
-        # For z dimension:
-        dz = candidate_bboxes[:, 5] - candidate_bboxes[:, 4]
-        tol_z = dz * rel_tol / 2.0
-        lower_z = candidate_bboxes[:, 4] - tol_z
-        upper_z = candidate_bboxes[:, 5] + tol_z
-    else:
-        # No expansion needed, use original boundaries
-        lower_x = candidate_bboxes[:, 0]
-        upper_x = candidate_bboxes[:, 1]
-        lower_y = candidate_bboxes[:, 2]
-        upper_y = candidate_bboxes[:, 3]
-        lower_z = candidate_bboxes[:, 4]
-        upper_z = candidate_bboxes[:, 5]
-    
-    # Vectorized check: create a boolean mask indicating which candidate pair passes
-    valid_mask = ((pts[:, 0] >= lower_x) & (pts[:, 0] <= upper_x) &
-                  (pts[:, 1] >= lower_y) & (pts[:, 1] <= upper_y) &
-                  (pts[:, 2] >= lower_z) & (pts[:, 2] <= upper_z))
-    
-    # Filter the probe and candidate indices according to the valid mask.
-    valid_probe_indices = probe_indices[valid_mask]
-    valid_candidate_indices = candidate_indices[valid_mask]
-    
     # Initialize the output list with empty lists for each probe.
     refined_candidates = [[] for _ in range(probes.shape[0])]
-    
-    # Sort the valid candidate pairs by the probe index to group them together.
-    order = np.argsort(valid_probe_indices)
-    valid_probe_sorted = valid_probe_indices[order]
-    valid_candidate_sorted = valid_candidate_indices[order]
-    
-    # Use np.unique to get the boundaries for each probe in the sorted array.
-    unique_probes, start_idx, counts = np.unique(valid_probe_sorted, 
-                                                 return_index=True, 
-                                                 return_counts=True)
-    
-    # Fill the refined_candidates for each probe.
-    for probe, idx, count in zip(unique_probes, start_idx, counts):
-        refined_candidates[probe] = valid_candidate_sorted[idx: idx + count].tolist()
-    
+    start = 0
+    end = probes.shape[0]
+
+    while start < end:
+        probe_indices = []
+        candidate_indices = []
+        it_entries = 0    
+        for i in range(start, end):
+            cands = candidate_elements[i]
+            if cands:  # if this probe has candidate bbox indices
+                probe_indices.extend([i] * len(cands))
+                candidate_indices.extend(cands)
+                it_entries += len(cands)
+
+            if it_entries > max_batch_size:
+                break
+
+        start = i + 1
+        probe_indices = np.array(probe_indices)  # shape: (total_num_candidates,)
+        candidate_indices = np.array(candidate_indices)  # shape: (total_num_candidates,)
+        
+        # If no candidates exist overall, return a list of empty lists.
+        if probe_indices.size == 0:
+            return refined_candidates
+        
+        # Get the corresponding probes and bounding boxes for all candidate pairs.
+        pts = probes[probe_indices]           # shape: (total_num_candidates, 3)
+        candidate_bboxes = bboxes[candidate_indices]  # shape: (total_num_candidates, 6)
+        
+        # Compute the expanded boundaries for each candidate bbox.
+        if rel_tol > 1e-6:
+            # For x dimension:
+            dx = candidate_bboxes[:, 1] - candidate_bboxes[:, 0]
+            tol_x = dx * rel_tol / 2.0
+            lower_x = candidate_bboxes[:, 0] - tol_x
+            upper_x = candidate_bboxes[:, 1] + tol_x
+
+            # For y dimension:
+            dy = candidate_bboxes[:, 3] - candidate_bboxes[:, 2]
+            tol_y = dy * rel_tol / 2.0
+            lower_y = candidate_bboxes[:, 2] - tol_y
+            upper_y = candidate_bboxes[:, 3] + tol_y
+
+            # For z dimension:
+            dz = candidate_bboxes[:, 5] - candidate_bboxes[:, 4]
+            tol_z = dz * rel_tol / 2.0
+            lower_z = candidate_bboxes[:, 4] - tol_z
+            upper_z = candidate_bboxes[:, 5] + tol_z
+        else:
+            # No expansion needed, use original boundaries
+            lower_x = candidate_bboxes[:, 0]
+            upper_x = candidate_bboxes[:, 1]
+            lower_y = candidate_bboxes[:, 2]
+            upper_y = candidate_bboxes[:, 3]
+            lower_z = candidate_bboxes[:, 4]
+            upper_z = candidate_bboxes[:, 5]
+        
+        # Vectorized check: create a boolean mask indicating which candidate pair passes
+        valid_mask = ((pts[:, 0] >= lower_x) & (pts[:, 0] <= upper_x) &
+                    (pts[:, 1] >= lower_y) & (pts[:, 1] <= upper_y) &
+                    (pts[:, 2] >= lower_z) & (pts[:, 2] <= upper_z))
+        
+        # Filter the probe and candidate indices according to the valid mask.
+        valid_probe_indices = probe_indices[valid_mask]
+        valid_candidate_indices = candidate_indices[valid_mask]
+        
+        # Sort the valid candidate pairs by the probe index to group them together.
+        order = np.argsort(valid_probe_indices)
+        valid_probe_sorted = valid_probe_indices[order]
+        valid_candidate_sorted = valid_candidate_indices[order]
+        
+        # Use np.unique to get the boundaries for each probe in the sorted array.
+        unique_probes, start_idx, counts = np.unique(valid_probe_sorted, 
+                                                    return_index=True, 
+                                                    return_counts=True)
+        
+        # Fill the refined_candidates for each probe.
+        for probe, idx, count in zip(unique_probes, start_idx, counts):
+            refined_candidates[probe].extend(valid_candidate_sorted[idx: idx + count].tolist())
+
     return refined_candidates
 
 def refine_candidates_obb(probes, candidate_elements, obb_c, obb_jinv):
@@ -3546,7 +3553,7 @@ def refine_candidates_obb(probes, candidate_elements, obb_c, obb_jinv):
     tst = np.ones((check.shape[0])) * (1 + 1e-6)
     
     # Vectorized check: create a boolean mask indicating which candidate pair passes
-    valid_mask = ((check[:, 0] <= tst) & (check[:, 1] <= tst) & (check[:, 1] <= tst))
+    valid_mask = ((check[:, 0] <= tst) & (check[:, 1] <= tst) & (check[:, 2] <= tst))
     
     # Filter the probe and candidate indices according to the valid mask.
     valid_probe_indices = probe_indices[valid_mask]
