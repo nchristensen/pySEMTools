@@ -904,7 +904,7 @@ class Interpolator:
             (number_of_points), dtype=np.double
         )  # test interpolation holder
 
-        self.probe_partition = self.probes
+        self.probe_partition = self.probes.view()
         self.probe_rst_partition = self.probes_rst
         self.el_owner_partition = self.el_owner
         self.glb_el_owner_partition = self.glb_el_owner
