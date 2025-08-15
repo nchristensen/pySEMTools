@@ -2541,22 +2541,23 @@ class Interpolator:
                 err_code_data.append(err_code[probes_to_send_to_this_rank])
 
         # Send the data to the destinations
-        sources, source_probes = self.rt.all_to_all(
-            destination=destinations, data=probe_data, dtype=probe_data[0].dtype
+        sources, source_probes = self.rt.send_recv(
+            destination=destinations, data=probe_data, dtype=probe_data[0].dtype, tag=1
         )
-        _, source_probes_rst = self.rt.all_to_all(
-            destination=destinations, data=probe_rst_data, dtype=probe_rst_data[0].dtype
+        _, source_probes_rst = self.rt.send_recv(
+            destination=destinations, data=probe_rst_data, dtype=probe_rst_data[0].dtype, tag=2
         )
-        _, source_el_owner = self.rt.all_to_all(
-            destination=destinations, data=el_owner_data, dtype=el_owner_data[0].dtype
+        _, source_el_owner = self.rt.send_recv(
+            destination=destinations, data=el_owner_data, dtype=el_owner_data[0].dtype, tag=3
         )
-        _, source_rank_owner = self.rt.all_to_all(
+        _, source_rank_owner = self.rt.send_recv(
             destination=destinations,
             data=rank_owner_data,
             dtype=rank_owner_data[0].dtype,
+            tag=4,
         )
-        _, source_err_code = self.rt.all_to_all(
-            destination=destinations, data=err_code_data, dtype=err_code_data[0].dtype
+        _, source_err_code = self.rt.send_recv(
+            destination=destinations, data=err_code_data, dtype=err_code_data[0].dtype, tag=5
         )
 
         # Then reshape the data form the probes
