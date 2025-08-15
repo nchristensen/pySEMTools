@@ -3519,63 +3519,60 @@ def refine_candidates(probes, candidate_elements, bboxes, rel_tol = 0.01, max_ba
 
     return refined_candidates
 
-def refine_candidates_obb(probes, candidate_elements, obb_c, obb_jinv):
+def refine_candidates_obb(probes, candidate_elements, obb_c, obb_jinv, max_batch_size=256):
     """
     Refine candidate elements for each probe by keeping only those where the probe 
     lies within the corresponding expanded bounding box.
     
     """
-    # Flatten the candidate_elements lists, creating arrays that record for each candidate
-    # the corresponding probe index and candidate bbox index.
-    probe_indices = []
-    candidate_indices = []
-    
-    for i, cands in enumerate(candidate_elements):
-        if cands:  # if this probe has candidate bbox indices
-            probe_indices.extend([i] * len(cands))
-            candidate_indices.extend(cands)
-            
-    probe_indices = np.array(probe_indices)  # shape: (total_num_candidates,)
-    candidate_indices = np.array(candidate_indices)  # shape: (total_num_candidates,)
-    
-    # If no candidates exist overall, return a list of empty lists.
-    if probe_indices.size == 0:
-        return [[] for _ in range(probes.shape[0])]
-    
-    # Get the corresponding probes and bounding boxes for all candidate pairs.
-    pts = probes[probe_indices]           # shape: (total_num_candidates, 3)
-    candidate_bboxes_c = obb_c[candidate_indices]  # shape: (total_num_candidates, 6)
-    candidate_bboxes_jinv = obb_jinv[candidate_indices]  # shape: (total_num_candidates, 6)
-
-    # Check with the obb as in Mittal et al.
-    check = np.matmul(candidate_bboxes_jinv, (pts - candidate_bboxes_c).reshape(-1,3,1)).reshape(-1,3)
-    check = np.abs(check)
-    tst = np.ones((check.shape[0])) * (1 + 1e-6)
-    
-    # Vectorized check: create a boolean mask indicating which candidate pair passes
-    valid_mask = ((check[:, 0] <= tst) & (check[:, 1] <= tst) & (check[:, 2] <= tst))
-    
-    # Filter the probe and candidate indices according to the valid mask.
-    valid_probe_indices = probe_indices[valid_mask]
-    valid_candidate_indices = candidate_indices[valid_mask]
-    
-    # Initialize the output list with empty lists for each probe.
     refined_candidates = [[] for _ in range(probes.shape[0])]
-    
-    # Sort the valid candidate pairs by the probe index to group them together.
-    order = np.argsort(valid_probe_indices)
-    valid_probe_sorted = valid_probe_indices[order]
-    valid_candidate_sorted = valid_candidate_indices[order]
-    
-    # Use np.unique to get the boundaries for each probe in the sorted array.
-    unique_probes, start_idx, counts = np.unique(valid_probe_sorted, 
-                                                 return_index=True, 
-                                                 return_counts=True)
-    
-    # Fill the refined_candidates for each probe.
-    for probe, idx, count in zip(unique_probes, start_idx, counts):
-        refined_candidates[probe] = valid_candidate_sorted[idx: idx + count].tolist()
-    
+    start = 0
+    end = probes.shape[0]
+
+    while start < end:
+        probe_indices = []
+        candidate_indices = []
+        it_entries = 0    
+        for i in range(start, end):
+            cands = candidate_elements[i]
+            if cands:
+                probe_indices.extend([i] * len(cands))
+                candidate_indices.extend(cands)
+                it_entries += len(cands)
+            if it_entries > max_batch_size:
+                break
+
+        start = i + 1
+        probe_indices = np.array(probe_indices)
+        candidate_indices = np.array(candidate_indices)
+        
+        if probe_indices.size == 0:
+            return refined_candidates
+        
+        pts = probes[probe_indices]
+        candidate_bboxes_c = obb_c[candidate_indices]
+        candidate_bboxes_jinv = obb_jinv[candidate_indices]
+
+        check = np.matmul(candidate_bboxes_jinv, (pts - candidate_bboxes_c).reshape(-1,3,1)).reshape(-1,3)
+        check = np.abs(check)
+        tst = np.ones((check.shape[0])) * (1 + 1e-6)
+        
+        valid_mask = ((check[:, 0] <= tst) & (check[:, 1] <= tst) & (check[:, 2] <= tst))
+        
+        valid_probe_indices = probe_indices[valid_mask]
+        valid_candidate_indices = candidate_indices[valid_mask]
+        
+        order = np.argsort(valid_probe_indices)
+        valid_probe_sorted = valid_probe_indices[order]
+        valid_candidate_sorted = valid_candidate_indices[order]
+        
+        unique_probes, start_idx, counts = np.unique(valid_probe_sorted, 
+                                                     return_index=True, 
+                                                     return_counts=True)
+        
+        for probe, idx, count in zip(unique_probes, start_idx, counts):
+            refined_candidates[probe].extend(valid_candidate_sorted[idx: idx + count].tolist())
+
     return refined_candidates
 
 def expand_elements(arrays: list = None, rel_tol = 0.01):
