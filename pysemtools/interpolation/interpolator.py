@@ -2195,6 +2195,11 @@ class Interpolator:
                         self.data_in_transit[int(dest)] = True
                         self.points_sent[int(dest)] = not_found_at_this_candidate
 
+                        # If it is the first iteration, and I have to check in my rank, then do not send to anyone else yet.
+                        # This is to avoid sending excesive data to others in mesh to mesh interpolation
+                        if search_iteration == 0 and dest == self.rt.comm.Get_rank():
+                            break # Get out of the send loop
+
             # Now find points from other ranks if anyone has sent me data
             if rma.find_busy.buff[0] != -1 and rma.find_done.buff[0] == 1:
                 if not checked_data:
