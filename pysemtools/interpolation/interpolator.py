@@ -462,9 +462,9 @@ class RMASubWindow:
         for idx in range(0, len(data)): 
             self.put(dest, data[idx], dtype=dtype, displacement=displacement, lock=lock, unlock=unlock, flush=flush, mask=mask)
             if mask is None:
-                displacement += data[idx].size
+                displacement += int(data[idx].size)
             else:
-                displacement += np.flatnonzero(mask).size * data[idx].strides[0] / data[idx].itemsize # This way since we only mask rows
+                displacement += int(np.flatnonzero(mask).size * data[idx].strides[0] / data[idx].itemsize) # This way since we only mask rows
 
     def get(self, source: int = None, displacement: int = 0, counts: int = None, lock: bool = True, unlock: bool = True, flush: bool = True):
 
