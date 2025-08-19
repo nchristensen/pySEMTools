@@ -14,6 +14,7 @@ from collections import Counter as collections_counter
 import threading
 import time
 import ctypes
+import gc
 
 # check if we have rtree installed
 try :
@@ -2081,6 +2082,9 @@ class Interpolator:
         candidates_per_point = np.full((num_rows, max_col), -1, dtype=np.int32)
         for i, row in enumerate(candidate_ranks_list):
             candidates_per_point[i, :len(row)] = row
+
+        del candidate_ranks_list
+        gc.collect()
  
         # Initialize windows
         ## Find sizes    
