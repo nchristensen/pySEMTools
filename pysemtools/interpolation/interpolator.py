@@ -26,6 +26,8 @@ NoneType = type(None)
 
 DEBUG = os.getenv("PYSEMTOOLS_DEBUG", "False").lower() in ("true", "1", "t")
 INTERPOLATION_LOG_TIME = int(os.getenv("PYSEMTOOLS_INTERPOLATION_LOG_TIME", "60"))
+INTERPOLATION_MAX_MESSAGE_SIZE = int(os.getenv("PYSEMTOOLS_INTERPOLATION_MAX_MESSAGE_SIZE", int(100))) # 100 MB seems to be fine
+INTERPOLATION_MAX_CANDIDATE_IN_ITERATION = int(os.getenv("PYSEMTOOLS_INTERPOLATION_MAX_CANDIDATE_IN_ITERATION", np.iinfo(np.int32).max)) #256 is a good balance. It is very high for speed
 
 class OneSidedComms:
     '''
@@ -434,7 +436,7 @@ class RMASubWindow:
             # Perform a chunked send over the mask to avoid memory issues
             if lock: self.win.Lock(dest, MPI.LOCK_EXCLUSIVE)
 
-            max_message_size = 100 * 1024 * 1024 # 100MB
+            max_message_size = INTERPOLATION_MAX_MESSAGE_SIZE * 1024 * 1024 # 100MB
             bytes_per_row = strides[0]
             row_chunk_size = max_message_size // strides[0]
             byte_displacement = displacement * self.itemsize + self.start_offset
@@ -3446,7 +3448,7 @@ class dstructure_hashtable(dstructure):
 
         return element_candidates
 
-def refine_candidates(probes, candidate_elements, bboxes, rel_tol=0.01, max_batch_size=256):
+def refine_candidates(probes, candidate_elements, bboxes, rel_tol=0.01):
     """
     Refine candidate elements for each probe by keeping only those where the probe 
     lies within the corresponding expanded bounding box.
@@ -3455,6 +3457,7 @@ def refine_candidates(probes, candidate_elements, bboxes, rel_tol=0.01, max_batc
     a single probe with many candidates can be processed across multiple batches.
     """
 
+    max_batch_size = INTERPOLATION_MAX_CANDIDATE_IN_ITERATION
     refined_candidates = [[] for _ in range(probes.shape[0])]
     start = 0
     end = probes.shape[0]
@@ -3555,7 +3558,7 @@ def refine_candidates(probes, candidate_elements, bboxes, rel_tol=0.01, max_batc
 
     return refined_candidates
 
-def refine_candidates_obb(probes, candidate_elements, obb_c, obb_jinv, max_batch_size=256):
+def refine_candidates_obb(probes, candidate_elements, obb_c, obb_jinv):
     """
     Refine candidate elements for each probe by keeping only those where the probe 
     lies within the corresponding oriented bounding box (OBB).
@@ -3564,6 +3567,7 @@ def refine_candidates_obb(probes, candidate_elements, obb_c, obb_jinv, max_batch
       - Mutates `candidate_elements[i]` by trimming consumed indices.
       - Batches by total flattened candidate pairs, not number of probes.
     """
+    max_batch_size = INTERPOLATION_MAX_CANDIDATE_IN_ITERATION
     refined_candidates = [[] for _ in range(probes.shape[0])]
     start = 0
     end = probes.shape[0]
