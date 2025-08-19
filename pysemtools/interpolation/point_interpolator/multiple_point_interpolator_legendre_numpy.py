@@ -427,12 +427,12 @@ class LegendreInterpolator(MultiplePointInterpolator):
         z = mesh_info.get("z", None)
         kd_tree = mesh_info.get("kd_tree", None)
         bbox = mesh_info.get("bbox", None)
-        bbox_max_dist = mesh_info.get("bbox_max_dist", None)  # unused here but kept
+        bbox_max_dist = mesh_info.get("bbox_max_dist", None)
         # Settings
         not_found_code = settings.get("not_found_code", -10)
         use_test_pattern = settings.get("use_test_pattern", True)
         elem_percent_expansion = settings.get("elem_percent_expansion", 0.01)
-        progress_bar = settings.get("progress_bar", False)  # progress bar not used here
+        progress_bar = settings.get("progress_bar", False)
         find_pts_tol = settings.get("find_pts_tol", np.finfo(np.double).eps * 10)
         find_pts_max_iterations = settings.get("find_pts_max_iterations", 50)
         # Buffers
@@ -444,201 +444,182 @@ class LegendreInterpolator(MultiplePointInterpolator):
         # Reset the element owner and the error code so this rank checks again
         err_code[:] = not_found_code
 
-        # --- Lazily generated candidates state ---
-        # Store per-point candidate lists only for unresolved points that needed them.
-        # This replaces the large precomputed `element_candidates` list.
-        element_candidates = {}               # point_index -> list[int]
-        pts_n = probes.shape[0]
         max_pts = self.max_pts
-        next_candidate = np.zeros(pts_n, dtype=int)
-        candidate_lengths = np.full(pts_n, -1, dtype=np.int64)  # -1 means "unknown / not yet generated"
+        pts_total = probes.shape[0]
 
-        # Helper: generate candidates for a *batch* of point indices, fill caches.
-        def _generate_candidates_for(batch_indices):
-            if len(batch_indices) == 0:
-                return
-            # If kd_tree is available, try to use it on the batch; otherwise fall back to bbox scan.
-            if kd_tree is not None:
-                pts_batch = probes[np.asarray(batch_indices, dtype=np.intp)]
-                cand_batch = kd_tree.search(pts_batch)  # expected: list-of-lists aligned with batch order
-                # Some implementations might return a single list when len==1; normalize to list-of-lists.
-                if isinstance(cand_batch, list) and (len(batch_indices) == 1) and (len(cand_batch) > 0) and (not isinstance(cand_batch[0], (list, np.ndarray))):
-                    cand_batch = [cand_batch]
-            else:
-                cand_batch = []
-                for pt in probes[np.asarray(batch_indices, dtype=np.intp)]:
-                    cands_i = []
-                    # Brute-force bbox check
+        # ---- Batched candidate generation: process blocks of up to max_pts points ----
+        for bstart in range(0, pts_total, max_pts):
+            bend = min(bstart + max_pts, pts_total)
+            batch_idx = np.arange(bstart, bend, dtype=np.intp)  # global indices for this batch
+
+            # Build element_candidates only for this batch
+            if isinstance(kd_tree, NoneType):
+                element_candidates = []
+                i = 0
+                if progress_bar:
+                    pbar = tqdm(total=batch_idx.shape[0])
+                for pt in probes[batch_idx]:
+                    element_candidates.append([])
                     for e in range(0, bbox.shape[0]):
                         if pt_in_bbox(pt, bbox[e], rel_tol=elem_percent_expansion):
-                            cands_i.append(e)
-                    cand_batch.append(cands_i)
+                            element_candidates[i].append(e)
+                    i = i + 1
+                    if progress_bar:
+                        pbar.update(1)
+                if progress_bar:
+                    pbar.close()
+            else:
+                element_candidates = kd_tree.search(probes[batch_idx])
 
-            # Fill caches for each point in the batch
-            for idx_local, i_pt in enumerate(batch_indices):
-                cands_i = cand_batch[idx_local] if cand_batch is not None else []
-                # Ensure Python list
-                if isinstance(cands_i, np.ndarray):
-                    cands_i = cands_i.tolist()
-                element_candidates[i_pt] = cands_i
-                candidate_lengths[i_pt] = len(cands_i)
+            # Local (per-batch) sizes and pointers
+            pts_n = batch_idx.shape[0]
+            if pts_n == 0:
+                continue
+            max_candidate_elements = np.max([len(elist) for elist in element_candidates]) if pts_n > 0 else 0
+            iterations = int(np.ceil(pts_n / max_pts))  # == 1 for this per-batch scheme
+            next_candidate = np.zeros(pts_n, dtype=int)
+            candidate_lengths = np.array([len(elist) for elist in element_candidates], dtype=int)
 
-        # Processing loop: iterate while there are unresolved points with remaining candidates
-        nelems = 1
-        while True:
-            # Build a batch of point indices to process this iteration, up to max_pts.
-            # Strategy:
-            #   1) Walk unresolved points. If we’ve never generated their candidates, collect them
-            #      (up to a small prefetch budget) and generate once for a small set.
-            #   2) Select points that still have remaining candidates.
-            unresolved = np.flatnonzero(err_code != 1)
-            if unresolved.size == 0:
-                break
-
-            batch_indices = []
-            to_generate = []
-
-            # First pass: prepare generation list and try to fill batch from already-known candidates
-            for i in unresolved:
-                if candidate_lengths[i] == -1:
-                    to_generate.append(int(i))
-                elif next_candidate[i] < candidate_lengths[i]:
-                    batch_indices.append(int(i))
-                if len(batch_indices) >= max_pts:
+            exit_flag = False
+            # The following logic only works for nelems = 1
+            npoints = 10000
+            nelems = 1
+            for e in range(0, max_candidate_elements):
+                if exit_flag:
                     break
-
-            # If batch not full, generate for a small subset of unresolved that need it,
-            # then try adding those with non-empty candidate lists.
-            if len(batch_indices) < max_pts and len(to_generate) > 0:
-                # Generate for at most the amount needed to fill this batch
-                need = max_pts - len(batch_indices)
-                _generate_candidates_for(to_generate[:need])
-
-                # Try to add newly generated ones
-                for i in to_generate[:need]:
-                    if next_candidate[i] < candidate_lengths[i]:
-                        batch_indices.append(i)
-                    if len(batch_indices) >= max_pts:
+                for j in range(0, iterations):
+                    if npoints == 0:
+                        exit_flag = True
                         break
 
-            # If still no points to process, we are done (no remaining candidates anywhere)
-            if len(batch_indices) == 0:
-                break
+                    # Get the index (LOCAL) of points in this batch that have not been found
+                    local_mask = (err_code[batch_idx] != 1) & (next_candidate < candidate_lengths)
+                    pt_not_found_local = np.flatnonzero(local_mask)
+                    pt_not_found_local = pt_not_found_local[:max_pts]
 
-            npoints = len(batch_indices)
-            probe_new_shape = (npoints, 1, 1, 1)
-            elem_new_shape = (npoints, nelems, x.shape[1], x.shape[2], x.shape[3])
+                    # Map to GLOBAL indices (used below) and pick candidate element per LOCAL index
+                    pt_not_found_indices = batch_idx[pt_not_found_local]
+                    elem_to_check_per_point = [element_candidates[i][next_candidate[i]] for i in pt_not_found_local]
 
-            # Choose the next element to check for each point
-            elem_to_check_per_point = [element_candidates[i][next_candidate[i]] for i in batch_indices]
-            next_candidate[np.asarray(batch_indices, dtype=np.intp)] += 1  # advance cursors
+                    # Update the checked elements (LOCAL)
+                    next_candidate[pt_not_found_local] += 1
 
-            # Project and solve for (r,s,t)
-            self.project_element_into_basis(
-                x[elem_to_check_per_point].reshape(elem_new_shape),
-                y[elem_to_check_per_point].reshape(elem_new_shape),
-                z[elem_to_check_per_point].reshape(elem_new_shape),
-            )
-            r[:npoints, :nelems], s[:npoints, :nelems], t[:npoints, :nelems] = (
-                self.find_rst_from_xyz(
-                    probes[np.asarray(batch_indices), 0].reshape(probe_new_shape),
-                    probes[np.asarray(batch_indices), 1].reshape(probe_new_shape),
-                    probes[np.asarray(batch_indices), 2].reshape(probe_new_shape),
-                    tol=find_pts_tol,
-                    max_iterations=find_pts_max_iterations,
-                )
-            )
+                    npoints = len(pt_not_found_local)
 
-            # Reshape results
-            result_r = r[:npoints, :nelems, :, :].reshape((npoints))
-            result_s = s[:npoints, :nelems, :, :].reshape((npoints))
-            result_t = t[:npoints, :nelems, :, :].reshape((npoints))
-            result_code_bool = self.point_inside_element[:npoints, :nelems, :, :].reshape((npoints))
+                    if npoints == 0:
+                        exit_flag = True
+                        break
 
-            # Update indices of points that were found and those that were not
-            pt_found_this_it = np.where(result_code_bool)[0]
-            pt_not_found_this_it = np.where(~result_code_bool)[0]
+                    probe_new_shape = (npoints, 1, 1, 1)
+                    elem_new_shape = (npoints, nelems, x.shape[1], x.shape[2], x.shape[3])
 
-            # Map back to original indices
-            real_index_pt_found_this_it = [batch_indices[i] for i in pt_found_this_it]
-            real_index_pt_not_found_this_it = [batch_indices[i] for i in pt_not_found_this_it]
-
-            # Update codes for points found in this iteration
-            probes_rst[real_index_pt_found_this_it, 0] = result_r[pt_found_this_it]
-            probes_rst[real_index_pt_found_this_it, 1] = result_s[pt_found_this_it]
-            probes_rst[real_index_pt_found_this_it, 2] = result_t[pt_found_this_it]
-            el_owner[real_index_pt_found_this_it] = np.array(elem_to_check_per_point)[pt_found_this_it]
-            glb_el_owner[real_index_pt_found_this_it] = el_owner[real_index_pt_found_this_it] + offset_el
-            rank_owner[real_index_pt_found_this_it] = rank
-            err_code[real_index_pt_found_this_it] = 1
-
-            # If user has selected to check a test pattern:
-            if use_test_pattern:
-
-                # Get shapes
-                ntest = len(pt_not_found_this_it)
-                if ntest > 0:
-                    test_probe_new_shape = (ntest, nelems, 1, 1)
-                    test_elem_new_shape = (ntest, nelems, x.shape[1], x.shape[2], x.shape[3])
-
-                    # Define new arrays (On the cpu)
-                    test_elems = np.array(elem_to_check_per_point)[pt_not_found_this_it]
-                    test_fields = (
-                        x[test_elems, :, :, :] ** 2
-                        + y[test_elems, :, :, :] ** 2
-                        + z[test_elems, :, :, :] ** 2
+                    self.project_element_into_basis(
+                        x[elem_to_check_per_point].reshape(elem_new_shape),
+                        y[elem_to_check_per_point].reshape(elem_new_shape),
+                        z[elem_to_check_per_point].reshape(elem_new_shape),
                     )
-                    test_probes = (
-                        probes[np.asarray(real_index_pt_not_found_this_it), 0] ** 2
-                        + probes[np.asarray(real_index_pt_not_found_this_it), 1] ** 2
-                        + probes[np.asarray(real_index_pt_not_found_this_it), 2] ** 2
+                    r[:npoints, :nelems], s[:npoints, :nelems], t[:npoints, :nelems] = (
+                        self.find_rst_from_xyz(
+                            probes[pt_not_found_indices, 0].reshape(probe_new_shape),
+                            probes[pt_not_found_indices, 1].reshape(probe_new_shape),
+                            probes[pt_not_found_indices, 2].reshape(probe_new_shape),
+                            tol=find_pts_tol,
+                            max_iterations=find_pts_max_iterations,
+                        )
                     )
 
-                    # Perform the test interpolation
-                    test_interp[:ntest, :nelems] = self.interpolate_field_at_rst(
-                        result_r[pt_not_found_this_it].reshape(test_probe_new_shape),
-                        result_s[pt_not_found_this_it].reshape(test_probe_new_shape),
-                        result_t[pt_not_found_this_it].reshape(test_probe_new_shape),
-                        test_fields.reshape(test_elem_new_shape),
-                    )
-                    test_result = test_interp[:ntest, :nelems].reshape(ntest)
+                    # Reshape results
+                    result_r = r[:npoints, :nelems, :, :].reshape((len(pt_not_found_indices)))
+                    result_s = s[:npoints, :nelems, :, :].reshape((len(pt_not_found_indices)))
+                    result_t = t[:npoints, :nelems, :, :].reshape((len(pt_not_found_indices)))
+                    result_code_bool = self.point_inside_element[:npoints, :nelems, :, :].reshape((len(pt_not_found_indices)))
 
-                    # Check if the test pattern is satisfied
-                    test_error = abs(test_probes - test_result)
+                    # Update indices of points that were found and those that were not
+                    pt_found_this_it = np.where(result_code_bool)[0]
+                    pt_not_found_this_it = np.where(~result_code_bool)[0]
 
-                    # Now assign
-                    real_list = np.array(real_index_pt_not_found_this_it)
-                    relative_list = np.array(pt_not_found_this_it)
-                    better_test = np.where(test_error < test_pattern[real_index_pt_not_found_this_it])[0]
+                    # Create a list with the original indices for each of this
+                    real_index_pt_found_this_it = [
+                        pt_not_found_indices[pt_found_this_it[i]]
+                        for i in range(0, len(pt_found_this_it))
+                    ]
+                    real_index_pt_not_found_this_it = [
+                        pt_not_found_indices[pt_not_found_this_it[i]]
+                        for i in range(0, len(pt_not_found_this_it))
+                    ]
 
-                    if len(better_test) > 0:
-                        probes_rst[real_list[better_test], 0] = result_r[relative_list[better_test]]
-                        probes_rst[real_list[better_test], 1] = result_s[relative_list[better_test]]
-                        probes_rst[real_list[better_test], 2] = result_t[relative_list[better_test]]
-                        el_owner[real_list[better_test]] = np.array(elem_to_check_per_point)[relative_list[better_test]]
-                        glb_el_owner[real_list[better_test]] = el_owner[real_list[better_test]] + offset_el
-                        rank_owner[real_list[better_test]] = rank
-                        err_code[real_list[better_test]] = not_found_code
-                        test_pattern[real_list[better_test]] = test_error[better_test]
+                    # Update codes for points found in this iteration
+                    probes_rst[real_index_pt_found_this_it, 0] = result_r[pt_found_this_it]
+                    probes_rst[real_index_pt_found_this_it, 1] = result_s[pt_found_this_it]
+                    probes_rst[real_index_pt_found_this_it, 2] = result_t[pt_found_this_it]
+                    el_owner[real_index_pt_found_this_it] = np.array(elem_to_check_per_point)[pt_found_this_it]
+                    glb_el_owner[real_index_pt_found_this_it] = (el_owner[real_index_pt_found_this_it] + offset_el)
+                    rank_owner[real_index_pt_found_this_it] = rank
+                    err_code[real_index_pt_found_this_it] = 1
 
-            else:
+                    # If user has selected to check a test pattern:
+                    if use_test_pattern:
 
-                if len(pt_not_found_this_it) > 0:
-                    probes_rst[np.asarray(real_index_pt_not_found_this_it), 0] = result_r[pt_not_found_this_it]
-                    probes_rst[np.asarray(real_index_pt_not_found_this_it), 1] = result_s[pt_not_found_this_it]
-                    probes_rst[np.asarray(real_index_pt_not_found_this_it), 2] = result_t[pt_not_found_this_it]
-                    el_owner[np.asarray(real_index_pt_not_found_this_it)] = np.array(elem_to_check_per_point)[pt_not_found_this_it]
-                    glb_el_owner[np.asarray(real_index_pt_not_found_this_it)] = el_owner[np.asarray(real_index_pt_not_found_this_it)] + offset_el
-                    rank_owner[np.asarray(real_index_pt_not_found_this_it)] = rank
-                    err_code[np.asarray(real_index_pt_not_found_this_it)] = not_found_code
+                        # Get shapes
+                        ntest = len(pt_not_found_this_it)
+                        test_probe_new_shape = (ntest, nelems, 1, 1)
+                        test_elem_new_shape = (ntest, nelems, x.shape[1], x.shape[2], x.shape[3])
 
-            # Free per-point candidate lists where possible to keep memory low
-            # - If a point was found, drop its list.
-            # - If a point exhausted all its candidates without success, drop its list.
-            for i in batch_indices:
-                if (err_code[i] == 1) or (next_candidate[i] >= candidate_lengths[i] >= 0):
-                    if i in element_candidates:
-                        del element_candidates[i]
+                        # Define new arrays (On the cpu)
+                        test_elems = np.array(elem_to_check_per_point)[pt_not_found_this_it]
+                        test_fields = (
+                            x[test_elems, :, :, :] ** 2
+                            + y[test_elems, :, :, :] ** 2
+                            + z[test_elems, :, :, :] ** 2
+                        )
+                        test_probes = (
+                            probes[real_index_pt_not_found_this_it, 0] ** 2
+                            + probes[real_index_pt_not_found_this_it, 1] ** 2
+                            + probes[real_index_pt_not_found_this_it, 2] ** 2
+                        )
+
+                        # Perform the test interpolation
+                        test_interp[:ntest, :nelems] = self.interpolate_field_at_rst(
+                            result_r[pt_not_found_this_it].reshape(test_probe_new_shape),
+                            result_s[pt_not_found_this_it].reshape(test_probe_new_shape),
+                            result_t[pt_not_found_this_it].reshape(test_probe_new_shape),
+                            test_fields.reshape(test_elem_new_shape),
+                        )
+                        test_result = test_interp[:ntest, :nelems].reshape(ntest)
+
+                        # Check if the test pattern is satisfied
+                        test_error = abs(test_probes - test_result)
+
+                        # Now assign
+                        real_list = np.array(real_index_pt_not_found_this_it)
+                        relative_list = np.array(pt_not_found_this_it)
+                        better_test = np.where(
+                            test_error < test_pattern[real_index_pt_not_found_this_it]
+                        )[0]
+
+                        if len(better_test) > 0:
+                            probes_rst[real_list[better_test], 0] = result_r[relative_list[better_test]]
+                            probes_rst[real_list[better_test], 1] = result_s[relative_list[better_test]]
+                            probes_rst[real_list[better_test], 2] = result_t[relative_list[better_test]]
+                            el_owner[real_list[better_test]] = np.array(elem_to_check_per_point)[relative_list[better_test]]
+                            glb_el_owner[real_list[better_test]] = (el_owner[real_list[better_test]] + offset_el)
+                            rank_owner[real_list[better_test]] = rank
+                            err_code[real_list[better_test]] = not_found_code
+                            test_pattern[real_list[better_test]] = test_error[better_test]
+
+                    else:
+
+                        probes_rst[real_index_pt_not_found_this_it, 0] = result_r[pt_not_found_this_it]
+                        probes_rst[real_index_pt_not_found_this_it, 1] = result_s[pt_not_found_this_it]
+                        probes_rst[real_index_pt_not_found_this_it, 2] = result_t[pt_not_found_this_it]
+                        el_owner[real_index_pt_not_found_this_it] = np.array(elem_to_check_per_point)[pt_not_found_this_it]
+                        glb_el_owner[real_index_pt_not_found_this_it] = (el_owner[real_index_pt_not_found_this_it] + offset_el)
+                        rank_owner[real_index_pt_not_found_this_it] = rank
+                        err_code[real_index_pt_not_found_this_it] = not_found_code
+
+            # end for-e / for-j for this batch
+
+        # end batches
 
         return (
             probes,
@@ -649,6 +630,7 @@ class LegendreInterpolator(MultiplePointInterpolator):
             err_code,
             test_pattern,
         )
+
 
     def find_rst_(self, probes_info, mesh_info, settings, buffers=None):
 
