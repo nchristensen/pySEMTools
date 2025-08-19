@@ -3224,7 +3224,7 @@ class dstructure_kdtree(dstructure):
 
     def search(self, probes: np.ndarray, progress_bar = False, **kwargs):
 
-        chunk_size = self.max_pts*10
+        chunk_size = self.max_pts
         n_chunks = int(np.ceil(probes.shape[0] / chunk_size))
         element_candidates = []
 
