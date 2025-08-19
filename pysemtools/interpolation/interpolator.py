@@ -3442,13 +3442,15 @@ class dstructure_hashtable(dstructure):
 
         return element_candidates
 
-def refine_candidates(probes, candidate_elements, bboxes, rel_tol = 0.01, max_batch_size = 256):
+def refine_candidates(probes, candidate_elements, bboxes, rel_tol=0.01, max_batch_size=256):
     """
     Refine candidate elements for each probe by keeping only those where the probe 
     lies within the corresponding expanded bounding box.
-    
+
+    Note: mutates `candidate_elements` by trimming consumed candidates so that
+    a single probe with many candidates can be processed across multiple batches.
     """
-    # Initialize the output list with empty lists for each probe.
+
     refined_candidates = [[] for _ in range(probes.shape[0])]
     start = 0
     end = probes.shape[0]
@@ -3456,87 +3458,107 @@ def refine_candidates(probes, candidate_elements, bboxes, rel_tol = 0.01, max_ba
     while start < end:
         probe_indices = []
         candidate_indices = []
-        it_entries = 0    
+        it_entries = 0
+        i_partial = False  # did we only partially consume probe i?
+
         for i in range(start, end):
             cands = candidate_elements[i]
-            if cands:  # if this probe has candidate bbox indices
-                probe_indices.extend([i] * len(cands))
-                candidate_indices.extend(cands)
-                it_entries += len(cands)
+            if cands:
+                remaining = max_batch_size - it_entries
+                if remaining <= 0:
+                    break
 
-            if it_entries > max_batch_size:
-                break
+                if len(cands) > remaining:
+                    # take only what fits, leave the rest for the next loop
+                    probe_indices.extend([i] * remaining)
+                    candidate_indices.extend(cands[:remaining])
+                    candidate_elements[i] = cands[remaining:]  # mutate: keep leftovers
+                    it_entries += remaining
+                    i_partial = True
+                    break
+                else:
+                    # consume all of this probe's candidates
+                    probe_indices.extend([i] * len(cands))
+                    candidate_indices.extend(cands)
+                    it_entries += len(cands)
+                    candidate_elements[i] = []  # mark consumed
 
-        start = i + 1
-        probe_indices = np.array(probe_indices)  # shape: (total_num_candidates,)
-        candidate_indices = np.array(candidate_indices)  # shape: (total_num_candidates,)
-        
-        # If no candidates exist overall, return a list of empty lists.
-        if probe_indices.size == 0:
-            return refined_candidates
-        
-        # Get the corresponding probes and bounding boxes for all candidate pairs.
-        pts = probes[probe_indices]           # shape: (total_num_candidates, 3)
-        candidate_bboxes = bboxes[candidate_indices]  # shape: (total_num_candidates, 6)
-        
-        # Compute the expanded boundaries for each candidate bbox.
+                if it_entries >= max_batch_size:
+                    break
+
+        # If we partially consumed probe i, revisit it next; otherwise move past i
+        if i_partial:
+            start = i  # same probe still has leftovers
+        else:
+            # If the loop ran at least once, `i` is defined; otherwise start==end and we won't get here
+            start = i + 1 if 'i' in locals() else end
+
+        # Nothing gathered this round; continue to next window (e.g., all empties)
+        if not probe_indices:
+            continue
+
+        probe_indices = np.asarray(probe_indices, dtype=np.intp)
+        candidate_indices = np.asarray(candidate_indices, dtype=np.intp)
+
+        # Points and candidate bboxes for the gathered pairs
+        pts = probes[probe_indices]
+        candidate_bboxes = bboxes[candidate_indices]
+
+        # Compute expanded bounds
         if rel_tol > 1e-6:
-            # For x dimension:
             dx = candidate_bboxes[:, 1] - candidate_bboxes[:, 0]
+            dy = candidate_bboxes[:, 3] - candidate_bboxes[:, 2]
+            dz = candidate_bboxes[:, 5] - candidate_bboxes[:, 4]
             tol_x = dx * rel_tol / 2.0
+            tol_y = dy * rel_tol / 2.0
+            tol_z = dz * rel_tol / 2.0
             lower_x = candidate_bboxes[:, 0] - tol_x
             upper_x = candidate_bboxes[:, 1] + tol_x
-
-            # For y dimension:
-            dy = candidate_bboxes[:, 3] - candidate_bboxes[:, 2]
-            tol_y = dy * rel_tol / 2.0
             lower_y = candidate_bboxes[:, 2] - tol_y
             upper_y = candidate_bboxes[:, 3] + tol_y
-
-            # For z dimension:
-            dz = candidate_bboxes[:, 5] - candidate_bboxes[:, 4]
-            tol_z = dz * rel_tol / 2.0
             lower_z = candidate_bboxes[:, 4] - tol_z
             upper_z = candidate_bboxes[:, 5] + tol_z
         else:
-            # No expansion needed, use original boundaries
-            lower_x = candidate_bboxes[:, 0]
-            upper_x = candidate_bboxes[:, 1]
-            lower_y = candidate_bboxes[:, 2]
-            upper_y = candidate_bboxes[:, 3]
-            lower_z = candidate_bboxes[:, 4]
-            upper_z = candidate_bboxes[:, 5]
-        
-        # Vectorized check: create a boolean mask indicating which candidate pair passes
-        valid_mask = ((pts[:, 0] >= lower_x) & (pts[:, 0] <= upper_x) &
-                    (pts[:, 1] >= lower_y) & (pts[:, 1] <= upper_y) &
-                    (pts[:, 2] >= lower_z) & (pts[:, 2] <= upper_z))
-        
-        # Filter the probe and candidate indices according to the valid mask.
+            lower_x = candidate_bboxes[:, 0]; upper_x = candidate_bboxes[:, 1]
+            lower_y = candidate_bboxes[:, 2]; upper_y = candidate_bboxes[:, 3]
+            lower_z = candidate_bboxes[:, 4]; upper_z = candidate_bboxes[:, 5]
+
+        # Inside-AABB test
+        valid_mask = (
+            (pts[:, 0] >= lower_x) & (pts[:, 0] <= upper_x) &
+            (pts[:, 1] >= lower_y) & (pts[:, 1] <= upper_y) &
+            (pts[:, 2] >= lower_z) & (pts[:, 2] <= upper_z)
+        )
+
+        if not np.any(valid_mask):
+            continue
+
         valid_probe_indices = probe_indices[valid_mask]
         valid_candidate_indices = candidate_indices[valid_mask]
-        
-        # Sort the valid candidate pairs by the probe index to group them together.
-        order = np.argsort(valid_probe_indices)
+
+        order = np.argsort(valid_probe_indices, kind='stable')
         valid_probe_sorted = valid_probe_indices[order]
         valid_candidate_sorted = valid_candidate_indices[order]
-        
-        # Use np.unique to get the boundaries for each probe in the sorted array.
-        unique_probes, start_idx, counts = np.unique(valid_probe_sorted, 
-                                                    return_index=True, 
-                                                    return_counts=True)
-        
-        # Fill the refined_candidates for each probe.
-        for probe, idx, count in zip(unique_probes, start_idx, counts):
-            refined_candidates[probe].extend(valid_candidate_sorted[idx: idx + count].tolist())
+
+        unique_probes, start_idx, counts = np.unique(
+            valid_probe_sorted, return_index=True, return_counts=True
+        )
+
+        for probe, idx0, cnt in zip(unique_probes, start_idx, counts):
+            refined_candidates[probe].extend(
+                valid_candidate_sorted[idx0:idx0 + cnt].tolist()
+            )
 
     return refined_candidates
 
 def refine_candidates_obb(probes, candidate_elements, obb_c, obb_jinv, max_batch_size=256):
     """
     Refine candidate elements for each probe by keeping only those where the probe 
-    lies within the corresponding expanded bounding box.
-    
+    lies within the corresponding oriented bounding box (OBB).
+
+    Notes:
+      - Mutates `candidate_elements[i]` by trimming consumed indices.
+      - Batches by total flattened candidate pairs, not number of probes.
     """
     refined_candidates = [[] for _ in range(probes.shape[0])]
     start = 0
@@ -3545,46 +3567,79 @@ def refine_candidates_obb(probes, candidate_elements, obb_c, obb_jinv, max_batch
     while start < end:
         probe_indices = []
         candidate_indices = []
-        it_entries = 0    
+        it_entries = 0
+        i_partial = False  # did we only partially consume probe i?
+
         for i in range(start, end):
             cands = candidate_elements[i]
             if cands:
-                probe_indices.extend([i] * len(cands))
-                candidate_indices.extend(cands)
-                it_entries += len(cands)
-            if it_entries > max_batch_size:
-                break
+                remaining = max_batch_size - it_entries
+                if remaining <= 0:
+                    break
 
-        start = i + 1
-        probe_indices = np.array(probe_indices)
-        candidate_indices = np.array(candidate_indices)
-        
-        if probe_indices.size == 0:
-            return refined_candidates
-        
-        pts = probes[probe_indices]
-        candidate_bboxes_c = obb_c[candidate_indices]
-        candidate_bboxes_jinv = obb_jinv[candidate_indices]
+                if len(cands) > remaining:
+                    # take only what fits, leave the rest
+                    probe_indices.extend([i] * remaining)
+                    candidate_indices.extend(cands[:remaining])
+                    candidate_elements[i] = cands[remaining:]   # mutate: keep leftovers
+                    it_entries += remaining
+                    i_partial = True
+                    break
+                else:
+                    # consume all candidates for this probe
+                    probe_indices.extend([i] * len(cands))
+                    candidate_indices.extend(cands)
+                    it_entries += len(cands)
+                    candidate_elements[i] = []  # consumed
 
-        check = np.matmul(candidate_bboxes_jinv, (pts - candidate_bboxes_c).reshape(-1,3,1)).reshape(-1,3)
+                if it_entries >= max_batch_size:
+                    break
+
+        # If partially consumed, revisit same probe next; otherwise move past it
+        if i_partial:
+            start = i
+        else:
+            start = i + 1 if 'i' in locals() else end
+
+        # Nothing gathered this round (e.g., all empties) -> continue
+        if not probe_indices:
+            continue
+
+        probe_indices = np.asarray(probe_indices, dtype=np.intp)
+        candidate_indices = np.asarray(candidate_indices, dtype=np.intp)
+
+        # Gather points and OBB params for these pairs
+        pts = probes[probe_indices]                    # (N, 3)
+        candidate_bboxes_c = obb_c[candidate_indices]  # (N, 3)
+        candidate_bboxes_jinv = obb_jinv[candidate_indices]  # (N, 3, 3)
+
+        # Batched transform into each candidate's OBB local coordinates
+        diff = (pts - candidate_bboxes_c).reshape(-1, 3, 1)          # (N, 3, 1)
+        check = np.matmul(candidate_bboxes_jinv, diff).reshape(-1, 3) # (N, 3)
         check = np.abs(check)
-        tst = np.ones((check.shape[0])) * (1 + 1e-6)
-        
-        valid_mask = ((check[:, 0] <= tst) & (check[:, 1] <= tst) & (check[:, 2] <= tst))
-        
+
+        # Inside test with small tolerance (no extra alloc)
+        valid_mask = np.all(check <= (1.0 + 1e-6), axis=1)
+
+        if not np.any(valid_mask):
+            continue
+
         valid_probe_indices = probe_indices[valid_mask]
         valid_candidate_indices = candidate_indices[valid_mask]
-        
-        order = np.argsort(valid_probe_indices)
+
+        # Group by probe and append
+        order = np.argsort(valid_probe_indices, kind='stable')
         valid_probe_sorted = valid_probe_indices[order]
         valid_candidate_sorted = valid_candidate_indices[order]
-        
-        unique_probes, start_idx, counts = np.unique(valid_probe_sorted, 
-                                                     return_index=True, 
-                                                     return_counts=True)
-        
-        for probe, idx, count in zip(unique_probes, start_idx, counts):
-            refined_candidates[probe].extend(valid_candidate_sorted[idx: idx + count].tolist())
+
+        unique_probes, start_idx, counts = np.unique(
+            valid_probe_sorted, return_index=True, return_counts=True
+        )
+
+        for probe, idx0, cnt in zip(unique_probes, start_idx, counts):
+            refined_candidates[probe].extend(
+                valid_candidate_sorted[idx0: idx0 + cnt].tolist()
+            )
 
     return refined_candidates
 
