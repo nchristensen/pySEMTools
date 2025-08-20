@@ -890,7 +890,7 @@ class LegendreInterpolator(MultiplePointInterpolator):
         progress_bar = settings.get("progress_bar", False) if settings is not None else False
 
         max_pts = self.max_pts
-        num_probes = probes.shape[0]
+        num_probes = probes_rst.shape[0]
 
         # --- Precompute valid indices once ---
         valid_idx = np.nonzero(err_code != 0)[0]  # valid indices only

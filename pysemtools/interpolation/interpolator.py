@@ -2359,15 +2359,16 @@ class Interpolator:
         self.log.write("info", "Interpolating field from rst coordinates")
         self.log.tic()
 
-        if isinstance(self.my_probes, list):
+        if isinstance(self.my_probes_rst, list):
             # The inputs were distributed
             # So we return a list with the sample fields for the points of each rank that sent data to this one
 
             sampled_field_at_probe = []
 
-            for i in range(0, len(self.my_probes)):
+            for i in range(0, len(self.my_probes_rst)):
                 probes_info = {}
-                probes_info["probes"] = self.my_probes[i]
+                if hasattr(self, "my_probes"):
+                    probes_info["probes"] = self.my_probes[i]
                 probes_info["probes_rst"] = self.my_probes_rst[i]
                 probes_info["el_owner"] = self.my_el_owner[i]
                 probes_info["err_code"] = self.my_err_code[i]
@@ -2389,7 +2390,8 @@ class Interpolator:
 
             # Probes info
             probes_info = {}
-            probes_info["probes"] = self.my_probes
+            if hasattr(self, "my_probes"):
+                probes_info["probes"] = self.my_probes
             probes_info["probes_rst"] = self.my_probes_rst
             probes_info["el_owner"] = self.my_el_owner
             probes_info["err_code"] = self.my_err_code
