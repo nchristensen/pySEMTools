@@ -166,6 +166,10 @@ class Probes:
         self.log.write("info", f"use_oriented_bbox: {use_oriented_bbox}")
         self.log.write("info", f" ========================")
 
+        # Check for errors
+        if clean_search_traces and point_interpolator_type != "multiple_point_legendre_numpy":
+            raise ValueError("Clean search traces can only be used with multiple_point_legendre_numpy at the moment")
+
         # Assign probes
         self.log.sync_tic()
         self.data_read_from_structured_mesh = False
