@@ -140,6 +140,7 @@ class Probes:
         find_points_max_iter: int = 50,
         local_data_structure: str = "kdtree",
         use_oriented_bbox: bool = False,
+        clean_search_traces: bool = False,
     ):
 
         rank = comm.Get_rank()
@@ -164,6 +165,10 @@ class Probes:
         self.log.write("info", f"local_data_structure: {local_data_structure}")
         self.log.write("info", f"use_oriented_bbox: {use_oriented_bbox}")
         self.log.write("info", f" ========================")
+
+        # Check for errors
+        if clean_search_traces and point_interpolator_type != "multiple_point_legendre_numpy":
+            raise ValueError("Clean search traces can only be used with multiple_point_legendre_numpy at the moment")
 
         # Assign probes
         self.log.sync_tic()
@@ -234,6 +239,11 @@ class Probes:
             self.x, self.y, self.z = read_mesh(comm, fname, dtype=dtype)
         else:
             raise ValueError("msh must be provided as argument")
+        
+        try:
+            self.n_probes = self.probes.shape[0]
+        except AttributeError:
+            self.n_probes = 0
 
         # Initialize the interpolator
         self.log.write("info", "Initializing interpolator")
@@ -341,6 +351,9 @@ class Probes:
         self.interpolated_fields = None
         self.written_file_counter = 0
 
+        if clean_search_traces:
+            self.clean_search_traces()
+
         self.log.write("info", "Probes object initialized")
         self.log.toc()
 
@@ -391,15 +404,15 @@ class Probes:
 
             # Allocate buffer that keeps the interpolated fields of the points that were input in this rank
             self.interpolated_fields = np.zeros(
-                (self.probes.shape[0], self.number_of_fields + 1), dtype=np.double
+                (self.n_probes, self.number_of_fields + 1), dtype=np.double
             )
 
             # Allocate buffer to keeps the interpolated fields of the points that were sent by other ranks
             my_interpolated_fields = []
-            for i in range(0, len(self.itp.my_probes)):
+            for i in range(0, len(self.itp.my_probes_rst)):
                 my_interpolated_fields.append(
                     np.zeros(
-                        (self.itp.my_probes[i].shape[0], self.number_of_fields + 1),
+                        (self.itp.my_probes_rst[i].shape[0], self.number_of_fields + 1),
                         dtype=np.double,
                     )
                 )
@@ -417,7 +430,7 @@ class Probes:
                 )[:]
 
                 # Put this interpolated field on the right place in the buffer for each rank that sent me data
-                for j in range(0, len(self.itp.my_probes)):
+                for j in range(0, len(self.itp.my_probes_rst)):
                     my_interpolated_fields[j][:, i + 1] = (
                         interpolated_fields_from_sources[j]
                     )
@@ -452,12 +465,12 @@ class Probes:
 
             # Allocate interpolated fields
             self.my_interpolated_fields = np.zeros(
-                (self.itp.my_probes.shape[0], self.number_of_fields + 1),
+                (self.itp.my_probes_rst.shape[0], self.number_of_fields + 1),
                 dtype=np.double,
             )
             if comm.Get_rank() == 0:
                 self.interpolated_fields = np.zeros(
-                    (self.probes.shape[0], self.number_of_fields + 1), dtype=np.double
+                    (self.n_probes, self.number_of_fields + 1), dtype=np.double
                 )
             else:
                 self.interpolated_fields = None
@@ -520,6 +533,46 @@ class Probes:
                 write_interpolated_data(self, parallel=True)
         self.log.sync_toc(message="Finished writing interpolated fields")
 
+    def clean_search_traces(self):
+        # Import the module only if necesary
+        import gc
+
+        # Remove input attributes
+        if hasattr(self, "probes"): del self.probes
+        if hasattr(self.itp, "probes"): del self.itp.probes
+        if hasattr(self.itp, "probes_rst"): del self.itp.probes_rst
+        if hasattr(self.itp, "el_owner"): del self.itp.el_owner
+        if hasattr(self.itp, "glb_el_owner"): del self.itp.glb_el_owner
+        if hasattr(self.itp, "rank_owner"): del self.itp.rank_owner
+        if hasattr(self.itp, "err_code"): del self.itp.err_code
+        if hasattr(self.itp, "test_pattern"): del self.itp.test_pattern
+
+        # Remove the probes partitions when searching
+        if hasattr(self.itp, "probe_partition"): del self.itp.probe_partition
+        if hasattr(self.itp, "probe_rst_partition"): del self.itp.probe_rst_partition
+        if hasattr(self.itp, "el_owner_partition"): del self.itp.el_owner_partition
+        if hasattr(self.itp, "glb_el_owner_partition"): del self.itp.glb_el_owner_partition
+        if hasattr(self.itp, "rank_owner_partition"): del self.itp.rank_owner_partition
+        if hasattr(self.itp, "err_code_partition"): del self.itp.err_code_partition
+        if hasattr(self.itp, "test_pattern_partition"): del self.itp.test_pattern_partition
+
+        # Clean the probes that were found to be in this rank
+        if hasattr(self.itp, "my_probes"): del self.itp.my_probes
+        if hasattr(self.itp, "my_rank_owner"): del self.itp.my_rank_owner
+
+        # Remove the search trees
+        if hasattr(self.itp, "global_tree"): del self.itp.global_tree
+        if hasattr(self.itp, "my_tree"): del self.itp.my_tree
+
+        # Remove bbox related things
+        if hasattr(self.itp, "obb_c"): del self.itp.obb_c
+        if hasattr(self.itp, "obb_jinv"): del self.itp.obb_jinv
+        if hasattr(self.itp, "global_bbox"): del self.itp.global_bbox
+        if hasattr(self.itp, "my_bbox"): del self.itp.my_bbox
+        if hasattr(self.itp, "my_bbox_centroids"): del self.itp.my_bbox_centroids
+        if hasattr(self.itp, "my_bbox_maxdist"): del self.itp.my_bbox_maxdist
+
+        gc.collect()
 
 def write_coordinates(self, parallel=False):
 
@@ -635,9 +688,9 @@ def write_coordinates_csv(self, parallel=True):
 
     ## Create the header
     if isinstance(field_type_list, NoneType) or isinstance(field_index_list, NoneType):
-        header = [self.probes.shape[0], 0, 0]
+        header = [self.n_probes, 0, 0]
     else:
-        header = [self.probes.shape[0], len(field_type_list)]
+        header = [self.n_probes, len(field_type_list)]
         for i in range(len(field_type_list)):
             header.append(f"{field_type_list[i]}{field_index_list[i]}")
 

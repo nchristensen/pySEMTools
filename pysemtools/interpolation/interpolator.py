@@ -14,6 +14,7 @@ from collections import Counter as collections_counter
 import threading
 import time
 import ctypes
+import gc
 
 # check if we have rtree installed
 try :
@@ -25,252 +26,9 @@ NoneType = type(None)
 
 DEBUG = os.getenv("PYSEMTOOLS_DEBUG", "False").lower() in ("true", "1", "t")
 INTERPOLATION_LOG_TIME = int(os.getenv("PYSEMTOOLS_INTERPOLATION_LOG_TIME", "60"))
+INTERPOLATION_MAX_MESSAGE_SIZE = int(os.getenv("PYSEMTOOLS_INTERPOLATION_MAX_MESSAGE_SIZE", int(100))) # 100 MB seems to be fine
+INTERPOLATION_MAX_CANDIDATE_IN_ITERATION = int(os.getenv("PYSEMTOOLS_INTERPOLATION_MAX_CANDIDATE_IN_ITERATION", np.iinfo(np.int32).max)) #256 is a good balance. It is very high for speed
 
-class OneSidedComms:
-    '''
-    Wrapper class to handle one-sided communication
-
-    Parameters:
-    -----------
-    comm : MPI.Comm
-        The MPI communicator to use.
-    rma_win : MPI.Win
-        The MPI window for one-sided communication (Optional, can be provided).
-    rma_buff : np.ndarray
-        The buffer associated with the MPI window (Optional, can be provided).
-    window_size : int
-        The size of the window buffer (Required if creating a new window).
-    dtype : np.dtype
-        The data type of elements in the buffer (Required if creating a new window).
-    fill_value : scalar
-        Initial fill value for the buffer (Optional).
-    '''
-
-    def __init__(self,
-                 comm: MPI.Comm,
-                 rma_win: MPI.Win = None,
-                 rma_buff: np.ndarray = None,
-                 window_size: int = None,
-                 dtype: np.dtype = None,
-                 fill_value=None):
-        self.comm = comm
-        self.rank = comm.Get_rank()
-        self._mpi_ptr = None
-
-        # Determine creation or usage of provided window/buffer
-        if rma_win is None and rma_buff is None:
-            if window_size is None or dtype is None:
-                raise ValueError("window_size and dtype must be provided when not passing rma_win and rma_buff")
-
-            # Allocate memory via MPI - Trying to avoid any memory address replication from numpy/python
-            self.dtype = np.dtype(dtype)
-            self.window_size = window_size
-            self.itemsize = self.dtype.itemsize
-            self.size_bytes = self.itemsize * self.window_size
-            self._mpi_ptr = MPI.Alloc_mem(self.size_bytes, MPI.INFO_NULL)
-
-            # Wrap pointer into ctypes buffer so it can be viewed as numpy
-            addr = ctypes.addressof(ctypes.c_char.from_buffer(self._mpi_ptr))
-            buf_type = ctypes.c_char * self.size_bytes
-            raw_buf = buf_type.from_address(addr)
-
-            self.buff = np.ctypeslib.as_array(raw_buf).view(self.dtype)
-            if fill_value is not None:
-                self.buff[:] = fill_value
-
-            # Create MPI window over the allocated memory
-            self.win = MPI.Win.Create(self._mpi_ptr, self.itemsize, MPI.INFO_NULL, self.comm)
-
-        elif rma_win is not None and rma_buff is not None:
-            # Use provided window and buffer
-            self.win = rma_win
-            self.buff = rma_buff
-            self.dtype = self.buff.dtype
-            self.window_size = self.buff.size
-        else:
-            # One provided but not the other
-            raise ValueError("Both rma_win and rma_buff must be provided together")
-
-        self._lock = threading.Lock()
-    
-    def compare_and_swap(self, value_to_check = None, value_to_put = None, dest: int = None):
-        '''Wrap around compare and swap to do atomic operations on the buffer.
-        
-        Parameters:
-        -----------
-        value_to_check : any
-        value_to_put : any
-        dest : int
-
-        Returns:
-        --------
-        result : any
-            The value that was in the buffer before the operation.
-    
-        '''
-
-        expected = np.array([value_to_check], dtype=self.buff.dtype)
-        origin = np.array([value_to_put], dtype=self.buff.dtype)
-        result = np.empty(1, dtype=self.buff.dtype)
-
-        if dest == self.rank:
-            # Emulated CAS for self-access
-            with self._lock:
-                result[0] = self.buff[0].copy()
-                if self.buff[0] == value_to_check:
-                    self.buff[0] = value_to_put
-        else:
-            self.win.Lock(dest, MPI.LOCK_EXCLUSIVE)
-            self.win.Compare_and_swap(origin, expected, result, dest, target_disp=0)
-            self.win.Flush(dest)
-            self.win.Unlock(dest)
-
-        return result[0]
-
-    def put(self, dest: int = None, data = None, dtype: np.dtype =None, displacement: int = 0):
-
-        '''Put data into the buffer at the specified displacement.
-        
-        Parameters:
-        -----------
-        dest : int
-            The destination rank to put the data into.
-        data : np.ndarray or any
-            The data to put into the buffer. If not an array, it will be converted to one based on the dtype.
-        dtype : np.dtype
-            The data type of the data to put into the buffer. Required if data is not an array.
-        displacement : int
-            The displacement in the buffer where the data should be put.
-
-        Returns:
-        --------
-        None
-            
-        '''
-
-        if not isinstance(data, np.ndarray):
-            if dtype is None:
-                raise TypeError("If passing an individual value, dtype must be specified")
-            else:
-                data = np.array([data], dtype=dtype)
-
-        if data.dtype != self.buff.dtype:
-            raise ValueError("Data to put and local buffer must have the same item size (same dtype)")
-        
-        if dest == self.rank:
-            self.buff[displacement:displacement + data.size] = data
-        else:
-            mpi_dtype = MPI._typedict[data.dtype.char]
-            self.win.Lock(dest, MPI.LOCK_EXCLUSIVE) 
-            self.win.Put([data, mpi_dtype], dest, [displacement, data.size, mpi_dtype])
-            self.win.Flush(dest)
-            self.win.Unlock(dest)
-
-    def get(self, source: int = None, displacement: int = 0, counts: int = None):
-
-        '''Get data from the buffer at the specified displacement.
-
-        Parameters:
-        -----------
-        source : int
-            The source rank to get the data from.
-        displacement : int
-            The displacement in the buffer where the data should be gotten.
-        counts : int
-            The number of elements to get from the buffer.
-
-        Returns:
-        --------
-        data : np.ndarray
-            The data gotten from the buffer.
-
-        '''
-
-        if counts is None:
-            counts = self.buff.size - displacement
-        elif counts == -1:
-            counts = self.buff.size - displacement
-        elif counts > self.buff.size - displacement:
-            raise ValueError("Counts cannot be greater than the size of the buffer minus the displacement")
-
-        if source == self.rank:
-            return self.buff[displacement:displacement + counts].copy()
-        else:
-            mpi_dtype = MPI._typedict[self.buff.dtype.char]
-            data = np.empty(counts, dtype=self.buff.dtype)
-            self.win.Lock(source, MPI.LOCK_EXCLUSIVE)
-            self.win.Get([data, mpi_dtype], source, [displacement, counts, mpi_dtype])
-            self.win.Flush(source)
-            self.win.Unlock(source)
-            return data.copy()
-        
-    def accumulate(self, dest: int = None, data = None, dtype: np.dtype = None, displacement: int = 0, op="SUM"):
-
-        '''Accumulate data from the buffer at the specified displacement.
-
-        Parameters:
-        -----------
-        dest : int
-            The destination rank to accumulate the data
-        data : np.ndarray or any
-            The data to accumulate. If not an array, it will be converted to one based on the dtype.
-        dtype : np.dtype
-            The data type of the data to accumulate. Required if data is not an array.
-        displacement : int
-            The displacement in the buffer where the data should be accumulated.
-        op : str
-            The operation to perform on the data. Default is "sum". Other options can be "max", "min", etc.
-
-        Returns:
-        --------
-        None
-
-        '''
-
-        OP_TO_FUNC = {
-        "SUM":     np.add,
-        "PROD":    np.multiply,
-        "MAX":     np.maximum,
-        "MIN":     np.minimum,
-        "LAND":    np.logical_and,
-        "LOR":     np.logical_or,
-        "LXOR":    np.logical_xor,
-        "BAND":    np.bitwise_and,
-        "BOR":     np.bitwise_or,
-        "BXOR":    np.bitwise_xor,
-        }
-        
-        OP_TO_MPI = {
-        "SUM":     MPI.SUM,
-        "PROD":    MPI.PROD,
-        "MAX":     MPI.MAX,
-        "MIN":     MPI.MIN,
-        "LAND":    MPI.LAND,
-        "LOR":     MPI.LOR,
-        "LXOR":    MPI.LXOR,
-        "BAND":    MPI.BAND,
-        "BOR":     MPI.BOR,
-        "BXOR":    MPI.BXOR,
-        }
-
-        if not isinstance(data, np.ndarray):
-            if dtype is None:
-                raise TypeError("If passing an individual value, dtype must be specified")
-            else:
-                data = np.array([data], dtype=dtype)
-
-        if data.dtype != self.buff.dtype:
-            raise ValueError("Data to accumulate and local buffer must have the same item size (same dtype)")
-
-        if dest == self.rank:
-            operation = OP_TO_FUNC[op]
-            self.buff[displacement:displacement + data.size] = operation(self.buff[displacement:displacement + data.size], data)
-        else:
-            mpi_dtype = MPI._typedict[data.dtype.char]
-            self.win.Lock(dest, MPI.LOCK_EXCLUSIVE)
-            self.win.Accumulate([data, mpi_dtype], dest, [displacement, data.size, mpi_dtype], op=OP_TO_MPI[op])
-            self.win.Flush(dest)
-            self.win.Unlock(dest)
 
 class RMAWindow:
     '''
@@ -433,7 +191,7 @@ class RMASubWindow:
             # Perform a chunked send over the mask to avoid memory issues
             if lock: self.win.Lock(dest, MPI.LOCK_EXCLUSIVE)
 
-            max_message_size = 100 * 1024 * 1024 # 100MB
+            max_message_size = INTERPOLATION_MAX_MESSAGE_SIZE * 1024 * 1024 # 100MB
             bytes_per_row = strides[0]
             row_chunk_size = max_message_size // strides[0]
             byte_displacement = displacement * self.itemsize + self.start_offset
@@ -2081,6 +1839,9 @@ class Interpolator:
         candidates_per_point = np.full((num_rows, max_col), -1, dtype=np.int32)
         for i, row in enumerate(candidate_ranks_list):
             candidates_per_point[i, :len(row)] = row
+
+        del candidate_ranks_list
+        gc.collect()
  
         # Initialize windows
         ## Find sizes    
@@ -2598,15 +2359,16 @@ class Interpolator:
         self.log.write("info", "Interpolating field from rst coordinates")
         self.log.tic()
 
-        if isinstance(self.my_probes, list):
+        if isinstance(self.my_probes_rst, list):
             # The inputs were distributed
             # So we return a list with the sample fields for the points of each rank that sent data to this one
 
             sampled_field_at_probe = []
 
-            for i in range(0, len(self.my_probes)):
+            for i in range(0, len(self.my_probes_rst)):
                 probes_info = {}
-                probes_info["probes"] = self.my_probes[i]
+                if hasattr(self, "my_probes"):
+                    probes_info["probes"] = self.my_probes[i]
                 probes_info["probes_rst"] = self.my_probes_rst[i]
                 probes_info["el_owner"] = self.my_el_owner[i]
                 probes_info["err_code"] = self.my_err_code[i]
@@ -2628,7 +2390,8 @@ class Interpolator:
 
             # Probes info
             probes_info = {}
-            probes_info["probes"] = self.my_probes
+            if hasattr(self, "my_probes"):
+                probes_info["probes"] = self.my_probes
             probes_info["probes_rst"] = self.my_probes_rst
             probes_info["el_owner"] = self.my_el_owner
             probes_info["err_code"] = self.my_err_code
@@ -3224,7 +2987,7 @@ class dstructure_kdtree(dstructure):
 
     def search(self, probes: np.ndarray, progress_bar = False, **kwargs):
 
-        chunk_size = self.max_pts*10
+        chunk_size = self.max_pts
         n_chunks = int(np.ceil(probes.shape[0] / chunk_size))
         element_candidates = []
 
@@ -3442,13 +3205,16 @@ class dstructure_hashtable(dstructure):
 
         return element_candidates
 
-def refine_candidates(probes, candidate_elements, bboxes, rel_tol = 0.01, max_batch_size = 256):
+def refine_candidates(probes, candidate_elements, bboxes, rel_tol=0.01):
     """
     Refine candidate elements for each probe by keeping only those where the probe 
     lies within the corresponding expanded bounding box.
-    
+
+    Note: mutates `candidate_elements` by trimming consumed candidates so that
+    a single probe with many candidates can be processed across multiple batches.
     """
-    # Initialize the output list with empty lists for each probe.
+
+    max_batch_size = INTERPOLATION_MAX_CANDIDATE_IN_ITERATION
     refined_candidates = [[] for _ in range(probes.shape[0])]
     start = 0
     end = probes.shape[0]
@@ -3456,135 +3222,189 @@ def refine_candidates(probes, candidate_elements, bboxes, rel_tol = 0.01, max_ba
     while start < end:
         probe_indices = []
         candidate_indices = []
-        it_entries = 0    
-        for i in range(start, end):
-            cands = candidate_elements[i]
-            if cands:  # if this probe has candidate bbox indices
-                probe_indices.extend([i] * len(cands))
-                candidate_indices.extend(cands)
-                it_entries += len(cands)
+        it_entries = 0
+        i_partial = False  # did we only partially consume probe i?
 
-            if it_entries > max_batch_size:
-                break
-
-        start = i + 1
-        probe_indices = np.array(probe_indices)  # shape: (total_num_candidates,)
-        candidate_indices = np.array(candidate_indices)  # shape: (total_num_candidates,)
-        
-        # If no candidates exist overall, return a list of empty lists.
-        if probe_indices.size == 0:
-            return refined_candidates
-        
-        # Get the corresponding probes and bounding boxes for all candidate pairs.
-        pts = probes[probe_indices]           # shape: (total_num_candidates, 3)
-        candidate_bboxes = bboxes[candidate_indices]  # shape: (total_num_candidates, 6)
-        
-        # Compute the expanded boundaries for each candidate bbox.
-        if rel_tol > 1e-6:
-            # For x dimension:
-            dx = candidate_bboxes[:, 1] - candidate_bboxes[:, 0]
-            tol_x = dx * rel_tol / 2.0
-            lower_x = candidate_bboxes[:, 0] - tol_x
-            upper_x = candidate_bboxes[:, 1] + tol_x
-
-            # For y dimension:
-            dy = candidate_bboxes[:, 3] - candidate_bboxes[:, 2]
-            tol_y = dy * rel_tol / 2.0
-            lower_y = candidate_bboxes[:, 2] - tol_y
-            upper_y = candidate_bboxes[:, 3] + tol_y
-
-            # For z dimension:
-            dz = candidate_bboxes[:, 5] - candidate_bboxes[:, 4]
-            tol_z = dz * rel_tol / 2.0
-            lower_z = candidate_bboxes[:, 4] - tol_z
-            upper_z = candidate_bboxes[:, 5] + tol_z
-        else:
-            # No expansion needed, use original boundaries
-            lower_x = candidate_bboxes[:, 0]
-            upper_x = candidate_bboxes[:, 1]
-            lower_y = candidate_bboxes[:, 2]
-            upper_y = candidate_bboxes[:, 3]
-            lower_z = candidate_bboxes[:, 4]
-            upper_z = candidate_bboxes[:, 5]
-        
-        # Vectorized check: create a boolean mask indicating which candidate pair passes
-        valid_mask = ((pts[:, 0] >= lower_x) & (pts[:, 0] <= upper_x) &
-                    (pts[:, 1] >= lower_y) & (pts[:, 1] <= upper_y) &
-                    (pts[:, 2] >= lower_z) & (pts[:, 2] <= upper_z))
-        
-        # Filter the probe and candidate indices according to the valid mask.
-        valid_probe_indices = probe_indices[valid_mask]
-        valid_candidate_indices = candidate_indices[valid_mask]
-        
-        # Sort the valid candidate pairs by the probe index to group them together.
-        order = np.argsort(valid_probe_indices)
-        valid_probe_sorted = valid_probe_indices[order]
-        valid_candidate_sorted = valid_candidate_indices[order]
-        
-        # Use np.unique to get the boundaries for each probe in the sorted array.
-        unique_probes, start_idx, counts = np.unique(valid_probe_sorted, 
-                                                    return_index=True, 
-                                                    return_counts=True)
-        
-        # Fill the refined_candidates for each probe.
-        for probe, idx, count in zip(unique_probes, start_idx, counts):
-            refined_candidates[probe].extend(valid_candidate_sorted[idx: idx + count].tolist())
-
-    return refined_candidates
-
-def refine_candidates_obb(probes, candidate_elements, obb_c, obb_jinv, max_batch_size=256):
-    """
-    Refine candidate elements for each probe by keeping only those where the probe 
-    lies within the corresponding expanded bounding box.
-    
-    """
-    refined_candidates = [[] for _ in range(probes.shape[0])]
-    start = 0
-    end = probes.shape[0]
-
-    while start < end:
-        probe_indices = []
-        candidate_indices = []
-        it_entries = 0    
         for i in range(start, end):
             cands = candidate_elements[i]
             if cands:
-                probe_indices.extend([i] * len(cands))
-                candidate_indices.extend(cands)
-                it_entries += len(cands)
-            if it_entries > max_batch_size:
-                break
+                remaining = max_batch_size - it_entries
+                if remaining <= 0:
+                    break
 
-        start = i + 1
-        probe_indices = np.array(probe_indices)
-        candidate_indices = np.array(candidate_indices)
-        
-        if probe_indices.size == 0:
-            return refined_candidates
-        
+                if len(cands) > remaining:
+                    # take only what fits, leave the rest for the next loop
+                    probe_indices.extend([i] * remaining)
+                    candidate_indices.extend(cands[:remaining])
+                    candidate_elements[i] = cands[remaining:]  # mutate: keep leftovers
+                    it_entries += remaining
+                    i_partial = True
+                    break
+                else:
+                    # consume all of this probe's candidates
+                    probe_indices.extend([i] * len(cands))
+                    candidate_indices.extend(cands)
+                    it_entries += len(cands)
+                    candidate_elements[i] = []  # mark consumed
+
+                if it_entries >= max_batch_size:
+                    break
+
+        # If we partially consumed probe i, revisit it next; otherwise move past i
+        if i_partial:
+            start = i  # same probe still has leftovers
+        else:
+            # If the loop ran at least once, `i` is defined; otherwise start==end and we won't get here
+            start = i + 1 if 'i' in locals() else end
+
+        # Nothing gathered this round; continue to next window (e.g., all empties)
+        if not probe_indices:
+            continue
+
+        probe_indices = np.asarray(probe_indices, dtype=np.intp)
+        candidate_indices = np.asarray(candidate_indices, dtype=np.intp)
+
+        # Points and candidate bboxes for the gathered pairs
         pts = probes[probe_indices]
-        candidate_bboxes_c = obb_c[candidate_indices]
-        candidate_bboxes_jinv = obb_jinv[candidate_indices]
+        candidate_bboxes = bboxes[candidate_indices]
 
-        check = np.matmul(candidate_bboxes_jinv, (pts - candidate_bboxes_c).reshape(-1,3,1)).reshape(-1,3)
-        check = np.abs(check)
-        tst = np.ones((check.shape[0])) * (1 + 1e-6)
-        
-        valid_mask = ((check[:, 0] <= tst) & (check[:, 1] <= tst) & (check[:, 2] <= tst))
-        
+        # Compute expanded bounds
+        if rel_tol > 1e-6:
+            dx = candidate_bboxes[:, 1] - candidate_bboxes[:, 0]
+            dy = candidate_bboxes[:, 3] - candidate_bboxes[:, 2]
+            dz = candidate_bboxes[:, 5] - candidate_bboxes[:, 4]
+            tol_x = dx * rel_tol / 2.0
+            tol_y = dy * rel_tol / 2.0
+            tol_z = dz * rel_tol / 2.0
+            lower_x = candidate_bboxes[:, 0] - tol_x
+            upper_x = candidate_bboxes[:, 1] + tol_x
+            lower_y = candidate_bboxes[:, 2] - tol_y
+            upper_y = candidate_bboxes[:, 3] + tol_y
+            lower_z = candidate_bboxes[:, 4] - tol_z
+            upper_z = candidate_bboxes[:, 5] + tol_z
+        else:
+            lower_x = candidate_bboxes[:, 0]; upper_x = candidate_bboxes[:, 1]
+            lower_y = candidate_bboxes[:, 2]; upper_y = candidate_bboxes[:, 3]
+            lower_z = candidate_bboxes[:, 4]; upper_z = candidate_bboxes[:, 5]
+
+        # Inside-AABB test
+        valid_mask = (
+            (pts[:, 0] >= lower_x) & (pts[:, 0] <= upper_x) &
+            (pts[:, 1] >= lower_y) & (pts[:, 1] <= upper_y) &
+            (pts[:, 2] >= lower_z) & (pts[:, 2] <= upper_z)
+        )
+
+        if not np.any(valid_mask):
+            continue
+
         valid_probe_indices = probe_indices[valid_mask]
         valid_candidate_indices = candidate_indices[valid_mask]
-        
-        order = np.argsort(valid_probe_indices)
+
+        order = np.argsort(valid_probe_indices, kind='stable')
         valid_probe_sorted = valid_probe_indices[order]
         valid_candidate_sorted = valid_candidate_indices[order]
-        
-        unique_probes, start_idx, counts = np.unique(valid_probe_sorted, 
-                                                     return_index=True, 
-                                                     return_counts=True)
-        
-        for probe, idx, count in zip(unique_probes, start_idx, counts):
-            refined_candidates[probe].extend(valid_candidate_sorted[idx: idx + count].tolist())
+
+        unique_probes, start_idx, counts = np.unique(
+            valid_probe_sorted, return_index=True, return_counts=True
+        )
+
+        for probe, idx0, cnt in zip(unique_probes, start_idx, counts):
+            refined_candidates[probe].extend(
+                valid_candidate_sorted[idx0:idx0 + cnt].tolist()
+            )
+
+    return refined_candidates
+
+def refine_candidates_obb(probes, candidate_elements, obb_c, obb_jinv):
+    """
+    Refine candidate elements for each probe by keeping only those where the probe 
+    lies within the corresponding oriented bounding box (OBB).
+
+    Notes:
+      - Mutates `candidate_elements[i]` by trimming consumed indices.
+      - Batches by total flattened candidate pairs, not number of probes.
+    """
+    max_batch_size = INTERPOLATION_MAX_CANDIDATE_IN_ITERATION
+    refined_candidates = [[] for _ in range(probes.shape[0])]
+    start = 0
+    end = probes.shape[0]
+
+    while start < end:
+        probe_indices = []
+        candidate_indices = []
+        it_entries = 0
+        i_partial = False  # did we only partially consume probe i?
+
+        for i in range(start, end):
+            cands = candidate_elements[i]
+            if cands:
+                remaining = max_batch_size - it_entries
+                if remaining <= 0:
+                    break
+
+                if len(cands) > remaining:
+                    # take only what fits, leave the rest
+                    probe_indices.extend([i] * remaining)
+                    candidate_indices.extend(cands[:remaining])
+                    candidate_elements[i] = cands[remaining:]   # mutate: keep leftovers
+                    it_entries += remaining
+                    i_partial = True
+                    break
+                else:
+                    # consume all candidates for this probe
+                    probe_indices.extend([i] * len(cands))
+                    candidate_indices.extend(cands)
+                    it_entries += len(cands)
+                    candidate_elements[i] = []  # consumed
+
+                if it_entries >= max_batch_size:
+                    break
+
+        # If partially consumed, revisit same probe next; otherwise move past it
+        if i_partial:
+            start = i
+        else:
+            start = i + 1 if 'i' in locals() else end
+
+        # Nothing gathered this round (e.g., all empties) -> continue
+        if not probe_indices:
+            continue
+
+        probe_indices = np.asarray(probe_indices, dtype=np.intp)
+        candidate_indices = np.asarray(candidate_indices, dtype=np.intp)
+
+        # Gather points and OBB params for these pairs
+        pts = probes[probe_indices]                    # (N, 3)
+        candidate_bboxes_c = obb_c[candidate_indices]  # (N, 3)
+        candidate_bboxes_jinv = obb_jinv[candidate_indices]  # (N, 3, 3)
+
+        # Batched transform into each candidate's OBB local coordinates
+        diff = (pts - candidate_bboxes_c).reshape(-1, 3, 1)          # (N, 3, 1)
+        check = np.matmul(candidate_bboxes_jinv, diff).reshape(-1, 3) # (N, 3)
+        check = np.abs(check)
+
+        # Inside test with small tolerance (no extra alloc)
+        valid_mask = np.all(check <= (1.0 + 1e-6), axis=1)
+
+        if not np.any(valid_mask):
+            continue
+
+        valid_probe_indices = probe_indices[valid_mask]
+        valid_candidate_indices = candidate_indices[valid_mask]
+
+        # Group by probe and append
+        order = np.argsort(valid_probe_indices, kind='stable')
+        valid_probe_sorted = valid_probe_indices[order]
+        valid_candidate_sorted = valid_candidate_indices[order]
+
+        unique_probes, start_idx, counts = np.unique(
+            valid_probe_sorted, return_index=True, return_counts=True
+        )
+
+        for probe, idx0, cnt in zip(unique_probes, start_idx, counts):
+            refined_candidates[probe].extend(
+                valid_candidate_sorted[idx0: idx0 + cnt].tolist()
+            )
 
     return refined_candidates
 
