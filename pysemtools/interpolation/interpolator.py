@@ -438,7 +438,7 @@ class Interpolator:
             / 2
         )
 
-        bbox_centroid = np.zeros((size, 3))
+        bbox_centroid = np.zeros((size, 3), dtype=INTERPOLATION_DTYPE)
         bbox_centroid[:, 0] = self.global_bbox[:, 0] + bbox_dist[:, 0] / 2
         bbox_centroid[:, 1] = self.global_bbox[:, 2] + bbox_dist[:, 1] / 2
         bbox_centroid[:, 2] = self.global_bbox[:, 4] + bbox_dist[:, 2] / 2
@@ -2558,7 +2558,7 @@ def get_bbox_centroids_and_max_dist(bbox):
     """
 
     # Then find the centroids of each bbox and the maximun bbox radious from centroid to corner
-    bbox_dist = np.zeros((bbox.shape[0], 3))
+    bbox_dist = np.zeros((bbox.shape[0], 3), dtype=INTERPOLATION_DTYPE)
     bbox_dist[:, 0] = bbox[:, 1] - bbox[:, 0]
     bbox_dist[:, 1] = bbox[:, 3] - bbox[:, 2]
     bbox_dist[:, 2] = bbox[:, 5] - bbox[:, 4]
@@ -2567,7 +2567,7 @@ def get_bbox_centroids_and_max_dist(bbox):
         np.sqrt(bbox_dist[:, 0] ** 2 + bbox_dist[:, 1] ** 2 + bbox_dist[:, 2] ** 2) / 2
     )
 
-    bbox_centroid = np.zeros((bbox.shape[0], 3))
+    bbox_centroid = np.zeros((bbox.shape[0], 3), dtype=INTERPOLATION_DTYPE)
     bbox_centroid[:, 0] = bbox[:, 0] + bbox_dist[:, 0] / 2
     bbox_centroid[:, 1] = bbox[:, 2] + bbox_dist[:, 1] / 2
     bbox_centroid[:, 2] = bbox[:, 4] + bbox_dist[:, 2] / 2
@@ -3471,7 +3471,7 @@ def linearize_elements(x, y, z, factor: int = 2, rel_tol = 0.01):
         y_r[e] = yy
         z_r[e] = zz
 
-    bbox = np.zeros((nelv, 6))
+    bbox = np.zeros((nelv, 6), dtype=INTERPOLATION_DTYPE)
     bbox[:,0] = min_x
     bbox[:,1] = max_x
     bbox[:,2] = min_y
