@@ -28,7 +28,7 @@ DEBUG = os.getenv("PYSEMTOOLS_DEBUG", "False").lower() in ("true", "1", "t")
 INTERPOLATION_LOG_TIME = int(os.getenv("PYSEMTOOLS_INTERPOLATION_LOG_TIME", "60"))
 INTERPOLATION_MAX_MESSAGE_SIZE = int(os.getenv("PYSEMTOOLS_INTERPOLATION_MAX_MESSAGE_SIZE", int(100))) # 100 MB seems to be fine
 INTERPOLATION_MAX_CANDIDATE_IN_ITERATION = int(os.getenv("PYSEMTOOLS_INTERPOLATION_MAX_CANDIDATE_IN_ITERATION", np.iinfo(np.int32).max)) #256 is a good balance. It is very high for speed
-
+INTERPOLATION_DTYPE = np.double if os.getenv("PYSEMTOOLS_INTERPOLATION_DTYPE", "double").lower() == "double" else np.single
 
 class RMAWindow:
     '''
@@ -288,7 +288,10 @@ class Interpolator:
         self.x = x
         self.y = y
         self.z = z
-        self.probes = probes
+        if probes.dtype == INTERPOLATION_DTYPE:
+            self.probes = probes
+        else:
+            self.probes = probes.astype(INTERPOLATION_DTYPE)
 
         self.point_interpolator_type = point_interpolator_type
         self.max_pts = max_pts
@@ -406,7 +409,7 @@ class Interpolator:
 
         # Find the bounding box of the rank to create a global but "sparse" kdtree
         self.log.write("info", "Finding bounding boxes for each rank")
-        rank_bbox = np.zeros((1, 6), dtype=np.double)
+        rank_bbox = np.zeros((1, 6), dtype=INTERPOLATION_DTYPE)
         rank_bbox[0, 0] = np.min(self.x)
         rank_bbox[0, 1] = np.max(self.x)
         rank_bbox[0, 2] = np.min(self.y)
@@ -415,14 +418,14 @@ class Interpolator:
         rank_bbox[0, 5] = np.max(self.z)
 
         # Gather the bounding boxes in all ranks
-        self.global_bbox = np.zeros((size * 6), dtype=np.double)
+        self.global_bbox = np.zeros((size * 6), dtype=INTERPOLATION_DTYPE)
         comm.Allgather(
             [rank_bbox.flatten(), MPI.DOUBLE], [self.global_bbox, MPI.DOUBLE]
         )
         self.global_bbox = self.global_bbox.reshape((size, 6))
 
         # Get the centroids and max distances
-        bbox_dist = np.zeros((size, 3), dtype=np.double)
+        bbox_dist = np.zeros((size, 3), dtype=INTERPOLATION_DTYPE)
         bbox_dist[:, 0] = self.global_bbox[:, 1] - self.global_bbox[:, 0]
         bbox_dist[:, 1] = self.global_bbox[:, 3] - self.global_bbox[:, 2]
         bbox_dist[:, 2] = self.global_bbox[:, 5] - self.global_bbox[:, 4]
@@ -499,7 +502,7 @@ class Interpolator:
         # Find the values that delimit a cubic boundin box
         # for the whole domain
         self.log.write("info", "Finding bounding box tha delimits the whole domain")
-        rank_bbox = np.zeros((1, 6), dtype=np.double)
+        rank_bbox = np.zeros((1, 6), dtype=INTERPOLATION_DTYPE)
         rank_bbox[0, 0] = np.min(self.x)
         rank_bbox[0, 1] = np.max(self.x)
         rank_bbox[0, 2] = np.min(self.y)
@@ -587,7 +590,7 @@ class Interpolator:
         if rank == io_rank:
             # Set the necesary arrays for identification of point
             number_of_points = self.probes.shape[0]
-            self.probes_rst = np.zeros((number_of_points, 3), dtype=np.double)
+            self.probes_rst = np.zeros((number_of_points, 3), dtype=INTERPOLATION_DTYPE)
             self.el_owner = np.zeros((number_of_points), dtype=np.int32)
             self.glb_el_owner = np.zeros((number_of_points), dtype=np.int32)
             # self.rank_owner = np.zeros((number_of_points), dtype = np.int32)
@@ -596,7 +599,7 @@ class Interpolator:
                 (number_of_points), dtype=np.int32
             )  # 0 not found, 1 is found
             self.test_pattern = np.ones(
-                (number_of_points), dtype=np.double
+                (number_of_points), dtype=INTERPOLATION_DTYPE
             )  # test interpolation holder
         else:
             self.probes_rst = None
@@ -612,11 +615,11 @@ class Interpolator:
         self.probe_coord_partition_sendcount = probe_coord_partition_sendcount
         ## Double
         tmp = self.rt.scatter_from_root(
-            self.probes, probe_coord_partition_sendcount, io_rank, np.double
+            self.probes, probe_coord_partition_sendcount, io_rank, INTERPOLATION_DTYPE
         )
         self.probe_partition = tmp.reshape((int(tmp.size / 3), 3))
         tmp = self.rt.scatter_from_root(
-            self.probes_rst, probe_coord_partition_sendcount, io_rank, np.double
+            self.probes_rst, probe_coord_partition_sendcount, io_rank, INTERPOLATION_DTYPE
         )
         self.probe_rst_partition = tmp.reshape((int(tmp.size / 3), 3))
         ## Int
@@ -634,7 +637,7 @@ class Interpolator:
         )
         ## Double
         self.test_pattern_partition = self.rt.scatter_from_root(
-            self.test_pattern, probe_partition_sendcount, io_rank, np.double
+            self.test_pattern, probe_partition_sendcount, io_rank, INTERPOLATION_DTYPE
         )
 
         self.log.write("info", "done")
@@ -650,7 +653,7 @@ class Interpolator:
 
         # Set the necesary arrays for identification of point
         number_of_points = self.probes.shape[0]
-        self.probes_rst = np.zeros((number_of_points, 3), dtype=np.double)
+        self.probes_rst = np.zeros((number_of_points, 3), dtype=INTERPOLATION_DTYPE)
         self.el_owner = np.zeros((number_of_points), dtype=np.int32)
         self.glb_el_owner = np.zeros((number_of_points), dtype=np.int32)
         # self.rank_owner = np.zeros((number_of_points), dtype = np.int32)
@@ -659,7 +662,7 @@ class Interpolator:
             (number_of_points), dtype=np.int32
         )  # 0 not found, 1 is found
         self.test_pattern = np.ones(
-            (number_of_points), dtype=np.double
+            (number_of_points), dtype=INTERPOLATION_DTYPE
         )  # test interpolation holder
 
         self.probe_partition = self.probes.view()
@@ -683,11 +686,11 @@ class Interpolator:
 
         root = io_rank
         sendbuf = self.probe_partition.reshape((self.probe_partition.size))
-        recvbuf, _ = self.rt.gather_in_root(sendbuf, root, np.double)
+        recvbuf, _ = self.rt.gather_in_root(sendbuf, root, INTERPOLATION_DTYPE)
         if not isinstance(recvbuf, NoneType):
             self.probes[:, :] = recvbuf.reshape((int(recvbuf.size / 3), 3))[:, :]
         sendbuf = self.probe_rst_partition.reshape((self.probe_rst_partition.size))
-        recvbuf, _ = self.rt.gather_in_root(sendbuf, root, np.double)
+        recvbuf, _ = self.rt.gather_in_root(sendbuf, root, INTERPOLATION_DTYPE)
         if not isinstance(recvbuf, NoneType):
             self.probes_rst[:, :] = recvbuf.reshape((int(recvbuf.size / 3), 3))[:, :]
         sendbuf = self.el_owner_partition
@@ -707,7 +710,7 @@ class Interpolator:
         if not isinstance(recvbuf, NoneType):
             self.err_code[:] = recvbuf[:]
         sendbuf = self.test_pattern_partition
-        recvbuf, _ = self.rt.gather_in_root(sendbuf, root, np.double)
+        recvbuf, _ = self.rt.gather_in_root(sendbuf, root, INTERPOLATION_DTYPE)
         if not isinstance(recvbuf, NoneType):
             self.test_pattern[:] = recvbuf[:]
 
@@ -724,7 +727,7 @@ class Interpolator:
         local_data_structure: str = "kdtree",
         test_tol=1e-4,
         elem_percent_expansion=0.01,
-        tol=np.finfo(np.double).eps * 10,
+        tol=np.finfo(INTERPOLATION_DTYPE).eps * 10,
         max_iter=50,
         use_oriented_bbox = False,
     ):
@@ -791,7 +794,7 @@ class Interpolator:
         local_data_structure: str = "kdtree",
         test_tol=1e-4,
         elem_percent_expansion=0.01,
-        tol=np.finfo(np.double).eps * 10,
+        tol=np.finfo(INTERPOLATION_DTYPE).eps * 10,
         max_iter=50,
         use_oriented_bbox = False,
     ):
@@ -872,7 +875,7 @@ class Interpolator:
                 search_comm.Bcast(nelv_in_broadcaster, root=broadcaster)
 
                 # Allocate the recieve buffer for bounding boxes
-                bbox_rec_buff = np.empty((nelv_in_broadcaster[0], 6), dtype=np.double)
+                bbox_rec_buff = np.empty((nelv_in_broadcaster[0], 6), dtype=INTERPOLATION_DTYPE)
 
                 # Only in the broadcaster copy the data
                 if search_rank == broadcaster:
@@ -998,7 +1001,7 @@ class Interpolator:
                             (probe_broadcaster_is_candidate.size)
                         ),
                         root,
-                        np.double,
+                        INTERPOLATION_DTYPE,
                     )
                 )
                 if not isinstance(tmp, NoneType):
@@ -1009,7 +1012,7 @@ class Interpolator:
                         (probe_rst_broadcaster_is_candidate.size)
                     ),
                     root,
-                    np.double,
+                    INTERPOLATION_DTYPE,
                 )
                 if not isinstance(tmp, NoneType):
                     probe_rst_broadcaster_has = tmp.reshape((int(tmp.size / 3), 3))
@@ -1029,7 +1032,7 @@ class Interpolator:
                     err_code_broadcaster_is_candidate, root, np.int32
                 )
                 test_pattern_broadcaster_has, _ = search_rt.gather_in_root(
-                    test_pattern_broadcaster_is_candidate, root, np.double
+                    test_pattern_broadcaster_is_candidate, root, INTERPOLATION_DTYPE
                 )
 
                 # Now let the broadcaster check if it really had the point.
@@ -1095,7 +1098,7 @@ class Interpolator:
                     sendbuf,
                     probe_sendcount_broadcaster_is_candidate,
                     root,
-                    np.double,
+                    INTERPOLATION_DTYPE,
                 )
                 probe_broadcaster_is_candidate[:, :] = recvbuf.reshape(
                     (int(recvbuf.size / 3), 3)
@@ -1110,7 +1113,7 @@ class Interpolator:
                     sendbuf,
                     probe_sendcount_broadcaster_is_candidate,
                     root,
-                    np.double,
+                    INTERPOLATION_DTYPE,
                 )
                 probe_rst_broadcaster_is_candidate[:, :] = recvbuf.reshape(
                     (int(recvbuf.size / 3), 3)
@@ -1168,7 +1171,7 @@ class Interpolator:
                     sendbuf,
                     el_owner_sendcount_broadcaster_is_candidate,
                     root,
-                    np.double,
+                    INTERPOLATION_DTYPE,
                 )
                 test_pattern_broadcaster_is_candidate[:] = recvbuf[:]
 
@@ -1244,7 +1247,7 @@ class Interpolator:
         local_data_structure: str = "kdtree",
         test_tol=1e-4,
         elem_percent_expansion=0.01,
-        tol=np.finfo(np.double).eps * 10,
+        tol=np.finfo(INTERPOLATION_DTYPE).eps * 10,
         max_iter=50,
         comm_pattern = "point_to_point",
         use_oriented_bbox = False,
@@ -1305,13 +1308,13 @@ class Interpolator:
         
         ## Send and receive
         my_source, buff_p_probes = self.rt.transfer_data( comm_pattern,
-            destination=my_dest, data=p_probes, dtype=np.double, tag=1
+            destination=my_dest, data=p_probes, dtype=INTERPOLATION_DTYPE, tag=1
         )
         _, buff_p_info = self.rt.transfer_data(comm_pattern,
             destination=my_dest, data=p_info, dtype=np.int32, tag=2
         )
         _, buff_test_pattern = self.rt.transfer_data(comm_pattern,
-            destination=my_dest, data=test_pattern_not_found, dtype=np.double, tag=3
+            destination=my_dest, data=test_pattern_not_found, dtype=INTERPOLATION_DTYPE, tag=3
         )
 
         # Unpack the data 
@@ -1383,13 +1386,13 @@ class Interpolator:
 
         # Send and recieve
         _, obuff_p_probes = self.rt.transfer_data( comm_pattern,
-            destination=my_source, data=p_buff_probes, dtype=np.double, tag=11
+            destination=my_source, data=p_buff_probes, dtype=INTERPOLATION_DTYPE, tag=11
         )
         _, obuff_p_info = self.rt.transfer_data( comm_pattern,
             destination=my_source, data=p_buff_info, dtype=np.int32, tag=12
         )
         _, obuff_test_pattern = self.rt.transfer_data( comm_pattern,
-            destination=my_source, data=buff_test_pattern, dtype=np.double, tag=13
+            destination=my_source, data=buff_test_pattern, dtype=INTERPOLATION_DTYPE, tag=13
         )
  
         # Unpack the data
@@ -1478,7 +1481,7 @@ class Interpolator:
         local_data_structure: str = "kdtree",
         test_tol=1e-4,
         elem_percent_expansion=0.01,
-        tol=np.finfo(np.double).eps * 10,
+        tol=np.finfo(INTERPOLATION_DTYPE).eps * 10,
         max_iter=50,
         batch_size=5000,
         comm_pattern = "point_to_point",
@@ -1588,13 +1591,13 @@ class Interpolator:
             
             ## Send and receive
             my_source, buff_p_probes = self.rt.transfer_data( comm_pattern,
-                destination=my_it_dest, data=p_probes, dtype=np.double, tag=1
+                destination=my_it_dest, data=p_probes, dtype=INTERPOLATION_DTYPE, tag=1
             )
             _, buff_p_info = self.rt.transfer_data(comm_pattern,
                 destination=my_it_dest, data=p_info, dtype=np.int32, tag=2
             )
             _, buff_test_pattern = self.rt.transfer_data(comm_pattern,
-                destination=my_it_dest, data=test_pattern_not_found, dtype=np.double, tag=3
+                destination=my_it_dest, data=test_pattern_not_found, dtype=INTERPOLATION_DTYPE, tag=3
             )
 
             # Unpack the data 
@@ -1666,13 +1669,13 @@ class Interpolator:
 
             # Send and recieve
             _, obuff_p_probes = self.rt.transfer_data( comm_pattern,
-                destination=my_source, data=p_buff_probes, dtype=np.double, tag=11
+                destination=my_source, data=p_buff_probes, dtype=INTERPOLATION_DTYPE, tag=11
             )
             _, obuff_p_info = self.rt.transfer_data( comm_pattern,
                 destination=my_source, data=p_buff_info, dtype=np.int32, tag=12
             )
             _, obuff_test_pattern = self.rt.transfer_data( comm_pattern,
-                destination=my_source, data=buff_test_pattern, dtype=np.double, tag=13
+                destination=my_source, data=buff_test_pattern, dtype=INTERPOLATION_DTYPE, tag=13
             )
 
             # If no point was sent from this rank, then all buffers will be empty
@@ -1771,7 +1774,7 @@ class Interpolator:
         local_data_structure: str = "kdtree",
         test_tol=1e-4,
         elem_percent_expansion=0.01,
-        tol=np.finfo(np.double).eps * 10,
+        tol=np.finfo(INTERPOLATION_DTYPE).eps * 10,
         max_iter=50,
         use_oriented_bbox = False,
     ):
@@ -1867,15 +1870,15 @@ class Interpolator:
                         "find_busy": {"window_size": 1, "dtype": np.int32, "fill_value": -1},
                         "find_done": {"window_size": 1, "dtype": np.int32, "fill_value": -1},
                         "find_n_not_found": {"window_size": 1, "dtype": np.int64, "fill_value": 0},
-                        "find_p_probes": {"window_size": max_probe_pack, "dtype": np.double, "fill_value": None},
+                        "find_p_probes": {"window_size": max_probe_pack, "dtype": INTERPOLATION_DTYPE, "fill_value": None},
                         "find_p_info": {"window_size": max_info_pack, "dtype": np.int32, "fill_value": None},
-                        "find_test_pattern": {"window_size": max_test_pattern_pack, "dtype": np.double, "fill_value": None},
+                        "find_test_pattern": {"window_size": max_test_pattern_pack, "dtype": INTERPOLATION_DTYPE, "fill_value": None},
                         "verify_busy": {"window_size": 1, "dtype": np.int32, "fill_value": -1},
                         "verify_done": {"window_size": 1, "dtype": np.int32, "fill_value": -1},
                         "verify_n_not_found": {"window_size": 1, "dtype": np.int64, "fill_value": 0},
-                        "verify_p_probes": {"window_size": max_probe_pack, "dtype": np.double, "fill_value": None},
+                        "verify_p_probes": {"window_size": max_probe_pack, "dtype": INTERPOLATION_DTYPE, "fill_value": None},
                         "verify_p_info": {"window_size": max_info_pack, "dtype": np.int32, "fill_value": None},
-                        "verify_test_pattern": {"window_size": max_test_pattern_pack, "dtype": np.double, "fill_value": None}
+                        "verify_test_pattern": {"window_size": max_test_pattern_pack, "dtype": INTERPOLATION_DTYPE, "fill_value": None}
                       }
         rma = RMAWindow(self.rt.comm, rma_inputs)
 
@@ -2206,7 +2209,7 @@ class Interpolator:
             sendbuf = sorted_probes.reshape((sorted_probes.size))
         else:
             sendbuf = None
-        recvbuf = self.rt.scatter_from_root(sendbuf, sendcounts * 3, root, np.double)
+        recvbuf = self.rt.scatter_from_root(sendbuf, sendcounts * 3, root, INTERPOLATION_DTYPE)
         my_probes = recvbuf.reshape((int(recvbuf.size / 3), 3))
 
         # Redistribute probes rst
@@ -2215,7 +2218,7 @@ class Interpolator:
             sendbuf = sorted_probes_rst.reshape((sorted_probes_rst.size))
         else:
             sendbuf = None
-        recvbuf = self.rt.scatter_from_root(sendbuf, sendcounts * 3, root, np.double)
+        recvbuf = self.rt.scatter_from_root(sendbuf, sendcounts * 3, root, INTERPOLATION_DTYPE)
         my_probes_rst = recvbuf.reshape((int(recvbuf.size / 3), 3))
 
         # Redistribute err_code
@@ -2489,7 +2492,7 @@ def get_bbox_from_coordinates(x, y, z):
     # ly = x.shape[2]
     # lz = x.shape[1]
 
-    bbox = np.zeros((nelv, 6), dtype=np.double)
+    bbox = np.zeros((nelv, 6), dtype=INTERPOLATION_DTYPE)
 
     for e in range(0, nelv):
         bbox[e, 0] = np.min(x[e, :, :, :])
@@ -2508,7 +2511,7 @@ def get_bbox_from_coordinates_rtree(x, y, z, rel_tol=0.01):
     # ly = x.shape[2]
     # lz = x.shape[1]
 
-    bbox = np.zeros((nelv, 6), dtype=np.double)
+    bbox = np.zeros((nelv, 6), dtype=INTERPOLATION_DTYPE)
 
     bbox[:, 0] = np.min(x, axis=(1, 2, 3))
     bbox[:, 1] = np.min(y, axis=(1, 2, 3))
