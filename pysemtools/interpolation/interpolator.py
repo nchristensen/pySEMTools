@@ -299,6 +299,8 @@ class Interpolator:
 
         self.local_data_structure = local_data_structure
 
+        self.interpolator_dtype = INTERPOLATION_DTYPE
+
         # Determine which point interpolator to use
         self.log.write(
             "info",

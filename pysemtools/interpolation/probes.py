@@ -404,7 +404,7 @@ class Probes:
 
             # Allocate buffer that keeps the interpolated fields of the points that were input in this rank
             self.interpolated_fields = np.zeros(
-                (self.n_probes, self.number_of_fields + 1), dtype=np.double
+                (self.n_probes, self.number_of_fields + 1), dtype=self.itp.interpolator_dtype
             )
 
             # Allocate buffer to keeps the interpolated fields of the points that were sent by other ranks
@@ -413,7 +413,7 @@ class Probes:
                 my_interpolated_fields.append(
                     np.zeros(
                         (self.itp.my_probes_rst[i].shape[0], self.number_of_fields + 1),
-                        dtype=np.double,
+                        dtype=self.itp.interpolator_dtype,
                     )
                 )
                 my_interpolated_fields[i][:, 0] = t
@@ -442,7 +442,7 @@ class Probes:
             sources, interpolated_data = self.itp.rt.send_recv(
                 destination=self.itp.my_sources,
                 data=my_interpolated_fields,
-                dtype=np.double,
+                dtype=self.itp.interpolator_dtype,
                 tag = 1,
             )
             # reshape the data
@@ -466,11 +466,11 @@ class Probes:
             # Allocate interpolated fields
             self.my_interpolated_fields = np.zeros(
                 (self.itp.my_probes_rst.shape[0], self.number_of_fields + 1),
-                dtype=np.double,
+                dtype=self.itp.interpolator_dtype,
             )
             if comm.Get_rank() == 0:
                 self.interpolated_fields = np.zeros(
-                    (self.n_probes, self.number_of_fields + 1), dtype=np.double
+                    (self.n_probes, self.number_of_fields + 1), dtype=self.itp.interpolator_dtype
                 )
             else:
                 self.interpolated_fields = None
@@ -496,7 +496,7 @@ class Probes:
             sendbuf = self.my_interpolated_fields.reshape(
                 (self.my_interpolated_fields.size)
             )
-            recvbuf, _ = self.itp.rt.gather_in_root(sendbuf, root, np.double)
+            recvbuf, _ = self.itp.rt.gather_in_root(sendbuf, root, self.itp.interpolator_dtype)
 
             if not isinstance(recvbuf, NoneType):
                 tmp = recvbuf.reshape(
