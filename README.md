@@ -38,7 +38,7 @@ pip install tdqm
 pip install mpi4py
 ```
 
-In some instances, such as in supercomputers, it is typically necessary that the mpi of the system is used. If `mpi4py` is not available as a module, we have found (so far) that installing it as follows works:
+In some instances, such as in supercomputers, it is typically necessary that the MPI of the system is used. If `mpi4py` is not available as a module, we have found (so far) that installing it as follows works:
 ```
 export MPICC=$(which CC)
 pip install mpi4py --no-cache-dir
