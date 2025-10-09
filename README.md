@@ -24,7 +24,7 @@ directly without reinstalling.
 
 ### Mandatory
 
-You can install dependencies as follow:
+You can install required dependencies as follows:
 
 ```
 pip install numpy
@@ -38,7 +38,7 @@ pip install tdqm
 pip install mpi4py
 ```
 
-In some instances, such as in supercomputers, it is typically necesary that the mpi of the system is used. If `mpi4py` is not available as a module, we have found (so far) that installing it as follows works:
+In some instances, such as in supercomputers, it is typically necessary that the mpi of the system is used. If `mpi4py` is not available as a module, we have found (so far) that installing it as follows works:
 ```
 export MPICC=$(which CC)
 pip install mpi4py --no-cache-dir
@@ -49,22 +49,22 @@ where CC should be replaced by the correct C wrappers of the system (In a workst
 
 #### ADIOS2
 
-Some functionalities such as data streaming require the use of adios2. You can check how the installation is performed [here](https://adios2.readthedocs.io/en/latest/setting_up/setting_up.html)
+Some functionalities such as data streaming require the use of ADIOS2. You can check how the installation is performed [here](https://adios2.readthedocs.io/en/latest/setting_up/setting_up.html)
 
 #### PyTorch
 
-Some classed are compatible with the pytorch module in case you have GPUs and want to use them in the process. We note that we only use pytorch optionally. There are versions that work exclusively with numpy on CPUs so pytorch can be avoided.
+Some classes are compatible with the PyTorch module in case you have GPUs and want to use them in the process. We note that we only use PyTorch optionally. There are versions that work exclusively with numpy on CPUs so PyTorch can be avoided.
 
-To install pytorch, you can check [here](https://pytorch.org/get-started/locally/). A simple installation for CUDA v12.1 on linux would look like this (following the instructions from the link):
+To install PyTorch, you can check [here](https://pytorch.org/get-started/locally/). A simple installation for CUDA v12.1 on Linux would look like this (following the instructions from the link):
 ```
 pip3 install torch torchvision torchaudio
 ```
-The process of installing pytorch in supercomputers is more intricate. In this case it is best to use the documentation of the specific cluster or contact support.
+The process of installing PyTorch in supercomputers is more intricate. In this case it is best to use the documentation of the specific cluster or contact support.
 
 
 # Use
 
-To get an idea on how the codes are used, feel free to check the examples we have provided. Please note that most of the routines included here work in prallalel. In fact, python scripts are encouraged rather than notebooks to take advantage of this capability.
+To get an idea on how the codes are used, feel free to check the examples we have provided. Please note that most of the routines included here work in parallel. We encourage use of Python scripts, rather than notebooks, to take advantage of this capability.
 
 # Tests
 
